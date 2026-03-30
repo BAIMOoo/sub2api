@@ -151,6 +151,10 @@ func (s *GatewayService) handleCopilotNonStreamingAsMessages(
 	}
 
 	// Convert Chat Completions → Anthropic
+	var stopReason string
+	if len(ccResp.Choices) > 0 {
+		stopReason = ccResp.Choices[0].FinishReason
+	}
 	anthropicResp := &apicompat.AnthropicResponse{
 		ID:      ccResp.ID,
 		Type:    "message",
@@ -161,7 +165,7 @@ func (s *GatewayService) handleCopilotNonStreamingAsMessages(
 			InputTokens:  ccResp.Usage.PromptTokens,
 			OutputTokens: ccResp.Usage.CompletionTokens,
 		},
-		StopReason: ccResp.Choices[0].FinishReason,
+		StopReason: stopReason,
 	}
 
 	if len(ccResp.Choices) > 0 {
