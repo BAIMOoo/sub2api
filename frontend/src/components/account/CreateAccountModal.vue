@@ -169,6 +169,19 @@
             <Icon name="cloud" size="sm" />
             Antigravity
           </button>
+          <button
+            type="button"
+            @click="form.platform = 'copilot'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'copilot'
+                ? 'bg-white text-indigo-600 shadow-sm dark:bg-dark-600 dark:text-indigo-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <Icon name="terminal" size="sm" />
+            Copilot
+          </button>
         </div>
       </div>
 
@@ -897,6 +910,76 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Copilot Account Type -->
+      <div v-if="form.platform === 'copilot'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            @click="copilotAccountType = 'oauth'; accountCategory = 'oauth-based'; addMethod = 'oauth'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              copilotAccountType === 'oauth'
+                ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                : 'border-gray-200 hover:border-indigo-300 dark:border-dark-600 dark:hover:border-indigo-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                copilotAccountType === 'oauth'
+                  ? 'bg-indigo-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">Device Flow</span>
+            </div>
+          </button>
+          <button
+            type="button"
+            @click="copilotAccountType = 'apikey'; accountCategory = 'apikey'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              copilotAccountType === 'apikey'
+                ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                : 'border-gray-200 hover:border-indigo-300 dark:border-dark-600 dark:hover:border-indigo-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                copilotAccountType === 'apikey'
+                  ? 'bg-indigo-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">Manual Input</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Copilot API Key Input (only for apikey type) -->
+      <div v-if="form.platform === 'copilot' && copilotAccountType === 'apikey'">
+        <label class="input-label">API Key</label>
+        <input
+          v-model="copilotApiKey"
+          type="password"
+          required
+          class="input font-mono text-sm"
+          placeholder="tid=...;exp=...;sku=..."
+        />
+        <p class="input-hint">从 GitHub Copilot OAuth 获取的 API Key（tid 开头的长字符串）</p>
       </div>
 
       <!-- Add Method (only for Anthropic OAuth-based type) -->
@@ -2500,7 +2583,66 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
+      <!-- Copilot Device Flow -->
+      <div v-if="form.platform === 'copilot'" class="space-y-4">
+        <div v-if="!copilotDeviceCode" class="text-center">
+          <button
+            type="button"
+            @click="handleCopilotDeviceFlowStart"
+            :disabled="copilotDeviceFlowLoading"
+            class="btn btn-primary"
+          >
+            <svg v-if="copilotDeviceFlowLoading" class="-ml-1 mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            启动 GitHub 授权
+          </button>
+        </div>
+        <div v-else class="rounded-lg border border-gray-200 bg-gray-50 p-6 dark:border-dark-600 dark:bg-dark-700">
+          <div class="mb-4 text-center">
+            <p class="mb-2 text-sm text-gray-600 dark:text-gray-400">请访问以下网址并输入代码：</p>
+            <a :href="copilotVerificationUri" target="_blank" class="text-lg font-semibold text-primary-600 hover:underline">
+              {{ copilotVerificationUri }}
+            </a>
+          </div>
+          <div class="mb-4 text-center">
+            <p class="mb-2 text-sm text-gray-600 dark:text-gray-400">授权码：</p>
+            <div class="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 dark:bg-dark-600">
+              <code class="text-2xl font-bold tracking-wider text-gray-900 dark:text-white">{{ copilotUserCode }}</code>
+              <button
+                type="button"
+                @click="copyToClipboard(copilotUserCode)"
+                class="rounded p-1 hover:bg-gray-100 dark:hover:bg-dark-500"
+                title="复制"
+              >
+                <Icon name="clipboard" size="sm" />
+              </button>
+            </div>
+          </div>
+          <div class="text-center">
+            <button
+              type="button"
+              @click="handleCopilotDeviceFlowComplete"
+              :disabled="copilotDeviceFlowLoading"
+              class="btn btn-primary"
+            >
+              <svg v-if="copilotDeviceFlowLoading" class="-ml-1 mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              {{ copilotDeviceFlowLoading ? '验证中...' : '我已完成授权' }}
+            </button>
+          </div>
+          <div v-if="copilotDeviceFlowError" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+            {{ copilotDeviceFlowError }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Other platforms OAuth -->
       <OAuthAuthorizationFlow
+        v-else
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -3031,8 +3173,16 @@ const mixedScheduling = ref(false) // For antigravity accounts: enable mixed sch
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityAccountType = ref<'oauth' | 'upstream'>('oauth') // For antigravity: oauth or upstream
 const soraAccountType = ref<'oauth' | 'apikey'>('oauth') // For sora: oauth or apikey (upstream)
+const copilotAccountType = ref<'oauth' | 'apikey'>('oauth') // For copilot: oauth or apikey
 const upstreamBaseUrl = ref('') // For upstream type: base URL
 const upstreamApiKey = ref('') // For upstream type: API key
+const copilotApiKey = ref('') // For copilot: API key
+const copilotDeviceCode = ref('')
+const copilotUserCode = ref('')
+const copilotVerificationUri = ref('')
+const copilotInterval = ref(5)
+const copilotDeviceFlowLoading = ref(false)
+const copilotDeviceFlowError = ref('')
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
@@ -3283,8 +3433,8 @@ watch(
 
 // Sync form.type based on accountCategory, addMethod, and platform-specific type
 watch(
-  [accountCategory, addMethod, antigravityAccountType, soraAccountType],
-  ([category, method, agType, soraType]) => {
+  [accountCategory, addMethod, antigravityAccountType, soraAccountType, copilotAccountType],
+  ([category, method, agType, soraType, copilotType]) => {
     // Antigravity upstream 类型（实际创建为 apikey）
     if (form.platform === 'antigravity' && agType === 'upstream') {
       form.type = 'apikey'
@@ -3292,6 +3442,11 @@ watch(
     }
     // Sora apikey 类型（上游透传）
     if (form.platform === 'sora' && soraType === 'apikey') {
+      form.type = 'apikey'
+      return
+    }
+    // Copilot apikey 类型
+    if (form.platform === 'copilot' && copilotType === 'apikey') {
       form.type = 'apikey'
       return
     }
@@ -3356,6 +3511,12 @@ watch(
       addMethod.value = 'oauth'
       form.type = 'oauth'
       soraAccountType.value = 'oauth'
+    }
+    if (newPlatform === 'copilot') {
+      accountCategory.value = 'oauth-based'
+      addMethod.value = 'oauth'
+      form.type = 'oauth'
+      copilotAccountType.value = 'oauth'
     }
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
@@ -4019,6 +4180,25 @@ const handleSubmit = async () => {
     return
   }
 
+  // For Copilot apikey type, create directly
+  if (form.platform === 'copilot' && copilotAccountType.value === 'apikey') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!copilotApiKey.value.trim()) {
+      appStore.showError('请输入 Copilot API Key')
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      api_key: copilotApiKey.value.trim()
+    }
+
+    await createAccountAndFinish('copilot', 'apikey', credentials)
+    return
+  }
+
   // For apikey type, create directly
   if (!apiKeyValue.value.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
@@ -4099,6 +4279,69 @@ const goBackToBasicInfo = () => {
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   oauthFlowRef.value?.reset()
+  copilotDeviceCode.value = ''
+  copilotUserCode.value = ''
+  copilotVerificationUri.value = ''
+  copilotDeviceFlowError.value = ''
+}
+
+const handleCopilotDeviceFlowStart = async () => {
+  copilotDeviceFlowLoading.value = true
+  copilotDeviceFlowError.value = ''
+  try {
+    const response = await fetch('/api/v1/auth/oauth/copilot/start', { method: 'POST' })
+    if (!response.ok) throw new Error('Failed to start device flow')
+    const data = await response.json()
+    copilotDeviceCode.value = data.device_code
+    copilotUserCode.value = data.user_code
+    copilotVerificationUri.value = data.verification_uri
+    copilotInterval.value = data.interval || 5
+  } catch (error) {
+    copilotDeviceFlowError.value = error instanceof Error ? error.message : '启动授权失败'
+  } finally {
+    copilotDeviceFlowLoading.value = false
+  }
+}
+
+const handleCopilotDeviceFlowComplete = async () => {
+  copilotDeviceFlowLoading.value = true
+  copilotDeviceFlowError.value = ''
+  try {
+    const response = await fetch('/api/v1/auth/oauth/copilot/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_code: copilotDeviceCode.value,
+        interval: copilotInterval.value
+      })
+    })
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Authorization failed')
+    }
+    const data = await response.json()
+
+    const credentials: Record<string, unknown> = {
+      api_key: data.api_key,
+      access_token: data.access_token,
+      expires_at: data.expires_at
+    }
+
+    await createAccountAndFinish('copilot', 'apikey', credentials)
+  } catch (error) {
+    copilotDeviceFlowError.value = error instanceof Error ? error.message : '授权失败'
+  } finally {
+    copilotDeviceFlowLoading.value = false
+  }
+}
+
+const copyToClipboard = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    appStore.showSuccess('已复制到剪贴板')
+  } catch {
+    appStore.showError('复制失败')
+  }
 }
 
 const handleGenerateUrl = async () => {

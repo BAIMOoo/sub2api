@@ -33,6 +33,15 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	body []byte,
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
+	// 调试日志
+	logger.LegacyPrintf("service.gateway", "[DEBUG] ForwardAsChatCompletions: account_id=%d platform=%s", account.ID, account.Platform)
+
+	// Copilot 平台使用原生 OpenAI 兼容 API，直接转发
+	if account != nil && account.Platform == PlatformCopilot {
+		logger.LegacyPrintf("service.gateway", "[DEBUG] Routing to ForwardCopilot")
+		return s.ForwardCopilot(ctx, c, account, parsed)
+	}
+
 	startTime := time.Now()
 
 	// 1. Parse Chat Completions request

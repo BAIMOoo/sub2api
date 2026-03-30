@@ -70,6 +70,13 @@ func RegisterAuthRoutes(
 			}),
 			h.Auth.CompleteLinuxDoOAuthRegistration,
 		)
+		// GitHub Copilot OAuth
+		auth.POST("/oauth/copilot/start", rateLimiter.LimitWithOptions("oauth-copilot-start", 10, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+		}), h.CopilotOAuth.InitiateDeviceFlow)
+		auth.POST("/oauth/copilot/complete", rateLimiter.LimitWithOptions("oauth-copilot-complete", 10, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+		}), h.CopilotOAuth.CompleteDeviceFlow)
 	}
 
 	// 公开设置（无需认证）
