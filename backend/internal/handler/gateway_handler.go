@@ -281,6 +281,154 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
+	if platform == service.PlatformCopilot {
+		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+
+		for {
+			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "")
+			if err != nil {
+				if len(fs.FailedAccountIDs) == 0 {
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					return
+				}
+				action := fs.HandleSelectionExhausted(c.Request.Context())
+				switch action {
+				case FailoverContinue:
+					continue
+				case FailoverCanceled:
+					return
+				default:
+					if fs.LastFailoverErr != nil {
+						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformCopilot, streamStarted)
+					} else {
+						h.handleFailoverExhaustedSimple(c, 502, streamStarted)
+					}
+					return
+				}
+			}
+			account := selection.Account
+			setOpsSelectedAccount(c, account.ID, account.Platform)
+
+			// Acquire account concurrency slot
+			accountReleaseFunc := selection.ReleaseFunc
+			if !selection.Acquired {
+				if selection.WaitPlan == nil {
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+					return
+				}
+				accountWaitCounted := false
+				canWait, err := h.concurrencyHelper.IncrementAccountWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.MaxWaiting)
+				if err != nil {
+					reqLog.Warn("gateway.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+				} else if !canWait {
+					reqLog.Info("gateway.account_wait_queue_full",
+						zap.Int64("account_id", account.ID),
+						zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
+					)
+					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted)
+					return
+				}
+				if err == nil && canWait {
+					accountWaitCounted = true
+				}
+				releaseWait := func() {
+					if accountWaitCounted {
+						h.concurrencyHelper.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+						accountWaitCounted = false
+					}
+				}
+
+				accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+					c,
+					account.ID,
+					selection.WaitPlan.MaxConcurrency,
+					selection.WaitPlan.Timeout,
+					reqStream,
+					&streamStarted,
+				)
+				if err != nil {
+					reqLog.Warn("gateway.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+					releaseWait()
+					h.handleConcurrencyError(c, err, "account", streamStarted)
+					return
+				}
+				releaseWait()
+				if err := h.gatewayService.BindStickySession(c.Request.Context(), apiKey.GroupID, sessionKey, account.ID); err != nil {
+					reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+				}
+			}
+			accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
+
+			// Forward to Copilot
+			writerSizeBeforeForward := c.Writer.Size()
+			result, err := h.gatewayService.ForwardCopilotAsMessages(c.Request.Context(), c, account, body, "")
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			if err != nil {
+				var failoverErr *service.UpstreamFailoverError
+				if errors.As(err, &failoverErr) {
+					if c.Writer.Size() != writerSizeBeforeForward {
+						h.handleFailoverExhausted(c, failoverErr, service.PlatformCopilot, true)
+						return
+					}
+					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, failoverErr)
+					switch action {
+					case FailoverContinue:
+						continue
+					case FailoverExhausted:
+						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformCopilot, streamStarted)
+						return
+					case FailoverCanceled:
+						return
+					}
+				}
+				wroteFallback := h.ensureForwardErrorResponse(c, streamStarted)
+				reqLog.Error("gateway.forward_failed",
+					zap.Int64("account_id", account.ID),
+					zap.String("account_platform", account.Platform),
+					zap.Bool("fallback_error_response_written", wroteFallback),
+					zap.Error(err),
+				)
+				return
+			}
+
+			// Record usage
+			userAgent := c.GetHeader("User-Agent")
+			clientIP := ip.GetClientIP(c)
+			requestPayloadHash := service.HashUsageRequestPayload(body)
+			inboundEndpoint := GetInboundEndpoint(c)
+			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+
+			h.submitUsageRecordTask(func(ctx context.Context) {
+				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+					Result:             result,
+					APIKey:             apiKey,
+					User:               apiKey.User,
+					Account:            account,
+					Subscription:       subscription,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIP,
+					RequestPayloadHash: requestPayloadHash,
+					ForceCacheBilling:  fs.ForceCacheBilling,
+					APIKeyService:      h.apiKeyService,
+				}); err != nil {
+					logger.L().With(
+						zap.String("component", "handler.gateway.messages"),
+						zap.Int64("user_id", subject.UserID),
+						zap.Int64("api_key_id", apiKey.ID),
+						zap.Any("group_id", apiKey.GroupID),
+						zap.String("model", reqModel),
+						zap.Int64("account_id", account.ID),
+					).Error("gateway.record_usage_failed", zap.Error(err))
+				}
+			})
+			return
+		}
+	}
+
 	if platform == service.PlatformGemini {
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 
