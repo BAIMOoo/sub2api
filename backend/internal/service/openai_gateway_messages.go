@@ -32,11 +32,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	// Copilot 平台使用 Chat Completions API，需要特殊处理
-	if account.Platform == PlatformCopilot {
-		return s.forwardCopilotAsAnthropic(ctx, c, account, body, defaultMappedModel)
-	}
-
 	startTime := time.Now()
 
 	// 1. Parse Anthropic request

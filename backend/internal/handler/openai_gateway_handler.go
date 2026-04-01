@@ -506,8 +506,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	)
 
 	// 检查分组是否允许 /v1/messages 调度
-	// Copilot 平台默认允许，无需检查
-	if apiKey.Group != nil && apiKey.Group.Platform != service.PlatformCopilot && !apiKey.Group.AllowMessagesDispatch {
+	if apiKey.Group != nil && !apiKey.Group.AllowMessagesDispatch {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group does not allow /v1/messages dispatch")
 		return

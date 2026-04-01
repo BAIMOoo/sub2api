@@ -17,15 +17,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// forwardCopilotAsAnthropic 处理 Copilot 平台的 Anthropic Messages 请求
-// Copilot 使用 Chat Completions API，需要转换格式
-func (s *OpenAIGatewayService) forwardCopilotAsAnthropic(
+// ForwardCopilotAsMessages handles Copilot platform Anthropic Messages requests.
+// Copilot uses Chat Completions API, so we convert Anthropic → CC → Copilot API → CC → Anthropic.
+func (s *GatewayService) ForwardCopilotAsMessages(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
 	body []byte,
 	defaultMappedModel string,
-) (*OpenAIForwardResult, error) {
+) (*ForwardResult, error) {
 	startTime := time.Now()
 
 	// 1. Parse Anthropic request
@@ -36,14 +36,14 @@ func (s *OpenAIGatewayService) forwardCopilotAsAnthropic(
 	originalModel := anthropicReq.Model
 	clientStream := anthropicReq.Stream
 
-	// 2. Convert Anthropic → Chat Completions (手动转换)
+	// 2. Convert Anthropic → Chat Completions
 	ccReq := &apicompat.ChatCompletionsRequest{
 		Model:    anthropicReq.Model,
 		Messages: []apicompat.ChatMessage{},
 		Stream:   anthropicReq.Stream,
 	}
 
-	// 转换 system prompt
+	// Convert system prompt
 	if anthropicReq.System != nil {
 		var systemText string
 		json.Unmarshal(anthropicReq.System, &systemText)
@@ -56,7 +56,7 @@ func (s *OpenAIGatewayService) forwardCopilotAsAnthropic(
 		}
 	}
 
-	// 转换 messages
+	// Convert messages
 	for _, msg := range anthropicReq.Messages {
 		ccMsg := apicompat.ChatMessage{Role: msg.Role}
 		var contentText string
@@ -95,7 +95,7 @@ func (s *OpenAIGatewayService) forwardCopilotAsAnthropic(
 		return nil, fmt.Errorf("copilot account has no API key")
 	}
 
-	upstreamURL := "https://api.githubcopilot.com/chat/completions"
+	upstreamURL := fmt.Sprintf("%s/chat/completions", copilotAPIBase)
 	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(ccBody))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -114,7 +114,7 @@ func (s *OpenAIGatewayService) forwardCopilotAsAnthropic(
 	}
 
 	// 6. Send request
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return nil, fmt.Errorf("forward request: %w", err)
 	}
@@ -122,18 +122,18 @@ func (s *OpenAIGatewayService) forwardCopilotAsAnthropic(
 
 	// 7. Handle response
 	if clientStream {
-		return s.handleCopilotStreamingAsAnthropic(ctx, c, resp, originalModel, startTime)
+		return s.handleCopilotStreamingAsMessages(ctx, c, resp, originalModel, startTime)
 	}
-	return s.handleCopilotNonStreamingAsAnthropic(ctx, c, resp, originalModel, startTime)
+	return s.handleCopilotNonStreamingAsMessages(ctx, c, resp, originalModel, startTime)
 }
 
-func (s *OpenAIGatewayService) handleCopilotNonStreamingAsAnthropic(
+func (s *GatewayService) handleCopilotNonStreamingAsMessages(
 	ctx context.Context,
 	c *gin.Context,
 	resp *http.Response,
 	model string,
 	startTime time.Time,
-) (*OpenAIForwardResult, error) {
+) (*ForwardResult, error) {
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
@@ -150,7 +150,11 @@ func (s *OpenAIGatewayService) handleCopilotNonStreamingAsAnthropic(
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	// Convert Chat Completions → Anthropic (直接转换，不经过 Responses)
+	// Convert Chat Completions → Anthropic
+	var stopReason string
+	if len(ccResp.Choices) > 0 {
+		stopReason = ccResp.Choices[0].FinishReason
+	}
 	anthropicResp := &apicompat.AnthropicResponse{
 		ID:      ccResp.ID,
 		Type:    "message",
@@ -161,7 +165,7 @@ func (s *OpenAIGatewayService) handleCopilotNonStreamingAsAnthropic(
 			InputTokens:  ccResp.Usage.PromptTokens,
 			OutputTokens: ccResp.Usage.CompletionTokens,
 		},
-		StopReason: ccResp.Choices[0].FinishReason,
+		StopReason: stopReason,
 	}
 
 	if len(ccResp.Choices) > 0 {
@@ -175,12 +179,11 @@ func (s *OpenAIGatewayService) handleCopilotNonStreamingAsAnthropic(
 		}
 	}
 
-	// Write Anthropic response
 	c.JSON(http.StatusOK, anthropicResp)
 
-	return &OpenAIForwardResult{
+	return &ForwardResult{
 		RequestID: ccResp.ID,
-		Usage: OpenAIUsage{
+		Usage: ClaudeUsage{
 			InputTokens:  ccResp.Usage.PromptTokens,
 			OutputTokens: ccResp.Usage.CompletionTokens,
 		},
@@ -190,13 +193,13 @@ func (s *OpenAIGatewayService) handleCopilotNonStreamingAsAnthropic(
 	}, nil
 }
 
-func (s *OpenAIGatewayService) handleCopilotStreamingAsAnthropic(
+func (s *GatewayService) handleCopilotStreamingAsMessages(
 	ctx context.Context,
 	c *gin.Context,
 	resp *http.Response,
 	model string,
 	startTime time.Time,
-) (*OpenAIForwardResult, error) {
+) (*ForwardResult, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Status(http.StatusOK)
 
@@ -224,7 +227,7 @@ func (s *OpenAIGatewayService) handleCopilotStreamingAsAnthropic(
 			requestID = chunk.ID
 		}
 
-		// Convert to Anthropic SSE format (simplified)
+		// Convert to Anthropic SSE format
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != nil && *chunk.Choices[0].Delta.Content != "" {
 			event := map[string]any{
 				"type":  "content_block_delta",
@@ -245,9 +248,9 @@ func (s *OpenAIGatewayService) handleCopilotStreamingAsAnthropic(
 		}
 	}
 
-	return &OpenAIForwardResult{
+	return &ForwardResult{
 		RequestID: requestID,
-		Usage: OpenAIUsage{
+		Usage: ClaudeUsage{
 			InputTokens:  totalInput,
 			OutputTokens: totalOutput,
 		},

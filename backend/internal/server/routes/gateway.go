@@ -48,7 +48,11 @@ func RegisterGatewayRoutes(
 		// /v1/messages: auto-route based on group platform
 		gateway.POST("/messages", func(c *gin.Context) {
 			platform := getGroupPlatform(c)
-			if platform == service.PlatformOpenAI || platform == service.PlatformCopilot {
+			if platform == service.PlatformCopilot {
+				h.Gateway.Messages(c)
+				return
+			}
+			if platform == service.PlatformOpenAI {
 				h.OpenAIGateway.Messages(c)
 				return
 			}
