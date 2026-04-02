@@ -434,6 +434,8 @@ func isNonRetryableRefreshError(err error) bool {
 		"unauthorized_client", // 客户端未授权
 		"access_denied",       // 访问被拒绝
 		"missing_project_id",  // 缺少 project_id
+		"unauthorized:",       // GitHub access_token 过期
+		"expired",             // token 过期
 	}
 	for _, needle := range nonRetryable {
 		if strings.Contains(msg, needle) {

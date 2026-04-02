@@ -49,7 +49,9 @@ func (r *CopilotTokenRefresher) Refresh(ctx context.Context, account *Account) (
 	// 使用 access_token 刷新 Copilot API Key
 	result, err := r.copilotOAuthService.RefreshAPIKey(ctx, accessToken)
 	if err != nil {
-		return nil, fmt.Errorf("refresh copilot API key: %w", err)
+		// GitHub access_token 过期会返回 401，这是不可重试错误
+		// 需要用户重新授权（Device Flow 不支持 refresh_token）
+		return nil, fmt.Errorf("refresh copilot API key (access_token may be expired, please re-authorize): %w", err)
 	}
 
 	// 保留原有 credentials，只更新 api_key 和 expires_at
@@ -59,7 +61,7 @@ func (r *CopilotTokenRefresher) Refresh(ctx context.Context, account *Account) (
 	}
 
 	credentials["api_key"] = result.APIKey
-	credentials["expires_at"] = result.ExpiresAt.Unix()
+	credentials["expires_at"] = result.ExpiresAt
 
 	return credentials, nil
 }

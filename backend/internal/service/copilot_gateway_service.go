@@ -20,6 +20,15 @@ const (
 func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (*ForwardResult, error) {
 	startTime := time.Now()
 
+	// 检查 API Key 是否过期，过期则刷新
+	expiresAt := account.GetCredentialAsInt64("expires_at")
+	if expiresAt > 0 && time.Now().Unix() >= expiresAt {
+		logger.LegacyPrintf("service.copilot", "API Key expired, refreshing for account %d", account.ID)
+		if err := s.refreshCopilotAPIKey(ctx, account); err != nil {
+			return nil, fmt.Errorf("refresh expired API key: %w", err)
+		}
+	}
+
 	apiKey := account.GetCredential("api_key")
 	if apiKey == "" {
 		return nil, fmt.Errorf("copilot account has no API key")
@@ -102,4 +111,27 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 		Stream:       parsed.Stream,
 		Duration:     time.Since(startTime),
 	}, nil
+}
+
+// refreshCopilotAPIKey 刷新 Copilot API Key（使用 access_token）
+func (s *GatewayService) refreshCopilotAPIKey(ctx context.Context, account *Account) error {
+	accessToken := account.GetCredential("access_token")
+	if accessToken == "" {
+		return fmt.Errorf("no access_token in credentials")
+	}
+
+	result, err := s.copilotOAuthService.RefreshAPIKey(ctx, accessToken)
+	if err != nil {
+		return fmt.Errorf("refresh API key: %w", err)
+	}
+
+	// 更新 account 对象中的凭证
+	if account.Credentials == nil {
+		account.Credentials = make(map[string]any)
+	}
+	account.Credentials["api_key"] = result.APIKey
+	account.Credentials["expires_at"] = result.ExpiresAt
+
+	// 持久化到数据库
+	return s.accountRepo.Update(ctx, account)
 }

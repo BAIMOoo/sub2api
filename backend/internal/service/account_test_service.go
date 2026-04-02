@@ -68,6 +68,7 @@ type AccountTestService struct {
 	accountRepo               AccountRepository
 	geminiTokenProvider       *GeminiTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
+	copilotOAuthService       *CopilotOAuthService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
@@ -83,6 +84,7 @@ func NewAccountTestService(
 	accountRepo AccountRepository,
 	geminiTokenProvider *GeminiTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
+	copilotOAuthService *CopilotOAuthService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
@@ -91,6 +93,7 @@ func NewAccountTestService(
 		accountRepo:               accountRepo,
 		geminiTokenProvider:       geminiTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
+		copilotOAuthService:       copilotOAuthService,
 		httpUpstream:              httpUpstream,
 		cfg:                       cfg,
 		tlsFPProfileService:       tlsFPProfileService,
@@ -1833,6 +1836,14 @@ func (s *AccountTestService) testCopilotAccountConnection(c *gin.Context, accoun
 		testModelID = "gpt-4o"
 	}
 
+	// 检查 API Key 是否过期，过期则刷新
+	expiresAt := account.GetCredentialAsInt64("expires_at")
+	if expiresAt > 0 && time.Now().Unix() >= expiresAt {
+		if err := s.refreshCopilotAPIKey(ctx, account); err != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to refresh API key: %s", err.Error()))
+		}
+	}
+
 	apiKey := account.GetCredential("api_key")
 	if apiKey == "" {
 		return s.sendErrorAndEnd(c, "No API key available")
@@ -1911,4 +1922,25 @@ func (s *AccountTestService) testCopilotAccountConnection(c *gin.Context, accoun
 
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+// refreshCopilotAPIKey 刷新 Copilot API Key（使用 access_token）
+func (s *AccountTestService) refreshCopilotAPIKey(ctx context.Context, account *Account) error {
+	accessToken := account.GetCredential("access_token")
+	if accessToken == "" {
+		return fmt.Errorf("no access_token in credentials")
+	}
+
+	result, err := s.copilotOAuthService.RefreshAPIKey(ctx, accessToken)
+	if err != nil {
+		return fmt.Errorf("refresh API key: %w", err)
+	}
+
+	if account.Credentials == nil {
+		account.Credentials = make(map[string]any)
+	}
+	account.Credentials["api_key"] = result.APIKey
+	account.Credentials["expires_at"] = result.ExpiresAt
+
+	return s.accountRepo.Update(ctx, account)
 }

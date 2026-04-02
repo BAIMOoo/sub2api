@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/copilot"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -45,9 +44,9 @@ func (s *CopilotOAuthService) InitiateDeviceFlow(ctx context.Context) (*CopilotA
 }
 
 type CopilotCallbackResult struct {
-	AccessToken string    `json:"access_token"`
-	APIKey      string    `json:"api_key"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	AccessToken string `json:"access_token"`
+	APIKey      string `json:"api_key"`
+	ExpiresAt   int64  `json:"expires_at"`
 }
 
 func (s *CopilotOAuthService) CompleteDeviceFlow(ctx context.Context, deviceCode string, interval int) (*CopilotCallbackResult, error) {
@@ -66,7 +65,7 @@ func (s *CopilotOAuthService) CompleteDeviceFlow(ctx context.Context, deviceCode
 	return &CopilotCallbackResult{
 		AccessToken: accessToken,
 		APIKey:      apiKeyResp.Token,
-		ExpiresAt:   time.Unix(apiKeyResp.ExpiresAt, 0),
+		ExpiresAt:   apiKeyResp.ExpiresAt,
 	}, nil
 }
 
@@ -80,6 +79,6 @@ func (s *CopilotOAuthService) RefreshAPIKey(ctx context.Context, accessToken str
 	return &CopilotCallbackResult{
 		AccessToken: accessToken,
 		APIKey:      apiKeyResp.Token,
-		ExpiresAt:   time.Unix(apiKeyResp.ExpiresAt, 0),
+		ExpiresAt:   apiKeyResp.ExpiresAt,
 	}, nil
 }

@@ -164,7 +164,10 @@ func GetAPIKey(ctx context.Context, accessToken string) (*APIKeyResponse, error)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get API key: %s", string(body))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("unauthorized: access_token expired or invalid")
+		}
+		return nil, fmt.Errorf("failed to get API key (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var result APIKeyResponse
