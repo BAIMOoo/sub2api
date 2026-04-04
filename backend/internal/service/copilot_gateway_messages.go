@@ -232,7 +232,10 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	}
 
 	// Task 2: map Anthropic thinking config → Chat Completions reasoning_effort
-	if anthropicReq.Thinking != nil && anthropicReq.Thinking.Type != "disabled" {
+	// Only set reasoning_effort for models that actually support extended reasoning (o1/o3/o4).
+	// Sending reasoning_effort to non-reasoning models (e.g. gpt-4o, claude-3.7-sonnet) would
+	// unintentionally trigger slow extended-reasoning mode or be silently ignored with undefined behavior.
+	if anthropicReq.Thinking != nil && anthropicReq.Thinking.Type != "disabled" && isReasoningModel(mappedModel) {
 		effort := "high" // default
 		if anthropicReq.OutputConfig != nil && anthropicReq.OutputConfig.Effort != "" {
 			effort = anthropicReq.OutputConfig.Effort
