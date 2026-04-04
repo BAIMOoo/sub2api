@@ -434,8 +434,8 @@ func isNonRetryableRefreshError(err error) bool {
 		"unauthorized_client", // 客户端未授权
 		"access_denied",       // 访问被拒绝
 		"missing_project_id",  // 缺少 project_id
-		"unauthorized:",       // GitHub access_token 过期
-		"expired",             // token 过期
+		// 注意：不包含 "unauthorized:" —— Copilot 刷新时的 401 可能是临时网络问题，
+		// 应走重试→临时不可调度流程，而不是直接标记为 error 永久失效
 	}
 	for _, needle := range nonRetryable {
 		if strings.Contains(msg, needle) {

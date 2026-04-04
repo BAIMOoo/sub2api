@@ -796,6 +796,11 @@ func (a *Account) IsOpenAI() bool {
 	return a.Platform == PlatformOpenAI
 }
 
+// IsOpenAICompatible 返回账号是否兼容 OpenAI 格式（OpenAI 和 Copilot）
+func (a *Account) IsOpenAICompatible() bool {
+	return a.Platform == PlatformOpenAI || a.Platform == PlatformCopilot
+}
+
 func (a *Account) IsAnthropic() bool {
 	return a.Platform == PlatformAnthropic
 }

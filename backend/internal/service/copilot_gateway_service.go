@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 const (
@@ -20,9 +21,9 @@ const (
 func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (*ForwardResult, error) {
 	startTime := time.Now()
 
-	// 检查 API Key 是否过期，过期则刷新
+	// 检查 API Key 是否过期，提前 5 秒视为过期（应对时钟偏差和网络延迟）
 	expiresAt := account.GetCredentialAsInt64("expires_at")
-	if expiresAt > 0 && time.Now().Unix() >= expiresAt {
+	if expiresAt > 0 && time.Now().Unix() >= expiresAt-5 {
 		logger.LegacyPrintf("service.copilot", "API Key expired, refreshing for account %d", account.ID)
 		if err := s.refreshCopilotAPIKey(ctx, account); err != nil {
 			return nil, fmt.Errorf("refresh expired API key: %w", err)
@@ -56,6 +57,12 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 	req.Header.Set("Editor-Version", "vscode/1.95.0")
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.26.7")
 	req.Header.Set("User-Agent", "GitHubCopilotChat/0.26.7")
+	req.Header.Set("openai-intent", "conversation-panel")
+	req.Header.Set("x-github-api-version", "2025-04-01")
+	req.Header.Set("x-request-id", uuid.NewString())
+	req.Header.Set("x-vscode-user-agent-library-version", "electron-fetch")
+	// Determine X-Initiator from Chat Completions messages (role=assistant → agent)
+	req.Header.Set("X-Initiator", determineCCInitiator(body))
 
 	// 获取代理配置
 	var proxyURL string
@@ -113,25 +120,73 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 	}, nil
 }
 
-// refreshCopilotAPIKey 刷新 Copilot API Key（使用 access_token）
+// refreshCopilotAPIKey 刷新 Copilot API Key（使用 access_token）。
+// 使用 singleflight 确保同一账号并发过期时只发出一次 GitHub API 调用，避免雷群效应。
 func (s *GatewayService) refreshCopilotAPIKey(ctx context.Context, account *Account) error {
-	accessToken := account.GetCredential("access_token")
-	if accessToken == "" {
-		return fmt.Errorf("no access_token in credentials")
+	key := fmt.Sprintf("copilot_refresh_%d", account.ID)
+
+	type refreshResult struct {
+		apiKey    string
+		expiresAt int64
 	}
 
-	result, err := s.copilotOAuthService.RefreshAPIKey(ctx, accessToken)
+	v, err, _ := s.copilotRefreshSF.Do(key, func() (interface{}, error) {
+		accessToken := account.GetCredential("access_token")
+		if accessToken == "" {
+			return nil, fmt.Errorf("no access_token in credentials")
+		}
+
+		result, err := s.copilotOAuthService.RefreshAPIKey(ctx, accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("refresh API key: %w", err)
+		}
+
+		// 更新 account 对象中的凭证
+		if account.Credentials == nil {
+			account.Credentials = make(map[string]any)
+		}
+		account.Credentials["api_key"] = result.APIKey
+		account.Credentials["expires_at"] = result.ExpiresAt
+
+		// 持久化到数据库
+		if err := s.accountRepo.Update(ctx, account); err != nil {
+			return nil, err
+		}
+
+		return &refreshResult{apiKey: result.APIKey, expiresAt: result.ExpiresAt}, nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("refresh API key: %w", err)
+		return err
 	}
 
-	// 更新 account 对象中的凭证
-	if account.Credentials == nil {
-		account.Credentials = make(map[string]any)
+	// singleflight 去重时，非执行方的 account 对象未在闭包内更新，需在此同步。
+	if r, ok := v.(*refreshResult); ok {
+		if account.Credentials == nil {
+			account.Credentials = make(map[string]any)
+		}
+		account.Credentials["api_key"] = r.apiKey
+		account.Credentials["expires_at"] = r.expiresAt
 	}
-	account.Credentials["api_key"] = result.APIKey
-	account.Credentials["expires_at"] = result.ExpiresAt
+	return nil
+}
 
-	// 持久化到数据库
-	return s.accountRepo.Update(ctx, account)
+// determineCCInitiator inspects a raw Chat Completions request body and returns
+// "agent" when it contains assistant or tool messages (multi-turn tool use),
+// "user" otherwise. Mirrors determineInitiator for the direct-forward path.
+func determineCCInitiator(body []byte) string {
+	var req struct {
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return "user"
+	}
+	for _, m := range req.Messages {
+		if m.Role == "assistant" || m.Role == "tool" {
+			return "agent"
+		}
+	}
+	return "user"
 }

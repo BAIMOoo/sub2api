@@ -49,7 +49,7 @@ type APIKeyResponse struct {
 func GetDeviceCode(ctx context.Context) (*DeviceCodeResponse, error) {
 	data := url.Values{}
 	data.Set("client_id", GitHubClientID)
-	data.Set("scope", "user:email")
+	data.Set("scope", "read:user")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", GitHubDeviceCodeURL, nil)
 	if err != nil {

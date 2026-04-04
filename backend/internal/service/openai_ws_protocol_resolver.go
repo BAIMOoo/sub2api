@@ -36,8 +36,8 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 	if account == nil {
 		return openAIWSHTTPDecision("account_missing")
 	}
-	if !account.IsOpenAI() {
-		return openAIWSHTTPDecision("platform_not_openai")
+	if !account.IsOpenAICompatible() {
+		return openAIWSHTTPDecision("platform_not_openai_compatible")
 	}
 	if account.IsOpenAIWSForceHTTPEnabled() {
 		return openAIWSHTTPDecision("account_force_http")

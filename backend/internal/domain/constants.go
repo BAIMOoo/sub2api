@@ -117,28 +117,50 @@ var DefaultAntigravityModelMapping = map[string]string{
 }
 
 // DefaultCopilotModelMapping 是 GitHub Copilot 平台的默认模型映射
-// 支持 GPT、Claude、Codex 和 Embedding 模型
+// 支持 GPT、Claude、Gemini、Codex 和 Embedding 模型
 var DefaultCopilotModelMapping = map[string]string{
 	// GPT 系列
-	"gpt-4":                "gpt-4",
-	"gpt-4-turbo":          "gpt-4-turbo",
-	"gpt-4o":               "gpt-4o",
-	"gpt-3.5-turbo":        "gpt-3.5-turbo",
-	"o1":                   "o1",
-	"o1-mini":              "o1-mini",
-	"o1-preview":           "o1-preview",
+	"gpt-4":                      "gpt-4",
+	"gpt-4-turbo":                "gpt-4-turbo",
+	"gpt-4o":                     "gpt-4o",
+	"gpt-4o-mini":                "gpt-4o-mini",
+	"gpt-3.5-turbo":              "gpt-3.5-turbo",
+	"o1":                         "o1",
+	"o1-mini":                    "o1-mini",
+	"o1-preview":                 "o1-preview",
+	"gpt-4.1":                    "gpt-4.1",
+	"gpt-5.1":                    "gpt-5.1",
+	"gpt-5.2":                    "gpt-5.2",
+	"gpt-5-mini":                 "gpt-5-mini",
+	"gpt-5.4":                    "gpt-5.4",
+	"gpt-5.4-mini":               "gpt-5.4-mini",
 	// Claude 系列
-	"claude-opus-4.6":      "claude-opus-4.6",
-	"claude-opus-4-6":      "claude-opus-4.6",
-	"claude-sonnet-4.6":    "claude-sonnet-4.6",
-	"claude-sonnet-4-6":    "claude-sonnet-4.6",
-	"claude-3.5-sonnet":    "claude-3.5-sonnet",
-	"claude-3-5-sonnet":    "claude-3.5-sonnet",
-	// Codex (responses API)
-	"gpt-5.1-codex":        "gpt-5.1-codex",
+	"claude-opus-4.6":            "claude-opus-4.6",
+	"claude-opus-4-6":            "claude-opus-4.6",
+	"claude-opus-4.6-fast":       "claude-opus-4.6-fast",
+	"claude-opus-4.5":            "claude-opus-4.5",
+	"claude-opus-4-5":            "claude-opus-4.5",
+	"claude-sonnet-4.6":          "claude-sonnet-4.6",
+	"claude-sonnet-4-6":          "claude-sonnet-4.6",
+	"claude-sonnet-4.5":          "claude-sonnet-4.5",
+	"claude-sonnet-4-5":          "claude-sonnet-4.5",
+	"claude-sonnet-4":            "claude-sonnet-4",
+	"claude-haiku-4.5":           "claude-haiku-4.5",
+	"claude-haiku-4-5":           "claude-haiku-4.5",
+	"claude-haiku-4-5-20251001":  "claude-haiku-4.5",
+	"claude-3.5-sonnet":          "claude-3.5-sonnet",
+	"claude-3-5-sonnet":          "claude-3.5-sonnet",
+	// Gemini 系列
+	"gemini-2.5-pro":             "gemini-2.5-pro",
+	"gemini-3-flash-preview":     "gemini-3-flash-preview",
+	"gemini-3.1-pro-preview":     "gemini-3.1-pro-preview",
+	// Codex
+	"gpt-5.1-codex":              "gpt-5.1-codex",
+	"gpt-5.2-codex":              "gpt-5.2-codex",
+	"gpt-5.3-codex":              "gpt-5.3-codex",
 	// Embedding
-	"text-embedding-3-small": "text-embedding-3-small",
-	"text-embedding-ada-002": "text-embedding-ada-002",
+	"text-embedding-3-small":     "text-embedding-3-small",
+	"text-embedding-ada-002":     "text-embedding-ada-002",
 }
 
 // DefaultBedrockModelMapping 是 AWS Bedrock 平台的默认模型映射

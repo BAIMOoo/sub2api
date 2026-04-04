@@ -359,9 +359,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
-			// Forward to Copilot
+			// Forward to Copilot — use Responses API for models that require it
 			writerSizeBeforeForward := c.Writer.Size()
-			result, err := h.gatewayService.ForwardCopilotAsMessages(c.Request.Context(), c, account, body, "")
+			var result *service.ForwardResult
+			if copilotShouldUseResponsesAPI(reqModel) {
+				result, err = h.gatewayService.ForwardCopilotAsResponses(c.Request.Context(), c, account, body, "")
+			} else {
+				result, err = h.gatewayService.ForwardCopilotAsMessages(c.Request.Context(), c, account, body, "")
+			}
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
@@ -1918,4 +1923,12 @@ func (h *GatewayHandler) getUserMsgQueueMode(account *service.Account, parsed *s
 		mode = h.cfg.Gateway.UserMessageQueue.GetEffectiveMode()
 	}
 	return mode
+}
+
+// copilotShouldUseResponsesAPI returns true if the requested model should be
+// forwarded via the Copilot Responses API (/responses) instead of the Chat
+// Completions API (/chat/completions). Models like gpt-5.1-codex only support
+// the Responses API endpoint.
+func copilotShouldUseResponsesAPI(model string) bool {
+	return strings.Contains(model, "codex")
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -179,16 +180,10 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 				}
 			}
 
-			// Emit text blocks as a single user message
-			if len(texts) > 0 {
-				textContent, _ := json.Marshal(strings.Join(texts, "\n"))
-				ccReq.Messages = append(ccReq.Messages, apicompat.ChatMessage{
-					Role:    "user",
-					Content: textContent,
-				})
-			}
-
-			// Emit each tool_result as a separate tool role message
+			// Emit tool_result messages BEFORE text, so that tool responses
+			// immediately follow the assistant's tool_calls in CC format.
+			// Otherwise Copilot's backend sees a user message between
+			// tool_calls and tool responses, breaking the pairing.
 			for _, tr := range toolResults {
 				resultText := extractToolResultText(tr.Content)
 				resultJSON, _ := json.Marshal(resultText)
@@ -198,12 +193,16 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 					ToolCallID: tr.ToolUseID,
 				})
 			}
-		}
-	}
 
-	if anthropicReq.MaxTokens > 0 {
-		maxTokens := anthropicReq.MaxTokens
-		ccReq.MaxTokens = &maxTokens
+			// Emit text blocks as a single user message (after tool results)
+			if len(texts) > 0 {
+				textContent, _ := json.Marshal(strings.Join(texts, "\n"))
+				ccReq.Messages = append(ccReq.Messages, apicompat.ChatMessage{
+					Role:    "user",
+					Content: textContent,
+				})
+			}
+		}
 	}
 
 	// Forward optional sampling parameters
@@ -222,6 +221,30 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	ccReq.Model = mappedModel
 	ccReq.Stream = clientStream
 
+	// Task 7: max_tokens → max_completion_tokens for reasoning models (o1/o3/o4)
+	if anthropicReq.MaxTokens > 0 {
+		maxTokens := anthropicReq.MaxTokens
+		if isReasoningModel(mappedModel) {
+			ccReq.MaxCompletionTokens = &maxTokens
+		} else {
+			ccReq.MaxTokens = &maxTokens
+		}
+	}
+
+	// Task 2: map Anthropic thinking config → Chat Completions reasoning_effort
+	if anthropicReq.Thinking != nil && anthropicReq.Thinking.Type != "disabled" {
+		effort := "high" // default
+		if anthropicReq.OutputConfig != nil && anthropicReq.OutputConfig.Effort != "" {
+			effort = anthropicReq.OutputConfig.Effort
+		}
+		ccReq.ReasoningEffort = effort
+	}
+
+	// Task 6: include_usage so streaming final chunk carries token counts
+	if anthropicReq.Stream {
+		ccReq.StreamOptions = &apicompat.ChatStreamOptions{IncludeUsage: true}
+	}
+
 	logger.L().Debug("copilot messages: model mapping applied",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
@@ -235,9 +258,9 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
 	}
 
-	// 5. Check and refresh API Key if expired
+	// 5. Check and refresh API Key if expired（提前 5 秒视为过期，应对时钟偏差）
 	expiresAt := account.GetCredentialAsInt64("expires_at")
-	if expiresAt > 0 && time.Now().Unix() >= expiresAt {
+	if expiresAt > 0 && time.Now().Unix() >= expiresAt-5 {
 		logger.L().Info("Copilot API Key expired, refreshing", zap.Int64("account_id", account.ID))
 		if err := s.refreshCopilotAPIKey(ctx, account); err != nil {
 			return nil, fmt.Errorf("refresh expired API key: %w", err)
@@ -262,6 +285,15 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	req.Header.Set("Editor-Version", "vscode/1.95.0")
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.26.7")
 	req.Header.Set("User-Agent", "GitHubCopilotChat/0.26.7")
+	// Task 1: supplementary headers required by Copilot API
+	req.Header.Set("openai-intent", "conversation-panel")
+	req.Header.Set("x-github-api-version", "2025-04-01")
+	req.Header.Set("x-request-id", uuid.NewString())
+	req.Header.Set("x-vscode-user-agent-library-version", "electron-fetch")
+	req.Header.Set("X-Initiator", determineInitiator(anthropicReq.Messages))
+	if hasVisionContent(anthropicReq.Messages) {
+		req.Header.Set("Copilot-Vision-Request", "true")
+	}
 
 	var proxyURL string
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -278,8 +310,50 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	// 7. Check for HTTP errors before dispatching
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s", resp.StatusCode, string(respBody))
-		return nil, fmt.Errorf("copilot API error: %d - %s", resp.StatusCode, string(respBody))
+		bodyStr := string(respBody)
+		finalStatus := resp.StatusCode
+		finalHeaders := resp.Header
+
+		// 收到 401 "token expired"：GitHub 在请求途中使 token 失效，主动刷新并重试一次。
+		// 这会出现在 token 恰好在请求发送过程中到期的情况（expires_at 检查只能防止请求前的过期）。
+		if resp.StatusCode == http.StatusUnauthorized && strings.Contains(bodyStr, "token expired") {
+			logger.L().Info("Copilot upstream 401 token expired, refreshing and retrying",
+				zap.Int64("account_id", account.ID))
+			if refreshErr := s.refreshCopilotAPIKey(ctx, account); refreshErr == nil {
+				newAPIKey := account.GetCredential("api_key")
+				retryReq, retryErr := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(ccBody))
+				if retryErr == nil {
+					for k, vals := range req.Header {
+						retryReq.Header[k] = vals
+					}
+					retryReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", newAPIKey))
+					retryReq.Header.Set("x-request-id", uuid.NewString())
+					retryResp, retryDoErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+					if retryDoErr == nil {
+						defer retryResp.Body.Close()
+						if retryResp.StatusCode < 400 {
+							if clientStream {
+								return s.handleCopilotStreamingAsMessages(ctx, c, retryResp, originalModel, startTime)
+							}
+							return s.handleCopilotNonStreamingAsMessages(ctx, c, retryResp, originalModel, startTime)
+						}
+						// 重试仍然失败，用重试的响应作为最终错误
+						retryBody, _ := io.ReadAll(retryResp.Body)
+						bodyStr = string(retryBody)
+						respBody = retryBody
+						finalStatus = retryResp.StatusCode
+						finalHeaders = retryResp.Header
+					}
+				}
+			}
+		}
+
+		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s", finalStatus, bodyStr)
+		return nil, &UpstreamFailoverError{
+			StatusCode:      finalStatus,
+			ResponseBody:    respBody,
+			ResponseHeaders: finalHeaders,
+		}
 	}
 
 	// 8. Handle response
@@ -330,8 +404,18 @@ func (s *GatewayService) handleCopilotNonStreamingAsMessages(
 	}
 
 	if len(ccResp.Choices) > 0 {
+		msg := ccResp.Choices[0].Message
+
+		// Task 4: prepend thinking block when reasoning_content is present
+		if msg.ReasoningContent != "" {
+			anthropicResp.Content = append(anthropicResp.Content, apicompat.AnthropicContentBlock{
+				Type:     "thinking",
+				Thinking: msg.ReasoningContent,
+			})
+		}
+
 		var contentText string
-		json.Unmarshal(ccResp.Choices[0].Message.Content, &contentText)
+		json.Unmarshal(msg.Content, &contentText)
 		if contentText != "" {
 			anthropicResp.Content = append(anthropicResp.Content, apicompat.AnthropicContentBlock{
 				Type: "text",
@@ -375,11 +459,13 @@ func (s *GatewayService) handleCopilotNonStreamingAsMessages(
 // copilotStreamState tracks the state machine for converting Chat Completions
 // streaming chunks into the Anthropic SSE envelope protocol.
 type copilotStreamState struct {
-	messageStartSent bool
-	blockIndex       int        // next block index to assign
-	blockOpen        bool       // whether a content_block is currently open
-	textBlockOpen    bool       // specifically if the open block is a text block
-	toolCallMap      map[int]int // CC tool_call index -> Anthropic block index
+	messageStartSent  bool
+	blockIndex        int         // next block index to assign
+	blockOpen         bool        // whether a content_block is currently open
+	textBlockOpen     bool        // specifically if the open block is a text block
+	thinkingBlockOpen bool        // whether a thinking content_block is currently open
+	thinkingBlockIdx  int         // saved block index of the open thinking block
+	toolCallMap       map[int]int // CC tool_call index -> Anthropic block index
 }
 
 func (s *GatewayService) handleCopilotStreamingAsMessages(
@@ -532,8 +618,43 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 			}
 		}
 
+		// --- 2.5. Task 3: Handle reasoning_content deltas → thinking block ---
+		if delta.ReasoningContent != nil && *delta.ReasoningContent != "" {
+			if !state.thinkingBlockOpen {
+				state.thinkingBlockIdx = state.blockIndex
+				writeAnthropicSSE(w, "content_block_start", map[string]any{
+					"type":  "content_block_start",
+					"index": state.thinkingBlockIdx,
+					"content_block": map[string]any{
+						"type":     "thinking",
+						"thinking": "",
+					},
+				})
+				state.thinkingBlockOpen = true
+				state.blockOpen = true
+				state.blockIndex++
+			}
+			writeAnthropicSSE(w, "content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": state.thinkingBlockIdx,
+				"delta": map[string]any{
+					"type":     "thinking_delta",
+					"thinking": *delta.ReasoningContent,
+				},
+			})
+		}
+
 		// --- 3. Handle text content deltas ---
 		if delta.Content != nil && *delta.Content != "" {
+			// Close thinking block if still open (reasoning finished, text starting)
+			if state.thinkingBlockOpen {
+				writeAnthropicSSE(w, "content_block_stop", map[string]any{
+					"type":  "content_block_stop",
+					"index": state.thinkingBlockIdx,
+				})
+				state.thinkingBlockOpen = false
+				state.blockOpen = false
+			}
 			if !state.textBlockOpen {
 				// Open a new text content block
 				blockIdx := state.blockIndex
@@ -564,6 +685,16 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 		// --- 4. Handle finish ---
 		if choice.FinishReason != nil {
 			finishReason := *choice.FinishReason
+
+			// Close any open thinking block
+			if state.thinkingBlockOpen {
+				writeAnthropicSSE(w, "content_block_stop", map[string]any{
+					"type":  "content_block_stop",
+					"index": state.thinkingBlockIdx,
+				})
+				state.thinkingBlockOpen = false
+				state.blockOpen = false
+			}
 
 			// Close any open text block
 			if state.textBlockOpen {
@@ -616,8 +747,14 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 	// still close the envelope so the client doesn't hang.
 	if state.messageStartSent {
 		// Check if we never got a finish event
-		needsClose := state.blockOpen || state.textBlockOpen
+		needsClose := state.blockOpen || state.textBlockOpen || state.thinkingBlockOpen
 		if needsClose {
+			if state.thinkingBlockOpen {
+				writeAnthropicSSE(w, "content_block_stop", map[string]any{
+					"type":  "content_block_stop",
+					"index": state.thinkingBlockIdx,
+				})
+			}
 			if state.textBlockOpen {
 				writeAnthropicSSE(w, "content_block_stop", map[string]any{
 					"type":  "content_block_stop",
@@ -700,4 +837,45 @@ func mapCCStopReason(finishReason string) string {
 	default:
 		return "end_turn"
 	}
+}
+
+// determineInitiator returns "agent" when the conversation contains multi-turn
+// tool/assistant exchanges, "user" otherwise. Mirrors litellm's _determine_initiator.
+func determineInitiator(messages []apicompat.AnthropicMessage) string {
+	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			return "agent"
+		}
+		var blocks []apicompat.AnthropicContentBlock
+		if json.Unmarshal(msg.Content, &blocks) == nil {
+			for _, b := range blocks {
+				if b.Type == "tool_result" {
+					return "agent"
+				}
+			}
+		}
+	}
+	return "user"
+}
+
+// hasVisionContent returns true when any message contains an image content block.
+func hasVisionContent(messages []apicompat.AnthropicMessage) bool {
+	for _, msg := range messages {
+		var blocks []apicompat.AnthropicContentBlock
+		if json.Unmarshal(msg.Content, &blocks) == nil {
+			for _, b := range blocks {
+				if b.Type == "image" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isReasoningModel returns true for o1/o3/o4-series models that require
+// max_completion_tokens instead of the deprecated max_tokens parameter.
+func isReasoningModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4")
 }

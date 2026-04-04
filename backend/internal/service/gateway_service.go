@@ -559,6 +559,7 @@ type GatewayService struct {
 	userGroupRateResolver *userGroupRateResolver
 	userGroupRateCache    *gocache.Cache
 	userGroupRateSF       singleflight.Group
+	copilotRefreshSF      singleflight.Group // 防止同一 Copilot 账号并发刷新 API Key（雷群效应）
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
 	settingService        *SettingService
@@ -8027,6 +8028,13 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	// 返回 nil 避免 handler 层记录为错误，也不设置 ops 上游错误上下文。
 	if account.Platform == PlatformAntigravity {
 		s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported for this platform")
+		return nil
+	}
+
+	// Copilot 账户不支持 count_tokens 端点（GitHub 会返回 403 "Request not allowed"）。
+	// 返回 404 让客户端 fallback 到本地 token 估算，避免无意义的上游请求。
+	if account.Platform == PlatformCopilot {
+		s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported for Copilot")
 		return nil
 	}
 
