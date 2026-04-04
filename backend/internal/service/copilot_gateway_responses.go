@@ -105,6 +105,12 @@ func (s *GatewayService) ForwardCopilotAsResponses(
 	// 7. Send request
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		if isCopilotRetryableNetworkError(err) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:             http.StatusBadGateway,
+				RetryableOnSameAccount: true,
+			}
+		}
 		return nil, fmt.Errorf("forward request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -120,9 +126,10 @@ func (s *GatewayService) ForwardCopilotAsResponses(
 		}
 		logger.LegacyPrintf("service.copilot", "Copilot Responses API error: status=%d, body=%s", resp.StatusCode, string(errBody))
 		return nil, &UpstreamFailoverError{
-			StatusCode:      resp.StatusCode,
-			ResponseBody:    errBody,
-			ResponseHeaders: resp.Header,
+			StatusCode:             resp.StatusCode,
+			ResponseBody:           errBody,
+			ResponseHeaders:        resp.Header,
+			RetryableOnSameAccount: resp.StatusCode == http.StatusRequestTimeout,
 		}
 	}
 

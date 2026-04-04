@@ -73,6 +73,12 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 	// 发送请求（使用代理和 TLS 指纹）
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		if isCopilotRetryableNetworkError(err) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:             http.StatusBadGateway,
+				RetryableOnSameAccount: true,
+			}
+		}
 		return nil, fmt.Errorf("forward request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -86,7 +92,11 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 	// 处理错误响应
 	if resp.StatusCode >= 400 {
 		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s, request_body=%s", resp.StatusCode, string(respBody), string(body))
-		return nil, fmt.Errorf("copilot API error: %d - %s", resp.StatusCode, string(respBody))
+		return nil, &UpstreamFailoverError{
+			StatusCode:             resp.StatusCode,
+			ResponseBody:           respBody,
+			RetryableOnSameAccount: resp.StatusCode == http.StatusRequestTimeout,
+		}
 	}
 
 	// 解析响应以提取 token 使用量

@@ -319,6 +319,12 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	// 6. Send request
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		if isCopilotRetryableNetworkError(err) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:             http.StatusBadGateway,
+				RetryableOnSameAccount: true,
+			}
+		}
 		return nil, fmt.Errorf("forward request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -375,9 +381,10 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 
 		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s", finalStatus, bodyStr)
 		return nil, &UpstreamFailoverError{
-			StatusCode:      finalStatus,
-			ResponseBody:    respBody,
-			ResponseHeaders: finalHeaders,
+			StatusCode:             finalStatus,
+			ResponseBody:           respBody,
+			ResponseHeaders:        finalHeaders,
+			RetryableOnSameAccount: finalStatus == http.StatusRequestTimeout,
 		}
 	}
 
@@ -861,6 +868,22 @@ func writeAnthropicSSE(w gin.ResponseWriter, eventType string, data any) {
 	w.Flush()
 }
 
+// isCopilotRetryableNetworkError reports whether the error is a transient
+// network-level failure (EOF, unexpected EOF, connection reset, broken pipe)
+// that warrants a same-account retry before triggering failover.
+func isCopilotRetryableNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe")
+}
+
 func mapCCStopReason(finishReason string) string {
 	switch finishReason {
 	case "stop":
@@ -970,6 +993,14 @@ func writeCopilotNonRetryableError(c *gin.Context, respBody []byte) error {
 	if msg == "" {
 		msg = "invalid request"
 	}
+	// Rewrite model_max_prompt_tokens_exceeded to Anthropic native format so that
+	// Claude Code CLI recognises it as a context-length error and triggers automatic
+	// context compaction instead of blindly retrying the same oversized request.
+	// Copilot format:   "prompt token count of 128372 exceeds the limit of 128000"
+	// Anthropic format: "prompt is too long: 128372 tokens > 128000 maximum"
+	if upstreamErr.Error.Code == "model_max_prompt_tokens_exceeded" {
+		msg = rewritePromptTooLongMessage(msg)
+	}
 	c.JSON(http.StatusBadRequest, gin.H{
 		"type": "error",
 		"error": gin.H{
@@ -980,6 +1011,31 @@ func writeCopilotNonRetryableError(c *gin.Context, respBody []byte) error {
 	return &NonFailoverWrittenError{
 		Cause: fmt.Errorf("copilot non-retryable 400: code=%s message=%s", upstreamErr.Error.Code, msg),
 	}
+}
+
+// rewritePromptTooLongMessage converts a Copilot-style token-exceeded message
+// ("prompt token count of X exceeds the limit of Y") to the Anthropic native
+// format ("prompt is too long: X tokens > Y maximum") that Claude Code CLI
+// recognises as a context-length error and uses to trigger context compaction.
+func rewritePromptTooLongMessage(msg string) string {
+	// Extract the two numbers with a simple scan — avoids a regexp import.
+	const prefix = "prompt token count of "
+	const mid = " exceeds the limit of "
+	pi := strings.Index(msg, prefix)
+	if pi < 0 {
+		return msg
+	}
+	rest := msg[pi+len(prefix):]
+	mi := strings.Index(rest, mid)
+	if mi < 0 {
+		return msg
+	}
+	actual := rest[:mi]
+	limit := strings.TrimSpace(rest[mi+len(mid):])
+	if actual == "" || limit == "" {
+		return msg
+	}
+	return fmt.Sprintf("prompt is too long: %s tokens > %s maximum", actual, limit)
 }
 
 // isCopilotNonRetryable400Code returns true for 400 error codes that are caused by
