@@ -333,7 +333,7 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 						defer retryResp.Body.Close()
 						if retryResp.StatusCode < 400 {
 							if clientStream {
-								return s.handleCopilotStreamingAsMessages(ctx, c, retryResp, originalModel, startTime)
+								return s.handleCopilotStreamingAsMessages(ctx, c, retryResp, originalModel, startTime, estimateCCRequestTokens(ccReq))
 							}
 							return s.handleCopilotNonStreamingAsMessages(ctx, c, retryResp, originalModel, startTime)
 						}
@@ -358,7 +358,12 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 
 	// 8. Handle response
 	if clientStream {
-		return s.handleCopilotStreamingAsMessages(ctx, c, resp, originalModel, startTime)
+		// Pre-estimate input tokens from the Chat Completions request body so that
+		// message_start can carry a meaningful input_tokens value without buffering
+		// the entire response. Copilot only sends usage in the last streaming chunk,
+		// which would otherwise force us to buffer everything first.
+		estimatedInputTokens := estimateCCRequestTokens(ccReq)
+		return s.handleCopilotStreamingAsMessages(ctx, c, resp, originalModel, startTime, estimatedInputTokens)
 	}
 	return s.handleCopilotNonStreamingAsMessages(ctx, c, resp, originalModel, startTime)
 }
@@ -474,6 +479,7 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 	resp *http.Response,
 	model string,
 	startTime time.Time,
+	estimatedInputTokens int,
 ) (*ForwardResult, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -486,6 +492,10 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 	// Increase scanner buffer for large chunks (1 MB)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	// estimatedInputTokens is pre-computed from the request body before streaming begins.
+	// Copilot only sends real usage in the final chunk, but Claude Code reads input_tokens
+	// from message_start (first event) to compute context window usage percentage (ctx%).
+	// We use the estimate here and update with the real value via message_delta at the end.
 	var totalInput, totalOutput int
 	requestID := ""
 
@@ -514,13 +524,15 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 			requestID = chunk.ID
 		}
 
-		// Track usage from chunks (some providers send it on the final chunk)
+		// Track real usage from the final chunk (stream_options.include_usage=true).
 		if chunk.Usage != nil {
 			totalInput = chunk.Usage.PromptTokens
 			totalOutput = chunk.Usage.CompletionTokens
 		}
 
 		// --- 1. Emit message_start on first chunk ---
+		// Use estimatedInputTokens so Claude Code can compute ctx% immediately,
+		// without having to wait for the final usage chunk.
 		if !state.messageStartSent {
 			msgID := requestID
 			if msgID == "" {
@@ -537,7 +549,7 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 					"stop_reason":   nil,
 					"stop_sequence": nil,
 					"usage": map[string]int{
-						"input_tokens":  0,
+						"input_tokens":  estimatedInputTokens,
 						"output_tokens": 0,
 					},
 				},
@@ -837,6 +849,38 @@ func mapCCStopReason(finishReason string) string {
 	default:
 		return "end_turn"
 	}
+}
+
+// estimateCCRequestTokens estimates the input token count from a Chat Completions request.
+// Uses the standard "characters / 4" heuristic (OpenAI empirical rule).
+// This gives a good-enough approximation for ctx% display without exact tokenization.
+func estimateCCRequestTokens(req *apicompat.ChatCompletionsRequest) int {
+	chars := 0
+	for _, msg := range req.Messages {
+		chars += len(msg.Role)
+		chars += len(msg.Content) // json.RawMessage, counts raw JSON bytes
+		chars += len(msg.ReasoningContent)
+		for _, tc := range msg.ToolCalls {
+			chars += len(tc.Function.Name)
+			chars += len(tc.Function.Arguments)
+		}
+	}
+	// Add tool definitions
+	for _, t := range req.Tools {
+		if t.Function != nil {
+			chars += len(t.Function.Name)
+			chars += len(t.Function.Description)
+			chars += len(t.Function.Parameters)
+		}
+	}
+	// 4 chars per token is the standard OpenAI heuristic; add 10% overhead for
+	// message formatting tokens (role markers, separators, etc.)
+	estimated := chars / 4
+	estimated += estimated / 10
+	if estimated < 1 {
+		estimated = 1
+	}
+	return estimated
 }
 
 // determineInitiator returns "agent" when the conversation contains multi-turn
