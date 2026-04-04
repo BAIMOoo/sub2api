@@ -230,7 +230,12 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	}
 
 	// 3. Model mapping
-	mappedModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	// Strip Anthropic date-version suffixes before lookup so that names like
+	// "claude-haiku-4-5-20251001" match account mappings keyed by the canonical
+	// "claude-haiku-4-5" and are accepted by the Copilot API (which rejects the
+	// date-suffixed form with HTTP 400).
+	copilotModel := normalizeCopilotModel(originalModel)
+	mappedModel := resolveOpenAIForwardModel(account, copilotModel, defaultMappedModel)
 	ccReq.Model = mappedModel
 	ccReq.Stream = clientStream
 
@@ -264,6 +269,7 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	logger.L().Debug("copilot messages: model mapping applied",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
+		zap.String("copilot_model", copilotModel),
 		zap.String("mapped_model", mappedModel),
 		zap.Bool("stream", clientStream),
 	)

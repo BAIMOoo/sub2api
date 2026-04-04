@@ -46,13 +46,16 @@ func (s *GatewayService) ForwardCopilotAsResponses(
 	}
 
 	// 3. Model mapping
-	mappedModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	// Strip Anthropic date-version suffixes before lookup (same as messages path).
+	copilotModel := normalizeCopilotModel(originalModel)
+	mappedModel := resolveOpenAIForwardModel(account, copilotModel, defaultMappedModel)
 	respReq.Model = mappedModel
 	respReq.Stream = clientStream
 
 	logger.L().Debug("copilot responses: model mapping applied",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
+		zap.String("copilot_model", copilotModel),
 		zap.String("mapped_model", mappedModel),
 		zap.Bool("stream", clientStream),
 	)
