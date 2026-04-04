@@ -1988,6 +1988,7 @@ export default {
       privacyAntigravityFailed: 'Privacy setting failed',
       setPrivacy: 'Set Privacy',
       subscriptionAbnormal: 'Abnormal',
+      subscriptionExpires: 'Expires',
       // Capacity status tooltips
       capacity: {
         windowCost: {
@@ -2317,6 +2318,11 @@ export default {
           hint: 'Force all cache creation tokens to be billed as the selected TTL tier (5m or 1h)',
           target: 'Target TTL',
           targetHint: 'Select the TTL tier for billing'
+        },
+        customBaseUrl: {
+          label: 'Custom Relay URL',
+          hint: 'Forward requests to a custom relay service. Proxy URL will be passed as a query parameter.',
+          urlHint: 'Relay service URL (e.g., https://relay.example.com)',
         },
         clientAffinity: {
           label: 'Client Affinity Scheduling',
@@ -4378,6 +4384,7 @@ export default {
           provider: 'Type',
           active: 'Active',
           endpoint: 'Endpoint',
+          bucket: 'Bucket',
           storagePath: 'Storage Path',
           capacityUsage: 'Capacity / Used',
           capacityUnlimited: 'Unlimited',

@@ -2026,6 +2026,7 @@ export default {
       privacyAntigravityFailed: '隐私设置失败',
       setPrivacy: '设置隐私',
       subscriptionAbnormal: '异常',
+      subscriptionExpires: '到期',
       // 容量状态提示
       capacity: {
         windowCost: {
@@ -2461,6 +2462,11 @@ export default {
           hint: '将所有缓存创建 token 强制按指定的 TTL 类型（5分钟或1小时）计费',
           target: '目标 TTL',
           targetHint: '选择计费使用的 TTL 类型'
+        },
+        customBaseUrl: {
+          label: '自定义转发地址',
+          hint: '启用后将请求转发到自定义中继服务，代理地址将作为 URL 参数传递给中继服务',
+          urlHint: '中继服务地址（如 https://relay.example.com）',
         },
         clientAffinity: {
           label: '客户端亲和调度',
@@ -4542,6 +4548,7 @@ export default {
           provider: '存储类型',
           active: '生效状态',
           endpoint: '端点',
+          bucket: '存储桶',
           storagePath: '存储路径',
           capacityUsage: '容量 / 已用',
           capacityUnlimited: '无限制',
