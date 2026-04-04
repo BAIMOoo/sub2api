@@ -371,6 +371,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				accountReleaseFunc()
 			}
 			if err != nil {
+				// 不可重试的客户端错误（如上下文超限）：service 层已写入 Anthropic 格式响应，
+				// 不触发 failover，不再写第二次响应。
+				var nfwErr *service.NonFailoverWrittenError
+				if errors.As(err, &nfwErr) {
+					reqLog.Info("gateway.copilot_client_error_passthrough",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					return
+				}
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					if c.Writer.Size() != writerSizeBeforeForward {

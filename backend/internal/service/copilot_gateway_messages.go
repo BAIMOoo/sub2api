@@ -137,7 +137,7 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 		}
 
 		if msg.Role == "assistant" {
-			// Assistant messages: extract text blocks + tool_use blocks
+			// Assistant messages: extract text blocks + tool_use blocks + thinking blocks
 			ccMsg := apicompat.ChatMessage{Role: "assistant"}
 			var texts []string
 			for _, b := range blocks {
@@ -145,6 +145,19 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 				case "text":
 					if b.Text != "" {
 						texts = append(texts, b.Text)
+					}
+				case "thinking":
+					// Map thinking blocks → reasoning_content so that:
+					// 1. Copilot receives prior reasoning context for multi-turn continuity
+					// 2. estimateCCRequestTokens can count these (potentially large) tokens
+					//    for accurate ctx% display in the OMC HUD.
+					// Multiple thinking blocks in one turn are concatenated.
+					if b.Thinking != "" {
+						if ccMsg.ReasoningContent != "" {
+							ccMsg.ReasoningContent += "\n" + b.Thinking
+						} else {
+							ccMsg.ReasoningContent = b.Thinking
+						}
 					}
 				case "tool_use":
 					argsStr := string(b.Input)
@@ -348,6 +361,15 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 						finalHeaders = retryResp.Header
 					}
 				}
+			}
+		}
+
+		// 对于不可重试的客户端错误（如上下文超限），切换账号无法解决问题。
+		// 直接把 Anthropic 格式的 400 写给客户端，让调用方（Claude Code）触发上下文压缩，
+		// 并返回 NonFailoverWrittenError 阻止 handler 层进入 failover 逻辑。
+		if finalStatus == http.StatusBadRequest && c != nil {
+			if nfwErr := writeCopilotNonRetryableError(c, respBody); nfwErr != nil {
+				return nil, nfwErr
 			}
 		}
 
@@ -925,4 +947,49 @@ func hasVisionContent(messages []apicompat.AnthropicMessage) bool {
 func isReasoningModel(model string) bool {
 	m := strings.ToLower(model)
 	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4")
+}
+
+// writeCopilotNonRetryableError checks whether respBody contains a non-retryable
+// Copilot 400 error code. If so, it writes an Anthropic-format error response to c
+// and returns a *NonFailoverWrittenError so the handler skips failover.
+// Returns nil when the error code is unknown (caller should fall through to normal failover).
+func writeCopilotNonRetryableError(c *gin.Context, respBody []byte) error {
+	var upstreamErr struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(respBody, &upstreamErr) != nil {
+		return nil
+	}
+	if !isCopilotNonRetryable400Code(upstreamErr.Error.Code) {
+		return nil
+	}
+	msg := upstreamErr.Error.Message
+	if msg == "" {
+		msg = "invalid request"
+	}
+	c.JSON(http.StatusBadRequest, gin.H{
+		"type": "error",
+		"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": msg,
+		},
+	})
+	return &NonFailoverWrittenError{
+		Cause: fmt.Errorf("copilot non-retryable 400: code=%s message=%s", upstreamErr.Error.Code, msg),
+	}
+}
+
+// isCopilotNonRetryable400Code returns true for 400 error codes that are caused by
+// the request content itself (not the account or token), so switching accounts would
+// not help and should be avoided.
+func isCopilotNonRetryable400Code(code string) bool {
+	switch code {
+	case "model_max_prompt_tokens_exceeded":
+		return true
+	default:
+		return false
+	}
 }

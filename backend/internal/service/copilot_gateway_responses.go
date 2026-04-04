@@ -112,6 +112,12 @@ func (s *GatewayService) ForwardCopilotAsResponses(
 	// 8. Check for HTTP errors
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(resp.Body)
+		// 对于不可重试的客户端错误，直接写 Anthropic 格式错误，阻止 failover。
+		if resp.StatusCode == http.StatusBadRequest && c != nil {
+			if nfwErr := writeCopilotNonRetryableError(c, errBody); nfwErr != nil {
+				return nil, nfwErr
+			}
+		}
 		logger.LegacyPrintf("service.copilot", "Copilot Responses API error: status=%d, body=%s", resp.StatusCode, string(errBody))
 		return nil, &UpstreamFailoverError{
 			StatusCode:      resp.StatusCode,

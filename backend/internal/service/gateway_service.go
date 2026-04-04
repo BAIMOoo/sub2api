@@ -508,6 +508,22 @@ type ForwardResult struct {
 	MediaURL  string // 生成后的媒体地址（可选）
 }
 
+// NonFailoverWrittenError is returned when the service layer has already written an error
+// response to the client (e.g. Anthropic-format 400 for non-retryable upstream errors).
+// The handler MUST NOT trigger failover or write another response upon seeing this error.
+type NonFailoverWrittenError struct {
+	Cause error
+}
+
+func (e *NonFailoverWrittenError) Error() string {
+	if e.Cause != nil {
+		return "error response written: " + e.Cause.Error()
+	}
+	return "error response already written to client"
+}
+
+func (e *NonFailoverWrittenError) Unwrap() error { return e.Cause }
+
 // UpstreamFailoverError indicates an upstream error that should trigger account failover.
 type UpstreamFailoverError struct {
 	StatusCode             int
