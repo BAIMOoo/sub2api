@@ -139,12 +139,12 @@ services:
       # Proxy for accessing GitHub (online updates + pricing data)
       # Examples: http://host:port, socks5://host:port
       - UPDATE_PROXY_URL=${UPDATE_PROXY_URL:-}
-      - HTTP_PROXY=http://host.docker.internal:7897
-      - HTTPS_PROXY=http://host.docker.internal:7897
-      - http_proxy=http://host.docker.internal:7897
-      - https_proxy=http://host.docker.internal:7897
-      - NO_PROXY=localhost,127.0.0.1,postgres,redis
-      - no_proxy=localhost,127.0.0.1,postgres,redis
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - http_proxy=${HTTP_PROXY:-}
+      - https_proxy=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
     depends_on:
       postgres:
         condition: service_healthy
