@@ -60,7 +60,11 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	}
 
 	// 2b. Convert tool_choice
-	if len(anthropicReq.ToolChoice) > 0 {
+	// Only send tool_choice when there are actual tools after filtering.
+	// Claude Code includes web_search_* tools (filtered out in 2a) alongside tool_choice.
+	// If all tools are filtered, sending tool_choice without tools causes Copilot to return:
+	// 400 "tools are required when tool choice is specified" → 502 断流。
+	if len(ccReq.Tools) > 0 && len(anthropicReq.ToolChoice) > 0 {
 		var tc struct {
 			Type string `json:"type"`
 			Name string `json:"name,omitempty"`
@@ -280,6 +284,13 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
 	}
 
+	logger.L().Debug("copilot messages: request body size",
+		zap.Int64("account_id", account.ID),
+		zap.String("model", originalModel),
+		zap.Int("body_bytes", len(ccBody)),
+		zap.Int("message_count", len(ccReq.Messages)),
+	)
+
 	// 5. Check and refresh API Key if expired（提前 5 秒视为过期，应对时钟偏差）
 	expiresAt := account.GetCredentialAsInt64("expires_at")
 	if expiresAt > 0 && time.Now().Unix() >= expiresAt-5 {
@@ -323,8 +334,34 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	}
 
 	// 6. Send request
+	logger.L().Info("copilot messages: sending upstream request",
+		zap.Int64("account_id", account.ID),
+		zap.String("model", originalModel),
+		zap.Int("body_bytes", len(ccBody)),
+		zap.Bool("has_proxy", proxyURL != ""),
+		zap.String("proxy_url", proxyURL),
+		zap.Bool("stream", clientStream),
+	)
+	sendStart := time.Now()
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
+		elapsed := time.Since(sendStart)
+		isCtxCanceled := ctx.Err() != nil
+		logger.L().Error("copilot messages: upstream request failed",
+			zap.Int64("account_id", account.ID),
+			zap.String("model", originalModel),
+			zap.Int("body_bytes", len(ccBody)),
+			zap.Bool("has_proxy", proxyURL != ""),
+			zap.Duration("elapsed", elapsed),
+			zap.Bool("context_canceled", isCtxCanceled),
+			zap.String("context_err", func() string {
+				if ctx.Err() != nil {
+					return ctx.Err().Error()
+				}
+				return ""
+			}()),
+			zap.Error(err),
+		)
 		if isCopilotRetryableNetworkError(err) {
 			return nil, &UpstreamFailoverError{
 				StatusCode:             http.StatusBadGateway,
@@ -333,6 +370,12 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 		}
 		return nil, fmt.Errorf("forward request: %w", err)
 	}
+	logger.L().Debug("copilot messages: upstream response received",
+		zap.Int64("account_id", account.ID),
+		zap.String("model", originalModel),
+		zap.Duration("ttfb", time.Since(sendStart)),
+		zap.Int("status_code", resp.StatusCode),
+	)
 	defer resp.Body.Close()
 
 	// 7. Check for HTTP errors before dispatching
@@ -385,7 +428,29 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 			}
 		}
 
-		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s", finalStatus, bodyStr)
+		// 区分 408（请求体上传超时，可能是请求太大或代理慢）与其他错误
+		if finalStatus == http.StatusRequestTimeout {
+			logger.L().Warn("copilot messages: upstream 408 request timeout — possible causes: request body too large or slow proxy",
+				zap.Int64("account_id", account.ID),
+				zap.String("model", originalModel),
+				zap.Int("body_bytes", len(ccBody)),
+				zap.Bool("has_proxy", proxyURL != ""),
+				zap.String("proxy_url", proxyURL),
+				zap.Duration("elapsed", time.Since(startTime)),
+				zap.String("upstream_body", bodyStr),
+			)
+		} else {
+			logger.L().Error("copilot messages: upstream error",
+				zap.Int64("account_id", account.ID),
+				zap.String("model", originalModel),
+				zap.Int("status_code", finalStatus),
+				zap.Int("body_bytes", len(ccBody)),
+				zap.Bool("has_proxy", proxyURL != ""),
+				zap.String("proxy_url", proxyURL),
+				zap.Duration("elapsed", time.Since(startTime)),
+				zap.String("upstream_body", bodyStr),
+			)
+		}
 		return nil, &UpstreamFailoverError{
 			StatusCode:             finalStatus,
 			ResponseBody:           respBody,
@@ -583,7 +648,7 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 					"type":          "message",
 					"role":          "assistant",
 					"content":       []any{},
-					"model":         model,
+					"model":         stripModelSuffix(model),
 					"stop_reason":   nil,
 					"stop_sequence": nil,
 					"usage": map[string]int{
@@ -905,6 +970,34 @@ func mapCCStopReason(finishReason string) string {
 	}
 }
 
+// stripModelSuffix removes OMC-style display suffixes from model names before they are
+// echoed back to the client in message_start events.
+//
+// Claude Code uses the model name in message_start to determine the context window size
+// for ctx% calculation. OMC appends suffixes like "[1m]" to communicate display metadata
+// (e.g. "claude-sonnet-4-6[1m]" → Claude Code thinks the window is 1,000,000 tokens).
+//
+// For Copilot, the actual max_prompt_tokens is 128,000 regardless of the model name shown
+// to the user. Returning the raw suffixed name causes Claude Code to use 1M as the
+// denominator, making the autoCompact threshold ~955K — far above Copilot's real limit.
+//
+// By stripping the suffix we let Claude Code use the canonical model's known window
+// (200K for claude-sonnet-4-6), bringing the autoCompact threshold down to ~155K tokens,
+// which — combined with `/autocompact 128000` — ensures context compression fires well
+// before Copilot's hard 128K prompt limit is hit.
+//
+// Examples:
+//
+//	"claude-sonnet-4-6[1m]"  → "claude-sonnet-4-6"
+//	"claude-opus-4-6[fast]"  → "claude-opus-4-6"
+//	"claude-sonnet-4-6"      → "claude-sonnet-4-6"  (unchanged)
+func stripModelSuffix(model string) string {
+	if idx := strings.Index(model, "["); idx >= 0 {
+		return model[:idx]
+	}
+	return model
+}
+
 // estimateCCRequestTokens estimates the input token count from a Chat Completions request.
 // Uses the standard "characters / 4" heuristic (OpenAI empirical rule).
 // This gives a good-enough approximation for ctx% display without exact tokenization.
@@ -1050,6 +1143,10 @@ func rewritePromptTooLongMessage(msg string) string {
 func isCopilotNonRetryable400Code(code string) bool {
 	switch code {
 	case "model_max_prompt_tokens_exceeded":
+		return true
+	case "invalid_request_body":
+		// Request-level error (e.g. malformed tool_choice, bad params).
+		// Switching accounts cannot fix this; skip failover to avoid 10x wasted retries.
 		return true
 	default:
 		return false
