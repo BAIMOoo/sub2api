@@ -22,6 +22,16 @@ export interface FetchOptions {
   signal?: AbortSignal
 }
 
+// ==================== Notification Types ====================
+
+/** Notification email entry with enable/disable and verification state.
+ *  email="" is a placeholder for the primary email (user's registration email or admin email). */
+export interface NotifyEmailEntry {
+  email: string
+  disabled: boolean
+  verified: boolean
+}
+
 // ==================== User & Auth Types ====================
 
 export interface User {
@@ -33,6 +43,9 @@ export interface User {
   concurrency: number // Allowed concurrent requests
   status: 'active' | 'disabled' // Account status
   allowed_groups: number[] | null // Allowed group IDs (null = all non-exclusive groups)
+  balance_notify_enabled: boolean
+  balance_notify_threshold: number | null
+  balance_notify_extra_emails: NotifyEmailEntry[]
   subscriptions?: UserSubscription[] // User's active subscriptions
   created_at: string
   updated_at: string
@@ -45,9 +58,6 @@ export interface AdminUser extends User {
   group_rates?: Record<number, number>
   // 当前并发数（仅管理员列表接口返回）
   current_concurrency?: number
-  // Sora 存储配额（字节）
-  sora_storage_quota_bytes: number
-  sora_storage_used_bytes: number
 }
 
 export interface LoginRequest {
@@ -107,14 +117,19 @@ export interface PublicSettings {
   doc_url: string
   home_content: string
   hide_ccs_import_button: boolean
-  purchase_subscription_enabled: boolean
-  purchase_subscription_url: string
+  payment_enabled: boolean
+  table_default_page_size: number
+  table_page_size_options: number[]
   custom_menu_items: CustomMenuItem[]
   custom_endpoints: CustomEndpoint[]
   linuxdo_oauth_enabled: boolean
-  sora_client_enabled: boolean
+  oidc_oauth_enabled: boolean
+  oidc_oauth_provider_name: string
   backend_mode_enabled: boolean
   version: string
+  balance_low_notify_enabled: boolean
+  account_quota_notify_enabled: boolean
+  balance_low_notify_threshold: number
 }
 
 export interface AuthResponse {
@@ -366,9 +381,16 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'sora' | 'copilot'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'copilot'
 
 export type SubscriptionType = 'standard' | 'subscription'
+
+export interface OpenAIMessagesDispatchModelConfig {
+  opus_mapped_model?: string
+  sonnet_mapped_model?: string
+  haiku_mapped_model?: string
+  exact_model_mappings?: Record<string, string>
+}
 
 export interface Group {
   id: number
@@ -386,19 +408,14 @@ export interface Group {
   image_price_1k: number | null
   image_price_2k: number | null
   image_price_4k: number | null
-  // Sora 按次计费配置
-  sora_image_price_360: number | null
-  sora_image_price_540: number | null
-  sora_video_price_per_request: number | null
-  sora_video_price_per_request_hd: number | null
-  // Sora 存储配额（字节）
-  sora_storage_quota_bytes: number
   // Claude Code 客户端限制
   claude_code_only: boolean
   fallback_group_id: number | null
   fallback_group_id_on_invalid_request: number | null
   // OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
   allow_messages_dispatch?: boolean
+  default_mapped_model?: string
+  messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   require_oauth_only: boolean
   require_privacy_set: boolean
   created_at: string
@@ -412,8 +429,6 @@ export interface AdminGroup extends Group {
 
   // MCP XML 协议注入（仅 antigravity 平台使用）
   mcp_xml_inject: boolean
-  // Claude usage 模拟开关（仅 anthropic 平台使用）
-  simulate_claude_max_enabled: boolean
 
   // 支持的模型系列（仅 antigravity 平台使用）
   supported_model_scopes?: string[]
@@ -425,6 +440,7 @@ export interface AdminGroup extends Group {
 
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   default_mapped_model?: string
+  messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
 
   // 分组排序
   sort_order: number
@@ -501,16 +517,10 @@ export interface CreateGroupRequest {
   image_price_1k?: number | null
   image_price_2k?: number | null
   image_price_4k?: number | null
-  sora_image_price_360?: number | null
-  sora_image_price_540?: number | null
-  sora_video_price_per_request?: number | null
-  sora_video_price_per_request_hd?: number | null
-  sora_storage_quota_bytes?: number
   claude_code_only?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
-  simulate_claude_max_enabled?: boolean
   supported_model_scopes?: string[]
   require_oauth_only?: boolean
   require_privacy_set?: boolean
@@ -532,16 +542,10 @@ export interface UpdateGroupRequest {
   image_price_1k?: number | null
   image_price_2k?: number | null
   image_price_4k?: number | null
-  sora_image_price_360?: number | null
-  sora_image_price_540?: number | null
-  sora_video_price_per_request?: number | null
-  sora_video_price_per_request_hd?: number | null
-  sora_storage_quota_bytes?: number
   claude_code_only?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
-  simulate_claude_max_enabled?: boolean
   supported_model_scopes?: string[]
   require_oauth_only?: boolean
   require_privacy_set?: boolean
@@ -550,7 +554,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'sora' | 'copilot'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'copilot'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -683,6 +687,7 @@ export interface Account {
   // Extra fields including Codex usage and model-level rate limits (Antigravity smart retry)
   extra?: (CodexUsageSnapshot & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
+    antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
   } & Record<string, unknown>)
   proxy_id: number | null
   concurrency: number
@@ -743,12 +748,6 @@ export interface Account {
   // 自定义 Base URL 中继转发（仅 Anthropic OAuth/SetupToken 账号有效）
   custom_base_url_enabled?: boolean | null
   custom_base_url?: string | null
-
-  // 客户端亲和调度（仅 Anthropic/Antigravity 平台有效）
-  // 启用后新会话会优先调度到客户端之前使用过的账号
-  client_affinity_enabled?: boolean | null
-  affinity_client_count?: number | null
-  affinity_clients?: string[] | null
 
   // API Key 账号配额限制
   quota_limit?: number | null
@@ -1036,6 +1035,9 @@ export interface UsageLog {
   // Cache TTL Override
   cache_ttl_overridden: boolean
 
+  // 计费模式
+  billing_mode?: string | null
+
   created_at: string
 
   user?: User
@@ -1051,9 +1053,16 @@ export interface UsageLogAccountSummary {
 
 export interface AdminUsageLog extends UsageLog {
   upstream_model?: string | null
+  model_mapping_chain?: string | null
 
   // 账号计费倍率（仅管理员可见）
   account_rate_multiplier?: number | null
+  // 自定义定价规则计算的账号统计费用（nil 时使用 total_cost * multiplier）
+  account_stats_cost?: number | null
+
+  // 渠道 ID 和计费等级（仅管理员可见）
+  channel_id?: number | null
+  billing_tier?: string | null
 
   // 用户请求 IP（仅管理员可见）
   ip_address?: string | null
@@ -1367,6 +1376,8 @@ export interface UsageQueryParams {
   billing_type?: number | null
   start_date?: string
   end_date?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 // ==================== Account Usage Statistics ====================
@@ -1633,3 +1644,6 @@ export interface UpdateScheduledTestPlanRequest {
   max_results?: number
   auto_recover?: boolean
 }
+
+// Payment types
+export type { SubscriptionPlan, PaymentOrder, CheckoutInfoResponse } from './payment'

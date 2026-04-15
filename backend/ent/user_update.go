@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
@@ -242,45 +243,93 @@ func (_u *UserUpdate) ClearTotpEnabledAt() *UserUpdate {
 	return _u
 }
 
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (_u *UserUpdate) SetSoraStorageQuotaBytes(v int64) *UserUpdate {
-	_u.mutation.ResetSoraStorageQuotaBytes()
-	_u.mutation.SetSoraStorageQuotaBytes(v)
+// SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
+func (_u *UserUpdate) SetBalanceNotifyEnabled(v bool) *UserUpdate {
+	_u.mutation.SetBalanceNotifyEnabled(v)
 	return _u
 }
 
-// SetNillableSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableSoraStorageQuotaBytes(v *int64) *UserUpdate {
+// SetNillableBalanceNotifyEnabled sets the "balance_notify_enabled" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableBalanceNotifyEnabled(v *bool) *UserUpdate {
 	if v != nil {
-		_u.SetSoraStorageQuotaBytes(*v)
+		_u.SetBalanceNotifyEnabled(*v)
 	}
 	return _u
 }
 
-// AddSoraStorageQuotaBytes adds value to the "sora_storage_quota_bytes" field.
-func (_u *UserUpdate) AddSoraStorageQuotaBytes(v int64) *UserUpdate {
-	_u.mutation.AddSoraStorageQuotaBytes(v)
+// SetBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field.
+func (_u *UserUpdate) SetBalanceNotifyThresholdType(v string) *UserUpdate {
+	_u.mutation.SetBalanceNotifyThresholdType(v)
 	return _u
 }
 
-// SetSoraStorageUsedBytes sets the "sora_storage_used_bytes" field.
-func (_u *UserUpdate) SetSoraStorageUsedBytes(v int64) *UserUpdate {
-	_u.mutation.ResetSoraStorageUsedBytes()
-	_u.mutation.SetSoraStorageUsedBytes(v)
-	return _u
-}
-
-// SetNillableSoraStorageUsedBytes sets the "sora_storage_used_bytes" field if the given value is not nil.
-func (_u *UserUpdate) SetNillableSoraStorageUsedBytes(v *int64) *UserUpdate {
+// SetNillableBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableBalanceNotifyThresholdType(v *string) *UserUpdate {
 	if v != nil {
-		_u.SetSoraStorageUsedBytes(*v)
+		_u.SetBalanceNotifyThresholdType(*v)
 	}
 	return _u
 }
 
-// AddSoraStorageUsedBytes adds value to the "sora_storage_used_bytes" field.
-func (_u *UserUpdate) AddSoraStorageUsedBytes(v int64) *UserUpdate {
-	_u.mutation.AddSoraStorageUsedBytes(v)
+// SetBalanceNotifyThreshold sets the "balance_notify_threshold" field.
+func (_u *UserUpdate) SetBalanceNotifyThreshold(v float64) *UserUpdate {
+	_u.mutation.ResetBalanceNotifyThreshold()
+	_u.mutation.SetBalanceNotifyThreshold(v)
+	return _u
+}
+
+// SetNillableBalanceNotifyThreshold sets the "balance_notify_threshold" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableBalanceNotifyThreshold(v *float64) *UserUpdate {
+	if v != nil {
+		_u.SetBalanceNotifyThreshold(*v)
+	}
+	return _u
+}
+
+// AddBalanceNotifyThreshold adds value to the "balance_notify_threshold" field.
+func (_u *UserUpdate) AddBalanceNotifyThreshold(v float64) *UserUpdate {
+	_u.mutation.AddBalanceNotifyThreshold(v)
+	return _u
+}
+
+// ClearBalanceNotifyThreshold clears the value of the "balance_notify_threshold" field.
+func (_u *UserUpdate) ClearBalanceNotifyThreshold() *UserUpdate {
+	_u.mutation.ClearBalanceNotifyThreshold()
+	return _u
+}
+
+// SetBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field.
+func (_u *UserUpdate) SetBalanceNotifyExtraEmails(v string) *UserUpdate {
+	_u.mutation.SetBalanceNotifyExtraEmails(v)
+	return _u
+}
+
+// SetNillableBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableBalanceNotifyExtraEmails(v *string) *UserUpdate {
+	if v != nil {
+		_u.SetBalanceNotifyExtraEmails(*v)
+	}
+	return _u
+}
+
+// SetTotalRecharged sets the "total_recharged" field.
+func (_u *UserUpdate) SetTotalRecharged(v float64) *UserUpdate {
+	_u.mutation.ResetTotalRecharged()
+	_u.mutation.SetTotalRecharged(v)
+	return _u
+}
+
+// SetNillableTotalRecharged sets the "total_recharged" field if the given value is not nil.
+func (_u *UserUpdate) SetNillableTotalRecharged(v *float64) *UserUpdate {
+	if v != nil {
+		_u.SetTotalRecharged(*v)
+	}
+	return _u
+}
+
+// AddTotalRecharged adds value to the "total_recharged" field.
+func (_u *UserUpdate) AddTotalRecharged(v float64) *UserUpdate {
+	_u.mutation.AddTotalRecharged(v)
 	return _u
 }
 
@@ -417,6 +466,21 @@ func (_u *UserUpdate) AddPromoCodeUsages(v ...*PromoCodeUsage) *UserUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.AddPromoCodeUsageIDs(ids...)
+}
+
+// AddPaymentOrderIDs adds the "payment_orders" edge to the PaymentOrder entity by IDs.
+func (_u *UserUpdate) AddPaymentOrderIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddPaymentOrderIDs(ids...)
+	return _u
+}
+
+// AddPaymentOrders adds the "payment_orders" edges to the PaymentOrder entity.
+func (_u *UserUpdate) AddPaymentOrders(v ...*PaymentOrder) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddPaymentOrderIDs(ids...)
 }
 
 // Mutation returns the UserMutation object of the builder.
@@ -613,6 +677,27 @@ func (_u *UserUpdate) RemovePromoCodeUsages(v ...*PromoCodeUsage) *UserUpdate {
 	return _u.RemovePromoCodeUsageIDs(ids...)
 }
 
+// ClearPaymentOrders clears all "payment_orders" edges to the PaymentOrder entity.
+func (_u *UserUpdate) ClearPaymentOrders() *UserUpdate {
+	_u.mutation.ClearPaymentOrders()
+	return _u
+}
+
+// RemovePaymentOrderIDs removes the "payment_orders" edge to PaymentOrder entities by IDs.
+func (_u *UserUpdate) RemovePaymentOrderIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemovePaymentOrderIDs(ids...)
+	return _u
+}
+
+// RemovePaymentOrders removes "payment_orders" edges to PaymentOrder entities.
+func (_u *UserUpdate) RemovePaymentOrders(v ...*PaymentOrder) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemovePaymentOrderIDs(ids...)
+}
+
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *UserUpdate) Save(ctx context.Context) (int, error) {
 	if err := _u.defaults(); err != nil {
@@ -751,17 +836,29 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.TotpEnabledAtCleared() {
 		_spec.ClearField(user.FieldTotpEnabledAt, field.TypeTime)
 	}
-	if value, ok := _u.mutation.SoraStorageQuotaBytes(); ok {
-		_spec.SetField(user.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.BalanceNotifyEnabled(); ok {
+		_spec.SetField(user.FieldBalanceNotifyEnabled, field.TypeBool, value)
 	}
-	if value, ok := _u.mutation.AddedSoraStorageQuotaBytes(); ok {
-		_spec.AddField(user.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.BalanceNotifyThresholdType(); ok {
+		_spec.SetField(user.FieldBalanceNotifyThresholdType, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.SoraStorageUsedBytes(); ok {
-		_spec.SetField(user.FieldSoraStorageUsedBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.BalanceNotifyThreshold(); ok {
+		_spec.SetField(user.FieldBalanceNotifyThreshold, field.TypeFloat64, value)
 	}
-	if value, ok := _u.mutation.AddedSoraStorageUsedBytes(); ok {
-		_spec.AddField(user.FieldSoraStorageUsedBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.AddedBalanceNotifyThreshold(); ok {
+		_spec.AddField(user.FieldBalanceNotifyThreshold, field.TypeFloat64, value)
+	}
+	if _u.mutation.BalanceNotifyThresholdCleared() {
+		_spec.ClearField(user.FieldBalanceNotifyThreshold, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.BalanceNotifyExtraEmails(); ok {
+		_spec.SetField(user.FieldBalanceNotifyExtraEmails, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.TotalRecharged(); ok {
+		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalRecharged(); ok {
+		_spec.AddField(user.FieldTotalRecharged, field.TypeFloat64, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1173,6 +1270,51 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(promocodeusage.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.PaymentOrdersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedPaymentOrdersIDs(); len(nodes) > 0 && !_u.mutation.PaymentOrdersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.PaymentOrdersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -1406,45 +1548,93 @@ func (_u *UserUpdateOne) ClearTotpEnabledAt() *UserUpdateOne {
 	return _u
 }
 
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (_u *UserUpdateOne) SetSoraStorageQuotaBytes(v int64) *UserUpdateOne {
-	_u.mutation.ResetSoraStorageQuotaBytes()
-	_u.mutation.SetSoraStorageQuotaBytes(v)
+// SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
+func (_u *UserUpdateOne) SetBalanceNotifyEnabled(v bool) *UserUpdateOne {
+	_u.mutation.SetBalanceNotifyEnabled(v)
 	return _u
 }
 
-// SetNillableSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableSoraStorageQuotaBytes(v *int64) *UserUpdateOne {
+// SetNillableBalanceNotifyEnabled sets the "balance_notify_enabled" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableBalanceNotifyEnabled(v *bool) *UserUpdateOne {
 	if v != nil {
-		_u.SetSoraStorageQuotaBytes(*v)
+		_u.SetBalanceNotifyEnabled(*v)
 	}
 	return _u
 }
 
-// AddSoraStorageQuotaBytes adds value to the "sora_storage_quota_bytes" field.
-func (_u *UserUpdateOne) AddSoraStorageQuotaBytes(v int64) *UserUpdateOne {
-	_u.mutation.AddSoraStorageQuotaBytes(v)
+// SetBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field.
+func (_u *UserUpdateOne) SetBalanceNotifyThresholdType(v string) *UserUpdateOne {
+	_u.mutation.SetBalanceNotifyThresholdType(v)
 	return _u
 }
 
-// SetSoraStorageUsedBytes sets the "sora_storage_used_bytes" field.
-func (_u *UserUpdateOne) SetSoraStorageUsedBytes(v int64) *UserUpdateOne {
-	_u.mutation.ResetSoraStorageUsedBytes()
-	_u.mutation.SetSoraStorageUsedBytes(v)
-	return _u
-}
-
-// SetNillableSoraStorageUsedBytes sets the "sora_storage_used_bytes" field if the given value is not nil.
-func (_u *UserUpdateOne) SetNillableSoraStorageUsedBytes(v *int64) *UserUpdateOne {
+// SetNillableBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableBalanceNotifyThresholdType(v *string) *UserUpdateOne {
 	if v != nil {
-		_u.SetSoraStorageUsedBytes(*v)
+		_u.SetBalanceNotifyThresholdType(*v)
 	}
 	return _u
 }
 
-// AddSoraStorageUsedBytes adds value to the "sora_storage_used_bytes" field.
-func (_u *UserUpdateOne) AddSoraStorageUsedBytes(v int64) *UserUpdateOne {
-	_u.mutation.AddSoraStorageUsedBytes(v)
+// SetBalanceNotifyThreshold sets the "balance_notify_threshold" field.
+func (_u *UserUpdateOne) SetBalanceNotifyThreshold(v float64) *UserUpdateOne {
+	_u.mutation.ResetBalanceNotifyThreshold()
+	_u.mutation.SetBalanceNotifyThreshold(v)
+	return _u
+}
+
+// SetNillableBalanceNotifyThreshold sets the "balance_notify_threshold" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableBalanceNotifyThreshold(v *float64) *UserUpdateOne {
+	if v != nil {
+		_u.SetBalanceNotifyThreshold(*v)
+	}
+	return _u
+}
+
+// AddBalanceNotifyThreshold adds value to the "balance_notify_threshold" field.
+func (_u *UserUpdateOne) AddBalanceNotifyThreshold(v float64) *UserUpdateOne {
+	_u.mutation.AddBalanceNotifyThreshold(v)
+	return _u
+}
+
+// ClearBalanceNotifyThreshold clears the value of the "balance_notify_threshold" field.
+func (_u *UserUpdateOne) ClearBalanceNotifyThreshold() *UserUpdateOne {
+	_u.mutation.ClearBalanceNotifyThreshold()
+	return _u
+}
+
+// SetBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field.
+func (_u *UserUpdateOne) SetBalanceNotifyExtraEmails(v string) *UserUpdateOne {
+	_u.mutation.SetBalanceNotifyExtraEmails(v)
+	return _u
+}
+
+// SetNillableBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableBalanceNotifyExtraEmails(v *string) *UserUpdateOne {
+	if v != nil {
+		_u.SetBalanceNotifyExtraEmails(*v)
+	}
+	return _u
+}
+
+// SetTotalRecharged sets the "total_recharged" field.
+func (_u *UserUpdateOne) SetTotalRecharged(v float64) *UserUpdateOne {
+	_u.mutation.ResetTotalRecharged()
+	_u.mutation.SetTotalRecharged(v)
+	return _u
+}
+
+// SetNillableTotalRecharged sets the "total_recharged" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillableTotalRecharged(v *float64) *UserUpdateOne {
+	if v != nil {
+		_u.SetTotalRecharged(*v)
+	}
+	return _u
+}
+
+// AddTotalRecharged adds value to the "total_recharged" field.
+func (_u *UserUpdateOne) AddTotalRecharged(v float64) *UserUpdateOne {
+	_u.mutation.AddTotalRecharged(v)
 	return _u
 }
 
@@ -1581,6 +1771,21 @@ func (_u *UserUpdateOne) AddPromoCodeUsages(v ...*PromoCodeUsage) *UserUpdateOne
 		ids[i] = v[i].ID
 	}
 	return _u.AddPromoCodeUsageIDs(ids...)
+}
+
+// AddPaymentOrderIDs adds the "payment_orders" edge to the PaymentOrder entity by IDs.
+func (_u *UserUpdateOne) AddPaymentOrderIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddPaymentOrderIDs(ids...)
+	return _u
+}
+
+// AddPaymentOrders adds the "payment_orders" edges to the PaymentOrder entity.
+func (_u *UserUpdateOne) AddPaymentOrders(v ...*PaymentOrder) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddPaymentOrderIDs(ids...)
 }
 
 // Mutation returns the UserMutation object of the builder.
@@ -1777,6 +1982,27 @@ func (_u *UserUpdateOne) RemovePromoCodeUsages(v ...*PromoCodeUsage) *UserUpdate
 	return _u.RemovePromoCodeUsageIDs(ids...)
 }
 
+// ClearPaymentOrders clears all "payment_orders" edges to the PaymentOrder entity.
+func (_u *UserUpdateOne) ClearPaymentOrders() *UserUpdateOne {
+	_u.mutation.ClearPaymentOrders()
+	return _u
+}
+
+// RemovePaymentOrderIDs removes the "payment_orders" edge to PaymentOrder entities by IDs.
+func (_u *UserUpdateOne) RemovePaymentOrderIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemovePaymentOrderIDs(ids...)
+	return _u
+}
+
+// RemovePaymentOrders removes "payment_orders" edges to PaymentOrder entities.
+func (_u *UserUpdateOne) RemovePaymentOrders(v ...*PaymentOrder) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemovePaymentOrderIDs(ids...)
+}
+
 // Where appends a list predicates to the UserUpdate builder.
 func (_u *UserUpdateOne) Where(ps ...predicate.User) *UserUpdateOne {
 	_u.mutation.Where(ps...)
@@ -1945,17 +2171,29 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	if _u.mutation.TotpEnabledAtCleared() {
 		_spec.ClearField(user.FieldTotpEnabledAt, field.TypeTime)
 	}
-	if value, ok := _u.mutation.SoraStorageQuotaBytes(); ok {
-		_spec.SetField(user.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.BalanceNotifyEnabled(); ok {
+		_spec.SetField(user.FieldBalanceNotifyEnabled, field.TypeBool, value)
 	}
-	if value, ok := _u.mutation.AddedSoraStorageQuotaBytes(); ok {
-		_spec.AddField(user.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.BalanceNotifyThresholdType(); ok {
+		_spec.SetField(user.FieldBalanceNotifyThresholdType, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.SoraStorageUsedBytes(); ok {
-		_spec.SetField(user.FieldSoraStorageUsedBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.BalanceNotifyThreshold(); ok {
+		_spec.SetField(user.FieldBalanceNotifyThreshold, field.TypeFloat64, value)
 	}
-	if value, ok := _u.mutation.AddedSoraStorageUsedBytes(); ok {
-		_spec.AddField(user.FieldSoraStorageUsedBytes, field.TypeInt64, value)
+	if value, ok := _u.mutation.AddedBalanceNotifyThreshold(); ok {
+		_spec.AddField(user.FieldBalanceNotifyThreshold, field.TypeFloat64, value)
+	}
+	if _u.mutation.BalanceNotifyThresholdCleared() {
+		_spec.ClearField(user.FieldBalanceNotifyThreshold, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.BalanceNotifyExtraEmails(); ok {
+		_spec.SetField(user.FieldBalanceNotifyExtraEmails, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.TotalRecharged(); ok {
+		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalRecharged(); ok {
+		_spec.AddField(user.FieldTotalRecharged, field.TypeFloat64, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -2367,6 +2605,51 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(promocodeusage.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.PaymentOrdersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedPaymentOrdersIDs(); len(nodes) > 0 && !_u.mutation.PaymentOrdersCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.PaymentOrdersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

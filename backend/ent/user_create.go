@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
@@ -210,30 +211,72 @@ func (_c *UserCreate) SetNillableTotpEnabledAt(v *time.Time) *UserCreate {
 	return _c
 }
 
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (_c *UserCreate) SetSoraStorageQuotaBytes(v int64) *UserCreate {
-	_c.mutation.SetSoraStorageQuotaBytes(v)
+// SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
+func (_c *UserCreate) SetBalanceNotifyEnabled(v bool) *UserCreate {
+	_c.mutation.SetBalanceNotifyEnabled(v)
 	return _c
 }
 
-// SetNillableSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field if the given value is not nil.
-func (_c *UserCreate) SetNillableSoraStorageQuotaBytes(v *int64) *UserCreate {
+// SetNillableBalanceNotifyEnabled sets the "balance_notify_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBalanceNotifyEnabled(v *bool) *UserCreate {
 	if v != nil {
-		_c.SetSoraStorageQuotaBytes(*v)
+		_c.SetBalanceNotifyEnabled(*v)
 	}
 	return _c
 }
 
-// SetSoraStorageUsedBytes sets the "sora_storage_used_bytes" field.
-func (_c *UserCreate) SetSoraStorageUsedBytes(v int64) *UserCreate {
-	_c.mutation.SetSoraStorageUsedBytes(v)
+// SetBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field.
+func (_c *UserCreate) SetBalanceNotifyThresholdType(v string) *UserCreate {
+	_c.mutation.SetBalanceNotifyThresholdType(v)
 	return _c
 }
 
-// SetNillableSoraStorageUsedBytes sets the "sora_storage_used_bytes" field if the given value is not nil.
-func (_c *UserCreate) SetNillableSoraStorageUsedBytes(v *int64) *UserCreate {
+// SetNillableBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBalanceNotifyThresholdType(v *string) *UserCreate {
 	if v != nil {
-		_c.SetSoraStorageUsedBytes(*v)
+		_c.SetBalanceNotifyThresholdType(*v)
+	}
+	return _c
+}
+
+// SetBalanceNotifyThreshold sets the "balance_notify_threshold" field.
+func (_c *UserCreate) SetBalanceNotifyThreshold(v float64) *UserCreate {
+	_c.mutation.SetBalanceNotifyThreshold(v)
+	return _c
+}
+
+// SetNillableBalanceNotifyThreshold sets the "balance_notify_threshold" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBalanceNotifyThreshold(v *float64) *UserCreate {
+	if v != nil {
+		_c.SetBalanceNotifyThreshold(*v)
+	}
+	return _c
+}
+
+// SetBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field.
+func (_c *UserCreate) SetBalanceNotifyExtraEmails(v string) *UserCreate {
+	_c.mutation.SetBalanceNotifyExtraEmails(v)
+	return _c
+}
+
+// SetNillableBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBalanceNotifyExtraEmails(v *string) *UserCreate {
+	if v != nil {
+		_c.SetBalanceNotifyExtraEmails(*v)
+	}
+	return _c
+}
+
+// SetTotalRecharged sets the "total_recharged" field.
+func (_c *UserCreate) SetTotalRecharged(v float64) *UserCreate {
+	_c.mutation.SetTotalRecharged(v)
+	return _c
+}
+
+// SetNillableTotalRecharged sets the "total_recharged" field if the given value is not nil.
+func (_c *UserCreate) SetNillableTotalRecharged(v *float64) *UserCreate {
+	if v != nil {
+		_c.SetTotalRecharged(*v)
 	}
 	return _c
 }
@@ -373,6 +416,21 @@ func (_c *UserCreate) AddPromoCodeUsages(v ...*PromoCodeUsage) *UserCreate {
 	return _c.AddPromoCodeUsageIDs(ids...)
 }
 
+// AddPaymentOrderIDs adds the "payment_orders" edge to the PaymentOrder entity by IDs.
+func (_c *UserCreate) AddPaymentOrderIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddPaymentOrderIDs(ids...)
+	return _c
+}
+
+// AddPaymentOrders adds the "payment_orders" edges to the PaymentOrder entity.
+func (_c *UserCreate) AddPaymentOrders(v ...*PaymentOrder) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddPaymentOrderIDs(ids...)
+}
+
 // Mutation returns the UserMutation object of the builder.
 func (_c *UserCreate) Mutation() *UserMutation {
 	return _c.mutation
@@ -452,13 +510,21 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultTotpEnabled
 		_c.mutation.SetTotpEnabled(v)
 	}
-	if _, ok := _c.mutation.SoraStorageQuotaBytes(); !ok {
-		v := user.DefaultSoraStorageQuotaBytes
-		_c.mutation.SetSoraStorageQuotaBytes(v)
+	if _, ok := _c.mutation.BalanceNotifyEnabled(); !ok {
+		v := user.DefaultBalanceNotifyEnabled
+		_c.mutation.SetBalanceNotifyEnabled(v)
 	}
-	if _, ok := _c.mutation.SoraStorageUsedBytes(); !ok {
-		v := user.DefaultSoraStorageUsedBytes
-		_c.mutation.SetSoraStorageUsedBytes(v)
+	if _, ok := _c.mutation.BalanceNotifyThresholdType(); !ok {
+		v := user.DefaultBalanceNotifyThresholdType
+		_c.mutation.SetBalanceNotifyThresholdType(v)
+	}
+	if _, ok := _c.mutation.BalanceNotifyExtraEmails(); !ok {
+		v := user.DefaultBalanceNotifyExtraEmails
+		_c.mutation.SetBalanceNotifyExtraEmails(v)
+	}
+	if _, ok := _c.mutation.TotalRecharged(); !ok {
+		v := user.DefaultTotalRecharged
+		_c.mutation.SetTotalRecharged(v)
 	}
 	return nil
 }
@@ -523,11 +589,17 @@ func (_c *UserCreate) check() error {
 	if _, ok := _c.mutation.TotpEnabled(); !ok {
 		return &ValidationError{Name: "totp_enabled", err: errors.New(`ent: missing required field "User.totp_enabled"`)}
 	}
-	if _, ok := _c.mutation.SoraStorageQuotaBytes(); !ok {
-		return &ValidationError{Name: "sora_storage_quota_bytes", err: errors.New(`ent: missing required field "User.sora_storage_quota_bytes"`)}
+	if _, ok := _c.mutation.BalanceNotifyEnabled(); !ok {
+		return &ValidationError{Name: "balance_notify_enabled", err: errors.New(`ent: missing required field "User.balance_notify_enabled"`)}
 	}
-	if _, ok := _c.mutation.SoraStorageUsedBytes(); !ok {
-		return &ValidationError{Name: "sora_storage_used_bytes", err: errors.New(`ent: missing required field "User.sora_storage_used_bytes"`)}
+	if _, ok := _c.mutation.BalanceNotifyThresholdType(); !ok {
+		return &ValidationError{Name: "balance_notify_threshold_type", err: errors.New(`ent: missing required field "User.balance_notify_threshold_type"`)}
+	}
+	if _, ok := _c.mutation.BalanceNotifyExtraEmails(); !ok {
+		return &ValidationError{Name: "balance_notify_extra_emails", err: errors.New(`ent: missing required field "User.balance_notify_extra_emails"`)}
+	}
+	if _, ok := _c.mutation.TotalRecharged(); !ok {
+		return &ValidationError{Name: "total_recharged", err: errors.New(`ent: missing required field "User.total_recharged"`)}
 	}
 	return nil
 }
@@ -612,13 +684,25 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldTotpEnabledAt, field.TypeTime, value)
 		_node.TotpEnabledAt = &value
 	}
-	if value, ok := _c.mutation.SoraStorageQuotaBytes(); ok {
-		_spec.SetField(user.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
-		_node.SoraStorageQuotaBytes = value
+	if value, ok := _c.mutation.BalanceNotifyEnabled(); ok {
+		_spec.SetField(user.FieldBalanceNotifyEnabled, field.TypeBool, value)
+		_node.BalanceNotifyEnabled = value
 	}
-	if value, ok := _c.mutation.SoraStorageUsedBytes(); ok {
-		_spec.SetField(user.FieldSoraStorageUsedBytes, field.TypeInt64, value)
-		_node.SoraStorageUsedBytes = value
+	if value, ok := _c.mutation.BalanceNotifyThresholdType(); ok {
+		_spec.SetField(user.FieldBalanceNotifyThresholdType, field.TypeString, value)
+		_node.BalanceNotifyThresholdType = value
+	}
+	if value, ok := _c.mutation.BalanceNotifyThreshold(); ok {
+		_spec.SetField(user.FieldBalanceNotifyThreshold, field.TypeFloat64, value)
+		_node.BalanceNotifyThreshold = &value
+	}
+	if value, ok := _c.mutation.BalanceNotifyExtraEmails(); ok {
+		_spec.SetField(user.FieldBalanceNotifyExtraEmails, field.TypeString, value)
+		_node.BalanceNotifyExtraEmails = value
+	}
+	if value, ok := _c.mutation.TotalRecharged(); ok {
+		_spec.SetField(user.FieldTotalRecharged, field.TypeFloat64, value)
+		_node.TotalRecharged = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -761,6 +845,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(promocodeusage.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.PaymentOrdersIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.PaymentOrdersTable,
+			Columns: []string{user.PaymentOrdersColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -1006,39 +1106,81 @@ func (u *UserUpsert) ClearTotpEnabledAt() *UserUpsert {
 	return u
 }
 
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (u *UserUpsert) SetSoraStorageQuotaBytes(v int64) *UserUpsert {
-	u.Set(user.FieldSoraStorageQuotaBytes, v)
+// SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
+func (u *UserUpsert) SetBalanceNotifyEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldBalanceNotifyEnabled, v)
 	return u
 }
 
-// UpdateSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field to the value that was provided on create.
-func (u *UserUpsert) UpdateSoraStorageQuotaBytes() *UserUpsert {
-	u.SetExcluded(user.FieldSoraStorageQuotaBytes)
+// UpdateBalanceNotifyEnabled sets the "balance_notify_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBalanceNotifyEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldBalanceNotifyEnabled)
 	return u
 }
 
-// AddSoraStorageQuotaBytes adds v to the "sora_storage_quota_bytes" field.
-func (u *UserUpsert) AddSoraStorageQuotaBytes(v int64) *UserUpsert {
-	u.Add(user.FieldSoraStorageQuotaBytes, v)
+// SetBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field.
+func (u *UserUpsert) SetBalanceNotifyThresholdType(v string) *UserUpsert {
+	u.Set(user.FieldBalanceNotifyThresholdType, v)
 	return u
 }
 
-// SetSoraStorageUsedBytes sets the "sora_storage_used_bytes" field.
-func (u *UserUpsert) SetSoraStorageUsedBytes(v int64) *UserUpsert {
-	u.Set(user.FieldSoraStorageUsedBytes, v)
+// UpdateBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBalanceNotifyThresholdType() *UserUpsert {
+	u.SetExcluded(user.FieldBalanceNotifyThresholdType)
 	return u
 }
 
-// UpdateSoraStorageUsedBytes sets the "sora_storage_used_bytes" field to the value that was provided on create.
-func (u *UserUpsert) UpdateSoraStorageUsedBytes() *UserUpsert {
-	u.SetExcluded(user.FieldSoraStorageUsedBytes)
+// SetBalanceNotifyThreshold sets the "balance_notify_threshold" field.
+func (u *UserUpsert) SetBalanceNotifyThreshold(v float64) *UserUpsert {
+	u.Set(user.FieldBalanceNotifyThreshold, v)
 	return u
 }
 
-// AddSoraStorageUsedBytes adds v to the "sora_storage_used_bytes" field.
-func (u *UserUpsert) AddSoraStorageUsedBytes(v int64) *UserUpsert {
-	u.Add(user.FieldSoraStorageUsedBytes, v)
+// UpdateBalanceNotifyThreshold sets the "balance_notify_threshold" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBalanceNotifyThreshold() *UserUpsert {
+	u.SetExcluded(user.FieldBalanceNotifyThreshold)
+	return u
+}
+
+// AddBalanceNotifyThreshold adds v to the "balance_notify_threshold" field.
+func (u *UserUpsert) AddBalanceNotifyThreshold(v float64) *UserUpsert {
+	u.Add(user.FieldBalanceNotifyThreshold, v)
+	return u
+}
+
+// ClearBalanceNotifyThreshold clears the value of the "balance_notify_threshold" field.
+func (u *UserUpsert) ClearBalanceNotifyThreshold() *UserUpsert {
+	u.SetNull(user.FieldBalanceNotifyThreshold)
+	return u
+}
+
+// SetBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field.
+func (u *UserUpsert) SetBalanceNotifyExtraEmails(v string) *UserUpsert {
+	u.Set(user.FieldBalanceNotifyExtraEmails, v)
+	return u
+}
+
+// UpdateBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBalanceNotifyExtraEmails() *UserUpsert {
+	u.SetExcluded(user.FieldBalanceNotifyExtraEmails)
+	return u
+}
+
+// SetTotalRecharged sets the "total_recharged" field.
+func (u *UserUpsert) SetTotalRecharged(v float64) *UserUpsert {
+	u.Set(user.FieldTotalRecharged, v)
+	return u
+}
+
+// UpdateTotalRecharged sets the "total_recharged" field to the value that was provided on create.
+func (u *UserUpsert) UpdateTotalRecharged() *UserUpsert {
+	u.SetExcluded(user.FieldTotalRecharged)
+	return u
+}
+
+// AddTotalRecharged adds v to the "total_recharged" field.
+func (u *UserUpsert) AddTotalRecharged(v float64) *UserUpsert {
+	u.Add(user.FieldTotalRecharged, v)
 	return u
 }
 
@@ -1304,45 +1446,94 @@ func (u *UserUpsertOne) ClearTotpEnabledAt() *UserUpsertOne {
 	})
 }
 
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (u *UserUpsertOne) SetSoraStorageQuotaBytes(v int64) *UserUpsertOne {
+// SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
+func (u *UserUpsertOne) SetBalanceNotifyEnabled(v bool) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.SetSoraStorageQuotaBytes(v)
+		s.SetBalanceNotifyEnabled(v)
 	})
 }
 
-// AddSoraStorageQuotaBytes adds v to the "sora_storage_quota_bytes" field.
-func (u *UserUpsertOne) AddSoraStorageQuotaBytes(v int64) *UserUpsertOne {
+// UpdateBalanceNotifyEnabled sets the "balance_notify_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBalanceNotifyEnabled() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.AddSoraStorageQuotaBytes(v)
+		s.UpdateBalanceNotifyEnabled()
 	})
 }
 
-// UpdateSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field to the value that was provided on create.
-func (u *UserUpsertOne) UpdateSoraStorageQuotaBytes() *UserUpsertOne {
+// SetBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field.
+func (u *UserUpsertOne) SetBalanceNotifyThresholdType(v string) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.UpdateSoraStorageQuotaBytes()
+		s.SetBalanceNotifyThresholdType(v)
 	})
 }
 
-// SetSoraStorageUsedBytes sets the "sora_storage_used_bytes" field.
-func (u *UserUpsertOne) SetSoraStorageUsedBytes(v int64) *UserUpsertOne {
+// UpdateBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBalanceNotifyThresholdType() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.SetSoraStorageUsedBytes(v)
+		s.UpdateBalanceNotifyThresholdType()
 	})
 }
 
-// AddSoraStorageUsedBytes adds v to the "sora_storage_used_bytes" field.
-func (u *UserUpsertOne) AddSoraStorageUsedBytes(v int64) *UserUpsertOne {
+// SetBalanceNotifyThreshold sets the "balance_notify_threshold" field.
+func (u *UserUpsertOne) SetBalanceNotifyThreshold(v float64) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.AddSoraStorageUsedBytes(v)
+		s.SetBalanceNotifyThreshold(v)
 	})
 }
 
-// UpdateSoraStorageUsedBytes sets the "sora_storage_used_bytes" field to the value that was provided on create.
-func (u *UserUpsertOne) UpdateSoraStorageUsedBytes() *UserUpsertOne {
+// AddBalanceNotifyThreshold adds v to the "balance_notify_threshold" field.
+func (u *UserUpsertOne) AddBalanceNotifyThreshold(v float64) *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
-		s.UpdateSoraStorageUsedBytes()
+		s.AddBalanceNotifyThreshold(v)
+	})
+}
+
+// UpdateBalanceNotifyThreshold sets the "balance_notify_threshold" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBalanceNotifyThreshold() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceNotifyThreshold()
+	})
+}
+
+// ClearBalanceNotifyThreshold clears the value of the "balance_notify_threshold" field.
+func (u *UserUpsertOne) ClearBalanceNotifyThreshold() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearBalanceNotifyThreshold()
+	})
+}
+
+// SetBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field.
+func (u *UserUpsertOne) SetBalanceNotifyExtraEmails(v string) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBalanceNotifyExtraEmails(v)
+	})
+}
+
+// UpdateBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBalanceNotifyExtraEmails() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceNotifyExtraEmails()
+	})
+}
+
+// SetTotalRecharged sets the "total_recharged" field.
+func (u *UserUpsertOne) SetTotalRecharged(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetTotalRecharged(v)
+	})
+}
+
+// AddTotalRecharged adds v to the "total_recharged" field.
+func (u *UserUpsertOne) AddTotalRecharged(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddTotalRecharged(v)
+	})
+}
+
+// UpdateTotalRecharged sets the "total_recharged" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateTotalRecharged() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateTotalRecharged()
 	})
 }
 
@@ -1774,45 +1965,94 @@ func (u *UserUpsertBulk) ClearTotpEnabledAt() *UserUpsertBulk {
 	})
 }
 
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (u *UserUpsertBulk) SetSoraStorageQuotaBytes(v int64) *UserUpsertBulk {
+// SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
+func (u *UserUpsertBulk) SetBalanceNotifyEnabled(v bool) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.SetSoraStorageQuotaBytes(v)
+		s.SetBalanceNotifyEnabled(v)
 	})
 }
 
-// AddSoraStorageQuotaBytes adds v to the "sora_storage_quota_bytes" field.
-func (u *UserUpsertBulk) AddSoraStorageQuotaBytes(v int64) *UserUpsertBulk {
+// UpdateBalanceNotifyEnabled sets the "balance_notify_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBalanceNotifyEnabled() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.AddSoraStorageQuotaBytes(v)
+		s.UpdateBalanceNotifyEnabled()
 	})
 }
 
-// UpdateSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field to the value that was provided on create.
-func (u *UserUpsertBulk) UpdateSoraStorageQuotaBytes() *UserUpsertBulk {
+// SetBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field.
+func (u *UserUpsertBulk) SetBalanceNotifyThresholdType(v string) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.UpdateSoraStorageQuotaBytes()
+		s.SetBalanceNotifyThresholdType(v)
 	})
 }
 
-// SetSoraStorageUsedBytes sets the "sora_storage_used_bytes" field.
-func (u *UserUpsertBulk) SetSoraStorageUsedBytes(v int64) *UserUpsertBulk {
+// UpdateBalanceNotifyThresholdType sets the "balance_notify_threshold_type" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBalanceNotifyThresholdType() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.SetSoraStorageUsedBytes(v)
+		s.UpdateBalanceNotifyThresholdType()
 	})
 }
 
-// AddSoraStorageUsedBytes adds v to the "sora_storage_used_bytes" field.
-func (u *UserUpsertBulk) AddSoraStorageUsedBytes(v int64) *UserUpsertBulk {
+// SetBalanceNotifyThreshold sets the "balance_notify_threshold" field.
+func (u *UserUpsertBulk) SetBalanceNotifyThreshold(v float64) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.AddSoraStorageUsedBytes(v)
+		s.SetBalanceNotifyThreshold(v)
 	})
 }
 
-// UpdateSoraStorageUsedBytes sets the "sora_storage_used_bytes" field to the value that was provided on create.
-func (u *UserUpsertBulk) UpdateSoraStorageUsedBytes() *UserUpsertBulk {
+// AddBalanceNotifyThreshold adds v to the "balance_notify_threshold" field.
+func (u *UserUpsertBulk) AddBalanceNotifyThreshold(v float64) *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
-		s.UpdateSoraStorageUsedBytes()
+		s.AddBalanceNotifyThreshold(v)
+	})
+}
+
+// UpdateBalanceNotifyThreshold sets the "balance_notify_threshold" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBalanceNotifyThreshold() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceNotifyThreshold()
+	})
+}
+
+// ClearBalanceNotifyThreshold clears the value of the "balance_notify_threshold" field.
+func (u *UserUpsertBulk) ClearBalanceNotifyThreshold() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearBalanceNotifyThreshold()
+	})
+}
+
+// SetBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field.
+func (u *UserUpsertBulk) SetBalanceNotifyExtraEmails(v string) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBalanceNotifyExtraEmails(v)
+	})
+}
+
+// UpdateBalanceNotifyExtraEmails sets the "balance_notify_extra_emails" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBalanceNotifyExtraEmails() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBalanceNotifyExtraEmails()
+	})
+}
+
+// SetTotalRecharged sets the "total_recharged" field.
+func (u *UserUpsertBulk) SetTotalRecharged(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetTotalRecharged(v)
+	})
+}
+
+// AddTotalRecharged adds v to the "total_recharged" field.
+func (u *UserUpsertBulk) AddTotalRecharged(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddTotalRecharged(v)
+	})
+}
+
+// UpdateTotalRecharged sets the "total_recharged" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateTotalRecharged() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateTotalRecharged()
 	})
 }
 

@@ -77,6 +77,14 @@ func RegisterAuthRoutes(
 		auth.POST("/oauth/copilot/complete", rateLimiter.LimitWithOptions("oauth-copilot-complete", 10, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.CopilotOAuth.CompleteDeviceFlow)
+		auth.GET("/oauth/oidc/start", h.Auth.OIDCOAuthStart)
+		auth.GET("/oauth/oidc/callback", h.Auth.OIDCOAuthCallback)
+		auth.POST("/oauth/oidc/complete-registration",
+			rateLimiter.LimitWithOptions("oauth-oidc-complete", 10, time.Minute, middleware.RateLimitOptions{
+				FailureMode: middleware.RateLimitFailClose,
+			}),
+			h.Auth.CompleteOIDCOAuthRegistration,
+		)
 	}
 
 	// 公开设置（无需认证）

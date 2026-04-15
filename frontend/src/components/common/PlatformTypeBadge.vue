@@ -75,7 +75,6 @@ const platformLabel = computed(() => {
   if (props.platform === 'anthropic') return 'Anthropic'
   if (props.platform === 'openai') return 'OpenAI'
   if (props.platform === 'antigravity') return 'Antigravity'
-  if (props.platform === 'sora') return 'Sora'
   if (props.platform === 'copilot') return 'Copilot'
   return 'Gemini'
 })
@@ -125,9 +124,6 @@ const platformClass = computed(() => {
   if (props.platform === 'antigravity') {
     return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
   }
-  if (props.platform === 'sora') {
-    return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
-  }
   if (props.platform === 'copilot') {
     return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
   }
@@ -143,9 +139,6 @@ const typeClass = computed(() => {
   }
   if (props.platform === 'antigravity') {
     return 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
-  }
-  if (props.platform === 'sora') {
-    return 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400'
   }
   if (props.platform === 'copilot') {
     return 'bg-gray-100 text-gray-600 dark:bg-gray-900/30 dark:text-gray-400'

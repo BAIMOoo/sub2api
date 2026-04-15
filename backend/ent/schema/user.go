@@ -73,10 +73,20 @@ func (User) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 
-		// Sora 存储配额
-		field.Int64("sora_storage_quota_bytes").
-			Default(0),
-		field.Int64("sora_storage_used_bytes").
+		// 余额不足通知
+		field.Bool("balance_notify_enabled").
+			Default(true),
+		field.String("balance_notify_threshold_type").
+			Default("fixed"), // "fixed" | "percentage"
+		field.Float("balance_notify_threshold").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Optional().
+			Nillable(),
+		field.String("balance_notify_extra_emails").
+			SchemaType(map[string]string{dialect.Postgres: "text"}).
+			Default("[]"),
+		field.Float("total_recharged").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Default(0),
 	}
 }
@@ -93,6 +103,7 @@ func (User) Edges() []ent.Edge {
 		edge.To("usage_logs", UsageLog.Type),
 		edge.To("attribute_values", UserAttributeValue.Type),
 		edge.To("promo_code_usages", PromoCodeUsage.Type),
+		edge.To("payment_orders", PaymentOrder.Type),
 	}
 }
 

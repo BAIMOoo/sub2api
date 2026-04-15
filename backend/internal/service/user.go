@@ -25,14 +25,17 @@ type User struct {
 	// map[groupID]rateMultiplier
 	GroupRates map[int64]float64
 
-	// Sora 存储配额
-	SoraStorageQuotaBytes int64 // 用户级 Sora 存储配额（0 表示使用分组或系统默认值）
-	SoraStorageUsedBytes  int64 // Sora 存储已用量
-
 	// TOTP 双因素认证字段
 	TotpSecretEncrypted *string    // AES-256-GCM 加密的 TOTP 密钥
 	TotpEnabled         bool       // 是否启用 TOTP
 	TotpEnabledAt       *time.Time // TOTP 启用时间
+
+	// 余额不足通知
+	BalanceNotifyEnabled       bool
+	BalanceNotifyThresholdType string // "fixed" (default) | "percentage"
+	BalanceNotifyThreshold     *float64
+	BalanceNotifyExtraEmails   []NotifyEmailEntry
+	TotalRecharged             float64
 
 	APIKeys       []APIKey
 	Subscriptions []UserSubscription

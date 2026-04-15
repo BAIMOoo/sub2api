@@ -22,7 +22,6 @@ const (
 	PlatformOpenAI      = "openai"
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
-	PlatformSora        = "sora"
 	PlatformCopilot     = "copilot"
 )
 
