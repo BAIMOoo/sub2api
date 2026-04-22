@@ -52,6 +52,11 @@ const (
 	ConnectionPoolIsolationAccountProxy = "account_proxy"
 )
 
+// DefaultUpstreamResponseReadMaxBytes 上游非流式响应体的默认读取上限。
+// 128 MB 可容纳 2-3 张 4K PNG（base64 膨胀 33%，单张 4K PNG 最坏约 67MB base64）。
+// 可通过 gateway.upstream_response_read_max_bytes 配置项覆盖。
+const DefaultUpstreamResponseReadMaxBytes int64 = 128 * 1024 * 1024
+
 type Config struct {
 	Server                  ServerConfig                  `mapstructure:"server"`
 	Log                     LogConfig                     `mapstructure:"log"`
@@ -1407,7 +1412,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
-	viper.SetDefault("gateway.upstream_response_read_max_bytes", int64(8*1024*1024))
+	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationAccountProxy)
@@ -1608,6 +1613,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("security.csp.policy is required when CSP is enabled")
 	}
 	if c.LinuxDo.Enabled {
+		if !c.LinuxDo.UsePKCE {
+			return fmt.Errorf("linuxdo_connect.use_pkce must be true when linuxdo_connect.enabled=true")
+		}
 		if strings.TrimSpace(c.LinuxDo.ClientID) == "" {
 			return fmt.Errorf("linuxdo_connect.client_id is required when linuxdo_connect.enabled=true")
 		}
@@ -1628,9 +1636,6 @@ func (c *Config) Validate() error {
 		case "", "client_secret_post", "client_secret_basic", "none":
 		default:
 			return fmt.Errorf("linuxdo_connect.token_auth_method must be one of: client_secret_post/client_secret_basic/none")
-		}
-		if method == "none" && !c.LinuxDo.UsePKCE {
-			return fmt.Errorf("linuxdo_connect.use_pkce must be true when linuxdo_connect.token_auth_method=none")
 		}
 		if (method == "" || method == "client_secret_post" || method == "client_secret_basic") &&
 			strings.TrimSpace(c.LinuxDo.ClientSecret) == "" {
@@ -1663,6 +1668,12 @@ func (c *Config) Validate() error {
 		warnIfInsecureURL("linuxdo_connect.frontend_redirect_url", c.LinuxDo.FrontendRedirectURL)
 	}
 	if c.OIDC.Enabled {
+		if !c.OIDC.UsePKCE {
+			return fmt.Errorf("oidc_connect.use_pkce must be true when oidc_connect.enabled=true")
+		}
+		if !c.OIDC.ValidateIDToken {
+			return fmt.Errorf("oidc_connect.validate_id_token must be true when oidc_connect.enabled=true")
+		}
 		if strings.TrimSpace(c.OIDC.ClientID) == "" {
 			return fmt.Errorf("oidc_connect.client_id is required when oidc_connect.enabled=true")
 		}
@@ -1684,9 +1695,6 @@ func (c *Config) Validate() error {
 		case "", "client_secret_post", "client_secret_basic", "none":
 		default:
 			return fmt.Errorf("oidc_connect.token_auth_method must be one of: client_secret_post/client_secret_basic/none")
-		}
-		if method == "none" && !c.OIDC.UsePKCE {
-			return fmt.Errorf("oidc_connect.use_pkce must be true when oidc_connect.token_auth_method=none")
 		}
 		if (method == "" || method == "client_secret_post" || method == "client_secret_basic") &&
 			strings.TrimSpace(c.OIDC.ClientSecret) == "" {
