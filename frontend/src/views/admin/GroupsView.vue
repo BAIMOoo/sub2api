@@ -2777,7 +2777,6 @@ const exclusiveOptions = computed(() => [
 ]);
 
 const platformOptions = computed(() => [
-const platformOptions = computed(() => [
   { value: "anthropic", label: "Anthropic" },
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
