@@ -206,6 +206,13 @@ func (s *GatewayService) handleCopilotResponsesStreaming(
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	// Stream diagnostics
+	var (
+		lastChunkTime     = time.Now()
+		chunkCount        = 0
+		firstChunkLogged  = false
+	)
+
 	state := apicompat.NewResponsesEventToAnthropicState()
 	state.Model = model
 
@@ -213,6 +220,45 @@ func (s *GatewayService) handleCopilotResponsesStreaming(
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Check if client context was canceled
+		if ctx.Err() != nil {
+			logger.L().Info("copilot responses stream: client canceled",
+				zap.String("request_id", requestID),
+				zap.Int("chunks_received", chunkCount),
+				zap.Duration("stream_duration", time.Since(startTime)),
+			)
+			return nil, ctx.Err()
+		}
+
+		// Periodic idle warning
+		idle := time.Since(lastChunkTime)
+		if idle > 10*time.Second {
+			logger.L().Warn("copilot responses stream: upstream idle > 10s",
+				zap.String("request_id", requestID),
+				zap.Duration("idle_duration", idle),
+				zap.Int("chunks_so_far", chunkCount),
+			)
+		}
+		lastChunkTime = time.Now()
+		chunkCount++
+
+		if !firstChunkLogged {
+			logger.L().Info("copilot responses stream: first chunk received",
+				zap.String("request_id", requestID),
+				zap.Duration("ttfb", time.Since(startTime)),
+			)
+			firstChunkLogged = true
+		}
+
+		// Log every 50th chunk
+		if chunkCount%50 == 0 {
+			logger.L().Info("copilot responses stream: progress",
+				zap.String("request_id", requestID),
+				zap.Int("chunk_count", chunkCount),
+				zap.Duration("stream_duration", time.Since(startTime)),
+			)
+		}
 
 		if !strings.HasPrefix(line, "data: ") {
 			continue

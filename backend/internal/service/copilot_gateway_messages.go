@@ -337,6 +337,7 @@ func (s *GatewayService) ForwardCopilotAsMessages(
 	logger.L().Info("copilot messages: sending upstream request",
 		zap.Int64("account_id", account.ID),
 		zap.String("model", originalModel),
+		zap.String("upstream_model", mappedModel),
 		zap.Int("body_bytes", len(ccBody)),
 		zap.Bool("has_proxy", proxyURL != ""),
 		zap.String("proxy_url", proxyURL),
@@ -595,6 +596,14 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 	// Increase scanner buffer for large chunks (1 MB)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+	// Stream diagnostics
+	var (
+		lastChunkTime   = time.Now()
+		chunkCount      = 0
+		firstChunkLogged = false
+		writeErrCount   = 0
+	)
+
 	// estimatedInputTokens is pre-computed from the request body before streaming begins.
 	// Copilot only sends real usage in the final chunk, but Claude Code reads input_tokens
 	// from message_start (first event) to compute context window usage percentage (ctx%).
@@ -608,6 +617,46 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Check if client context was canceled
+		if ctx.Err() != nil {
+			logger.L().Info("copilot stream: client canceled",
+				zap.String("request_id", requestID),
+				zap.Int("chunks_received", chunkCount),
+				zap.Duration("stream_duration", time.Since(startTime)),
+			)
+			return nil, ctx.Err()
+		}
+
+		// Periodic idle warning: log if no chunk received for > 10s
+		idle := time.Since(lastChunkTime)
+		if idle > 10*time.Second {
+			logger.L().Warn("copilot stream: upstream idle > 10s",
+				zap.String("request_id", requestID),
+				zap.Duration("idle_duration", idle),
+				zap.Int("chunks_so_far", chunkCount),
+			)
+		}
+		lastChunkTime = time.Now()
+		chunkCount++
+
+		if !firstChunkLogged {
+			logger.L().Info("copilot stream: first chunk received",
+				zap.String("request_id", requestID),
+				zap.Duration("ttfb", time.Since(startTime)),
+			)
+			firstChunkLogged = true
+		}
+
+		// Log every 50th chunk for visibility
+		if chunkCount%50 == 0 {
+			logger.L().Info("copilot stream: progress",
+				zap.String("request_id", requestID),
+				zap.Int("chunk_count", chunkCount),
+				zap.Duration("stream_duration", time.Since(startTime)),
+			)
+		}
+
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -625,6 +674,14 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 
 		if requestID == "" && chunk.ID != "" {
 			requestID = chunk.ID
+		}
+
+		// Log the full raw first chunk so we can inspect what Copilot upstream returns
+		if !state.messageStartSent {
+			logger.L().Info("copilot stream: first chunk raw",
+				zap.String("requested_model", model),
+				zap.String("chunk_json", data),
+			)
 		}
 
 		// Track real usage from the final chunk (stream_options.include_usage=true).
@@ -858,6 +915,16 @@ func (s *GatewayService) handleCopilotStreamingAsMessages(
 		)
 	}
 
+	// Log stream completion summary
+	logger.L().Info("copilot stream: completed",
+		zap.String("request_id", requestID),
+		zap.Int("total_chunks", chunkCount),
+		zap.Int("total_input_tokens", totalInput),
+		zap.Int("total_output_tokens", totalOutput),
+		zap.Duration("stream_duration", time.Since(startTime)),
+		zap.Int("write_errors", writeErrCount),
+	)
+
 	// Safety: if the stream ended without a finish_reason (e.g. network error),
 	// still close the envelope so the client doesn't hang.
 	if state.messageStartSent {
@@ -933,10 +1000,29 @@ func extractToolResultText(content json.RawMessage) string {
 	return string(content)
 }
 
-func writeAnthropicSSE(w gin.ResponseWriter, eventType string, data any) {
-	j, _ := json.Marshal(data)
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, j)
+func writeAnthropicSSE(w gin.ResponseWriter, eventType string, data any) error {
+	j, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, j); err != nil {
+		return err
+	}
 	w.Flush()
+	return nil
+}
+
+// safeWriteSSE wraps writeAnthropicSSE, logging write errors and incrementing the counter.
+func safeWriteSSE(w gin.ResponseWriter, eventType string, data any, errCount *int) bool {
+	if err := writeAnthropicSSE(w, eventType, data); err != nil {
+		*errCount++
+		logger.L().Debug("copilot stream: write error (client disconnected?)",
+			zap.String("event_type", eventType),
+			zap.Error(err),
+		)
+		return false
+	}
+	return true
 }
 
 // isCopilotRetryableNetworkError reports whether the error is a transient
