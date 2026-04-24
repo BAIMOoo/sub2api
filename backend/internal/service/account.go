@@ -924,6 +924,32 @@ func (a *Account) GetChatGPTAccountID() string {
 	return a.GetCredential("chatgpt_account_id")
 }
 
+func (a *Account) GetOpenAIDeviceID() string {
+	if !a.IsOpenAIOAuth() {
+		return ""
+	}
+	return strings.TrimSpace(a.GetExtraString("openai_device_id"))
+}
+
+func (a *Account) GetOpenAISessionID() string {
+	if !a.IsOpenAIOAuth() {
+		return ""
+	}
+	return strings.TrimSpace(a.GetExtraString("openai_session_id"))
+}
+
+func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if !a.IsOpenAI() {
+		return false
+	}
+	switch capability {
+	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
+		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
+	default:
+		return true
+	}
+}
+
 func (a *Account) GetChatGPTUserID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""

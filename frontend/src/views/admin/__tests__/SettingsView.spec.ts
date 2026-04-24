@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h, ref } from "vue";
+import { defineComponent, h } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 
 import SettingsView from "../SettingsView.vue";
@@ -45,6 +45,8 @@ const {
   showError: vi.fn(),
   showSuccess: vi.fn(),
 }));
+
+const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
 vi.mock("@/api", () => ({
   adminAPI: {
@@ -149,15 +151,19 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.paymentVisibleMethods.sourceLabel": "支付来源",
     "admin.settings.paymentVisibleMethods.sourceHint": "启用后必须明确选择一个来源；未配置状态不会对外展示该支付方式。",
     "admin.settings.paymentVisibleMethods.sourceRequiredError": "{title} 已启用，请先选择支付来源。",
+    "admin.settings.payment.configGuide": "查看支付配置说明",
+    "admin.settings.payment.findProvider": "查看支持的支付方式",
     "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
     "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
+    "admin.settings.site.uploadImage": "上传图片",
+    "admin.settings.site.remove": "移除",
   };
   return {
     ...actual,
     useI18n: () => ({
       t: (key: string, params?: Record<string, string>) =>
         (translations[key] ?? key).replace(/\{(\w+)\}/g, (_, token) => params?.[token] ?? `{${token}}`),
-      locale: ref("zh-CN"),
+      locale: localeRef,
     }),
   };
 });
@@ -233,6 +239,37 @@ const SelectStub = defineComponent({
           ),
         ),
       );
+  },
+});
+
+const ImageUploadStub = defineComponent({
+  props: {
+    modelValue: {
+      type: String,
+      default: "",
+    },
+    uploadLabel: {
+      type: String,
+      default: "",
+    },
+    removeLabel: {
+      type: String,
+      default: "",
+    },
+    placeholder: {
+      type: String,
+      default: "",
+    },
+  },
+  setup(props) {
+    return () =>
+      h("div", {
+        class: "image-upload-stub",
+        "data-model-value": props.modelValue,
+        "data-upload-label": props.uploadLabel,
+        "data-remove-label": props.removeLabel,
+        "data-placeholder": props.placeholder,
+      });
   },
 });
 
@@ -371,7 +408,7 @@ function mountView() {
         GroupBadge: true,
         GroupOptionItem: true,
         ProxySelector: true,
-        ImageUpload: true,
+        ImageUpload: ImageUploadStub,
         BackupSettings: true,
       },
     },
@@ -429,6 +466,7 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    localeRef.value = "zh-CN";
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
     updateSettings.mockImplementation(async (payload) => ({
@@ -487,6 +525,30 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(wrapper.text()).not.toContain("可见方式");
     expect(wrapper.text()).not.toContain("支付来源");
+  });
+
+  it("links payment guidance to README sections instead of removed payment docs", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    const paymentLinks = wrapper
+      .findAll("a")
+      .filter((node) =>
+        ["查看支付配置说明", "查看支持的支付方式"].includes(node.text()),
+      );
+
+    expect(paymentLinks).toHaveLength(2);
+    expect(paymentLinks[0]?.attributes("href")).toBe(
+      "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md",
+    );
+    expect(paymentLinks[1]?.attributes("href")).toBe(
+      "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式",
+    );
+    for (const link of paymentLinks) {
+      expect(link.attributes("href")).toContain("docs/PAYMENT");
+    }
   });
 
   it("does not submit legacy visible payment method settings", async () => {
@@ -553,7 +615,7 @@ describe("admin SettingsView payment visible method controls", () => {
           GroupBadge: true,
           GroupOptionItem: true,
           ProxySelector: true,
-          ImageUpload: true,
+          ImageUpload: ImageUploadStub,
           BackupSettings: true,
         },
       },
@@ -578,6 +640,24 @@ describe("admin SettingsView payment visible method controls", () => {
       "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑",
     );
     expect(wrapper.text()).not.toContain("OpenAI 高级调度器");
+  });
+
+  it("passes translated upload and remove labels to the payment help image uploader", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    const imageUploads = wrapper.findAll(".image-upload-stub");
+    expect(imageUploads.length).toBeGreaterThan(0);
+
+    const paymentHelpImageUpload = imageUploads.find(
+      (node) => node.attributes("data-placeholder") === "admin.settings.payment.helpImagePlaceholder",
+    );
+
+    expect(paymentHelpImageUpload).toBeDefined();
+    expect(paymentHelpImageUpload?.attributes("data-upload-label")).toBe("上传图片");
+    expect(paymentHelpImageUpload?.attributes("data-remove-label")).toBe("移除");
   });
 });
 
@@ -775,5 +855,29 @@ describe("admin SettingsView wechat connect controls", () => {
       wrapper.find('[data-testid="auth-source-email-panel"]').exists(),
     ).toBe(true);
     expect(wrapper.text()).toContain("首次绑定时授权");
+  });
+
+  it("preserves optional OIDC compatibility flags instead of forcing them on save", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      oidc_connect_enabled: true,
+      oidc_connect_use_pkce: false,
+      oidc_connect_validate_id_token: false,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        oidc_connect_use_pkce: false,
+        oidc_connect_validate_id_token: false,
+      }),
+    );
   });
 });

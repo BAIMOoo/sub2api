@@ -2032,7 +2032,7 @@
                     </div>
                     <Toggle
                       v-model="form.oidc_connect_use_pkce"
-                      :disabled="true"
+                      data-testid="oidc-connect-use-pkce"
                     />
                   </div>
 
@@ -2046,7 +2046,7 @@
                     </div>
                     <Toggle
                       v-model="form.oidc_connect_validate_id_token"
-                      :disabled="true"
+                      data-testid="oidc-connect-validate-id-token"
                     />
                   </div>
 
@@ -2168,6 +2168,24 @@
                   />
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.defaults.defaultConcurrencyHint") }}
+                  </p>
+                </div>
+                <div>
+                  <label
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.defaults.defaultUserRpmLimit") }}
+                  </label>
+                  <input
+                    v-model.number="form.default_user_rpm_limit"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="input"
+                    placeholder="0"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.defaults.defaultUserRpmLimitHint") }}
                   </p>
                 </div>
               </div>
@@ -3749,6 +3767,94 @@
         </div>
         <!-- /Tab: General -->
 
+        <!-- Tab: Features (功能开关) -->
+        <div v-show="activeTab === 'features'" class="space-y-6">
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.channelMonitor.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.channelMonitor.description') }}
+            </p>
+            <p class="mt-1.5 text-xs">
+              <router-link
+                to="/admin/channels/monitor"
+                class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
+              >
+                {{ t('admin.settings.features.channelMonitor.configureLink') }}
+                <span aria-hidden="true">→</span>
+              </router-link>
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.channelMonitor.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.channelMonitor.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.channel_monitor_enabled" />
+            </div>
+
+            <div v-if="form.channel_monitor_enabled">
+              <label class="input-label">
+                {{ t('admin.settings.features.channelMonitor.defaultInterval') }}
+                <span class="text-red-500">*</span>
+              </label>
+              <input
+                v-model.number="form.channel_monitor_default_interval_seconds"
+                type="number"
+                min="15"
+                max="3600"
+                class="input"
+              />
+              <p class="mt-1 text-xs text-gray-400">
+                {{ t('admin.settings.features.channelMonitor.defaultIntervalHint') }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.availableChannels.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.availableChannels.description') }}
+            </p>
+            <p class="mt-1.5 text-xs">
+              <router-link
+                to="/admin/channels/pricing"
+                class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
+              >
+                {{ t('admin.settings.features.availableChannels.configureLink') }}
+                <span aria-hidden="true">→</span>
+              </router-link>
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.availableChannels.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.availableChannels.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.available_channels_enabled" />
+            </div>
+          </div>
+        </div>
+
+        </div><!-- /Tab: Features -->
+
         <!-- Tab: Email -->
         <!-- Tab: Payment -->
         <div v-show="activeTab === 'payment'" class="space-y-6">
@@ -3763,11 +3869,7 @@
               <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 {{ t("admin.settings.payment.description") }}
                 <a
-                  :href="
-                    locale === 'zh'
-                      ? 'https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md'
-                      : 'https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT.md'
-                  "
+                  :href="paymentGuideHref"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="ml-2 inline-flex items-center text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
@@ -4140,11 +4242,7 @@
                   <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
                     {{ t("admin.settings.payment.enabledPaymentTypesHint") }}
                     <a
-                      :href="
-                        locale === 'zh'
-                          ? 'https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#%E6%94%AF%E6%8C%81%E7%9A%84%E6%94%AF%E4%BB%98%E6%96%B9%E5%BC%8F'
-                          : 'https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT.md#supported-payment-methods'
-                      "
+                      :href="paymentMethodsHref"
                       target="_blank"
                       rel="noopener noreferrer"
                       class="ml-1 text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300"
@@ -4174,6 +4272,8 @@
                     }}</label>
                     <ImageUpload
                       v-model="form.payment_help_image_url"
+                      :upload-label="t('admin.settings.site.uploadImage')"
+                      :remove-label="t('admin.settings.site.remove')"
                       :placeholder="
                         t('admin.settings.payment.helpImagePlaceholder')
                       "
@@ -4729,8 +4829,21 @@ function localText(zh: string, en: string): string {
   return locale.value.startsWith("zh") ? zh : en;
 }
 
+const paymentGuideHref = computed(() =>
+  locale.value.startsWith("zh")
+    ? "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md"
+    : "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT.md",
+);
+
+const paymentMethodsHref = computed(() =>
+  locale.value.startsWith("zh")
+    ? "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式"
+    : "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT.md#supported-payment-methods",
+);
+
 type SettingsTab =
   | "general"
+  | "features"
   | "security"
   | "users"
   | "gateway"
@@ -4740,6 +4853,7 @@ type SettingsTab =
 const activeTab = ref<SettingsTab>("general");
 const settingsTabs = [
   { key: "general" as SettingsTab, icon: "home" as const },
+  { key: "features" as SettingsTab, icon: "bolt" as const },
   { key: "security" as SettingsTab, icon: "shield" as const },
   { key: "users" as SettingsTab, icon: "user" as const },
   { key: "gateway" as SettingsTab, icon: "server" as const },
@@ -4861,6 +4975,7 @@ const form = reactive<SettingsForm>({
   default_concurrency: 1,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
+  default_user_rpm_limit: 0,
   site_name: "Sub2API",
   site_logo: "",
   site_subtitle: "Subscription to API Conversion Platform",
@@ -4961,8 +5076,8 @@ const form = reactive<SettingsForm>({
   oidc_connect_redirect_url: "",
   oidc_connect_frontend_redirect_url: "/auth/oidc/callback",
   oidc_connect_token_auth_method: "client_secret_post",
-  oidc_connect_use_pkce: true,
-  oidc_connect_validate_id_token: true,
+  oidc_connect_use_pkce: false,
+  oidc_connect_validate_id_token: false,
   oidc_connect_allowed_signing_algs: "RS256,ES256,PS256",
   oidc_connect_clock_skew_seconds: 120,
   oidc_connect_require_email_verified: false,
@@ -4999,6 +5114,11 @@ const form = reactive<SettingsForm>({
   balance_low_notify_recharge_url: "",
   account_quota_notify_enabled: false,
   account_quota_notify_emails: [] as NotifyEmailEntry[],
+  // Channel Monitor feature switch
+  channel_monitor_enabled: true,
+  channel_monitor_default_interval_seconds: 60,
+  // Available Channels feature switch
+  available_channels_enabled: false,
 });
 
 const authSourceDefaults = reactive<AuthSourceDefaultsState>(
@@ -5777,6 +5897,7 @@ async function saveSettings() {
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
+      default_user_rpm_limit: form.default_user_rpm_limit,
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,
@@ -5846,8 +5967,8 @@ async function saveSettings() {
       oidc_connect_frontend_redirect_url:
         form.oidc_connect_frontend_redirect_url,
       oidc_connect_token_auth_method: form.oidc_connect_token_auth_method,
-      oidc_connect_use_pkce: true,
-      oidc_connect_validate_id_token: true,
+      oidc_connect_use_pkce: form.oidc_connect_use_pkce,
+      oidc_connect_validate_id_token: form.oidc_connect_validate_id_token,
       oidc_connect_allowed_signing_algs: form.oidc_connect_allowed_signing_algs,
       oidc_connect_clock_skew_seconds: form.oidc_connect_clock_skew_seconds,
       oidc_connect_require_email_verified:
@@ -5906,6 +6027,12 @@ async function saveSettings() {
       account_quota_notify_emails: (
         form.account_quota_notify_emails || []
       ).filter((e) => e.email.trim() !== ""),
+      // Channel Monitor feature switch
+      channel_monitor_enabled: form.channel_monitor_enabled,
+      channel_monitor_default_interval_seconds:
+        Number(form.channel_monitor_default_interval_seconds) || 60,
+      // Available Channels feature switch
+      available_channels_enabled: form.available_channels_enabled,
     };
 
     appendAuthSourceDefaultsToUpdateRequest(payload, authSourceDefaults);
