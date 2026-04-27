@@ -127,9 +127,24 @@ backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
-docs/
+docs/*
+!docs/PAYMENT.md
+!docs/PAYMENT_CN.md
+!docs/ADMIN_PAYMENT_INTEGRATION_API.md
 .serena/
 .codex/
 frontend/coverage/
 aicodex
 output/
+
+# 调查文档和临时文件
+COPILOT_*.md
+LITELLM_*.md
+INVESTIGATION_*.md
+README_INVESTIGATION.md
+copilot_*.md
+docs/ADMIN_PAYMENT_INTEGRATION_API.md
+docs/PAYMENT.md
+docs/PAYMENT_CN.md
+backend/sub2api-linux
+frontend/package-lock.json

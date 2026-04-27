@@ -19,12 +19,12 @@ FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install pnpm and use mirror registry for npm access
+RUN npm install -g pnpm --registry=https://registry.npmmirror.com
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm config set registry https://registry.npmmirror.com && pnpm install --frozen-lockfile
 
 # Copy frontend source and build
 COPY frontend/ ./

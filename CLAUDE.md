@@ -98,6 +98,59 @@ docker restart sub2api
 
 ---
 
+## Database Migration 规则（重要）
+
+### ⚠️ Migration 不可变原则
+
+**一旦 migration 文件被 apply 到任何环境（开发/测试/生产），就绝对不能再修改。**
+
+**原因：**
+- 每个 migration 的 SHA256 checksum 存储在 `schema_migrations` 表中
+- 修改已 apply 的 migration 会导致 checksum 不匹配，服务启动失败
+- 不同环境的数据库状态会不一致
+- 破坏审计追踪和可重现性
+
+### ✅ 正确做法
+
+**发现已 apply 的 migration 有问题时：**
+1. **不要修改原文件**
+2. 创建新的 migration 文件修复问题
+3. 例如：
+   ```
+   112_add_payment_order_provider_key.sql     # 旧的，不动
+   125_fix_payment_order_provider_key.sql     # 新的修复文件
+   ```
+
+### ❌ 错误做法
+
+- ❌ 修改已 apply 的 migration 文件内容
+- ❌ 删除 migration 文件
+- ❌ 修改 migration 文件名
+- ❌ 重新排序 migration 编号
+
+### 🔧 如果不小心修改了已 apply 的 migration
+
+**错误信息：**
+```
+migration 112_xxx.sql checksum mismatch (db=abc123... file=def456...)
+```
+
+**解决方案：**
+```bash
+# 1. 查找原始版本
+git log --oneline -- backend/migrations/112_xxx.sql
+
+# 2. 恢复到首次 apply 时的版本
+git checkout <commit-hash> -- backend/migrations/112_xxx.sql
+
+# 3. 创建新的 migration 文件实现你的修改
+touch backend/migrations/125_your_fix.sql
+```
+
+**详细文档：** 参见 `backend/migrations/README.md`
+
+---
+
 ## 架构
 
 ### 整体结构
