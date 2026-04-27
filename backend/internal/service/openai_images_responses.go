@@ -282,7 +282,7 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 
 	req, _ = sjson.SetRawBytes(req, "tools", []byte(`[]`))
 	req, _ = sjson.SetRawBytes(req, "tools.-1", tool)
-	req, _ = sjson.SetRawBytes(req, "tool_choice", []byte(`{"type":"image_generation"}`))
+	// tool_choice 会自动选择唯一的工具，无需显式设置
 	return req, nil
 }
 
