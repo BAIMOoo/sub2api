@@ -321,6 +321,37 @@ cd deploy && bash install.sh
 
 当前仓库的标准部署使用 `deploy/docker-compose.yml`，其中应用服务镜像为本地构建的 `sub2api:latest`，并设置了 `pull_policy: never`。因此更新代码后，正确流程是重新构建镜像，再用 Compose 重建容器，而不是只执行 `docker compose pull`。
 
+#### 推荐方案：本地构建 + SSH 传输
+
+**优点：** 适用于任何服务器配置，避免内存不足问题，构建速度快
+
+```bash
+# 1. 本地构建 amd64 镜像（Mac 需要跨平台编译）
+cd /Users/mima0000/sub2api
+docker buildx build --platform linux/amd64 -t sub2api:latest -f deploy/Dockerfile . --load
+
+# 2. 验证镜像平台
+docker inspect sub2api:latest --format '{{.Architecture}} {{.Os}}'
+# 期望输出：amd64 linux
+
+# 3. 通过 SSH 管道传输镜像到服务器
+docker save sub2api:latest | ssh -i ~/.ssh/ec2-key.pem ubuntu@13.231.143.136 "docker load"
+
+# 4. 服务器上重新创建容器
+ssh -i ~/.ssh/ec2-key.pem ubuntu@13.231.143.136 << 'EOF'
+cd /home/ubuntu/sub2api/deploy
+docker compose down sub2api
+docker compose up -d sub2api
+sleep 5
+docker compose ps sub2api
+docker exec sub2api /app/sub2api --version
+EOF
+```
+
+#### 备用方案：服务器直接构建
+
+**适用场景：** 服务器内存充足（>4GB）且网络带宽有限时
+
 ```bash
 # 1. 更新主干代码
 cd ~/sub2api
@@ -338,10 +369,35 @@ docker compose up -d
 docker compose logs -f --tail=100 sub2api
 ```
 
-注意：
+#### 常见问题
+
+**问题 1：服务器内存不足导致前端构建失败**
+```
+FATAL ERROR: JavaScript heap out of memory
+```
+→ 使用方案 B（本地构建 + 传输）
+
+**问题 2：平台不匹配（arm64 vs amd64）**
+```
+The requested image's platform (linux/arm64) does not match detected host platform (linux/amd64)
+```
+→ 使用 `--platform linux/amd64` 构建
+
+**问题 3：磁盘空间不足**
+```bash
+# 清理 Docker 缓存（可释放 5-10GB）
+docker system prune -af --volumes
+```
+
+#### 注意事项
+
 - 不要仅执行 `docker compose pull` 来更新 `deploy/docker-compose.yml` 中的应用服务；该文件不会从远程拉取 `sub2api:latest`
 - 不要执行 `docker compose down -v`，否则会删除 PostgreSQL / Redis 数据卷
 - 如果实际使用的是 `docker-compose.local.yml` 或 `docker-compose.standalone.yml`（应用镜像为 `weishaw/sub2api:latest`），才使用 `docker compose pull && docker compose up -d` 的更新方式
+
+#### 更新历史
+
+- **2026-04-27**：v0.1.117 → v0.1.119（Copilot Compact 模式修复）- 使用方案 B
 
 ---
 

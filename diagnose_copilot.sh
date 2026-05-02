@@ -1,7 +1,7 @@
 #!/bin/bash
 
-API_KEY="sk-d97d28e2e6c6e47741b83bba22c0a8047586c2d7072d9d00990f91b97dbeeb06"
-BASE_URL="http://localhost:8081"
+API_KEY="${SUB2API_DIAG_API_KEY:?请先设置 SUB2API_DIAG_API_KEY}"
+BASE_URL="${SUB2API_DIAG_BASE_URL:-http://localhost:8081}"
 
 echo "=== 1. 检查 API Key 信息 ==="
 curl -s "${BASE_URL}/api/v1/auth/me" \

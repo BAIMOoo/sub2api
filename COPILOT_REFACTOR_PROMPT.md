@@ -68,4 +68,4 @@
 1. `curl /v1/chat/completions` — Copilot 分组，gpt-4 模型
 2. `curl /v1/messages` — Copilot 分组，claude-sonnet-4.6 模型（Anthropic 格式请求和响应）
 3. 确认 OpenAI 分组的 `/v1/messages` 和 `/v1/chat/completions` 功能不受影响
-4. API Key: `sk-d97d28e2e6c6e47741b83bba22c0a8047586c2d7072d9d00990f91b97dbeeb06`，端口 8081
+4. API Key: 使用本地测试环境变量中的有效 key，端口 8081
