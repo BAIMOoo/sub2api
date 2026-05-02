@@ -1,5 +1,7 @@
 docs/claude-relay-service/
 .codex
+.omc/
+**/.omc/
 
 # ===================
 # Go 后端
@@ -83,6 +85,7 @@ temp/
 *.temp
 *.log
 *.bak
+*.bak*
 .cache/
 .dev/
 .serena/

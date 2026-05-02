@@ -517,6 +517,13 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		return OpenAIUsage{}, 0, err
 	}
 
+	logger.LegacyPrintf(
+		"service.openai_gateway",
+		"[DEBUG] Non-streaming response body length=%d preview=%s",
+		len(body),
+		string(body[:min(len(body), 1000)]),
+	)
+
 	var usage OpenAIUsage
 	for _, line := range bytes.Split(body, []byte("\n")) {
 		line = bytes.TrimRight(line, "\r")
@@ -529,8 +536,15 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	}
 	results, createdAt, usageRaw, firstMeta, _, err := collectOpenAIImagesFromResponsesBody(body)
 	if err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "[DEBUG] collectOpenAIImagesFromResponsesBody error: %v", err)
 		return OpenAIUsage{}, 0, err
 	}
+	logger.LegacyPrintf(
+		"service.openai_gateway",
+		"[DEBUG] Collected results count=%d createdAt=%d",
+		len(results),
+		createdAt,
+	)
 	if len(results) == 0 {
 		return OpenAIUsage{}, 0, fmt.Errorf("upstream did not return image output")
 	}
@@ -594,6 +608,17 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				dataBytes := []byte(data)
 				s.parseSSEUsageBytes(dataBytes, &usage)
 				if gjson.ValidBytes(dataBytes) {
+					eventType := gjson.GetBytes(dataBytes, "type").String()
+					debugData := string(dataBytes)
+					if len(debugData) > 500 {
+						debugData = debugData[:500] + "..."
+					}
+					logger.LegacyPrintf(
+						"service.openai_gateway",
+						"[DEBUG] SSE event type=%s data=%s",
+						eventType,
+						debugData,
+					)
 					if meta, eventCreatedAt, ok := extractOpenAIResponsesImageMetaFromLifecycleEvent(dataBytes); ok {
 						mergeOpenAIResponsesImageMeta(&streamMeta, meta)
 						if eventCreatedAt > 0 {
@@ -724,6 +749,12 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	parsed *OpenAIImagesRequest,
 	channelMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	logger.LegacyPrintf(
+		"service.openai_gateway",
+		"[DEBUG] forwardOpenAIImagesOAuth called: model=%s stream=%v",
+		parsed.Model,
+		parsed.Stream,
+	)
 	startTime := time.Now()
 	requestModel := strings.TrimSpace(parsed.Model)
 	if mapped := strings.TrimSpace(channelMappedModel); mapped != "" {
@@ -798,6 +829,16 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		debugBody := string(respBody)
+		if len(debugBody) > 2000 {
+			debugBody = debugBody[:2000] + "..."
+		}
+		logger.LegacyPrintf(
+			"service.openai_gateway",
+			"[DEBUG] OpenAI error response: status=%d body=%s",
+			resp.StatusCode,
+			debugBody,
+		)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
@@ -820,6 +861,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// 添加调试日志：记录响应状态
+	logger.LegacyPrintf(
+		"service.openai_gateway",
+		"[DEBUG] OpenAI Images OAuth response: status=%d content-type=%s stream=%v",
+		resp.StatusCode,
+		resp.Header.Get("Content-Type"),
+		parsed.Stream,
+	)
+
 	var (
 		usage        OpenAIUsage
 		imageCount   int
@@ -828,11 +878,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if parsed.Stream {
 		usage, imageCount, firstTokenMs, err = s.handleOpenAIImagesOAuthStreamingResponse(resp, c, startTime, parsed.ResponseFormat, openAIImagesStreamPrefix(parsed), requestModel)
 		if err != nil {
+			logger.LegacyPrintf("service.openai_gateway", "[DEBUG] Streaming response error: %v", err)
 			return nil, err
 		}
 	} else {
 		usage, imageCount, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed.ResponseFormat, requestModel)
 		if err != nil {
+			logger.LegacyPrintf("service.openai_gateway", "[DEBUG] Non-streaming response error: %v", err)
 			return nil, err
 		}
 	}
