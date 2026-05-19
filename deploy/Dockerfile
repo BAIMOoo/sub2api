@@ -9,6 +9,7 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG GOLANG_IMAGE=golang:1.26.3-alpine
 ARG ALPINE_IMAGE=alpine:3.20
+ARG PNPM_VERSION=9.15.9
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
 
@@ -19,8 +20,10 @@ FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Install pnpm and use mirror registry for npm access
-RUN npm install -g pnpm --registry=https://registry.npmmirror.com
+# Install a pinned pnpm version and use mirror registry for npm access.
+# pnpm latest currently requires explicit dependency build-script approvals,
+# which breaks non-interactive Docker builds for existing lockfiles.
+RUN npm install -g pnpm@${PNPM_VERSION} --registry=https://registry.npmmirror.com
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
