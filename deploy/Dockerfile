@@ -11,16 +11,19 @@ ARG GOLANG_IMAGE=golang:1.26.3-alpine
 ARG ALPINE_IMAGE=alpine:3.20
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
+ARG PNPM_VERSION=9.15.9
 
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS frontend-builder
 
+ARG PNPM_VERSION
+
 WORKDIR /app/frontend
 
 # Install pnpm and use mirror registry for npm access
-RUN npm install -g pnpm --registry=https://registry.npmmirror.com
+RUN npm install -g pnpm@${PNPM_VERSION} --registry=https://registry.npmmirror.com
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
