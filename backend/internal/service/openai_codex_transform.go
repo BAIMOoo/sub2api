@@ -13,6 +13,7 @@ var codexModelMap = map[string]string{
 	"gpt-5.5-medium":             "gpt-5.5",
 	"gpt-5.5-high":               "gpt-5.5",
 	"gpt-5.5-xhigh":              "gpt-5.5",
+	"codex-auto-review":          "codex-auto-review",
 	"gpt-5.4":                    "gpt-5.4",
 	"gpt-5.4-mini":               "gpt-5.4-mini",
 	"gpt-5.4-none":               "gpt-5.4",
