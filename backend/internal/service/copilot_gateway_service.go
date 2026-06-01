@@ -42,10 +42,10 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 	body := parsed.Body
 
 	// 调试日志
-	logger.LegacyPrintf("service.copilot", "[DEBUG] ForwardCopilot: body=%s", string(body))
+	logger.LegacyPrintf("service.copilot", "[DEBUG] ForwardCopilot: body=%s", string(body.Bytes()))
 
 	// 构建请求
-	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(body.Bytes()))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -62,7 +62,7 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 	req.Header.Set("x-request-id", uuid.NewString())
 	req.Header.Set("x-vscode-user-agent-library-version", "electron-fetch")
 	// Determine X-Initiator from Chat Completions messages (role=assistant → agent)
-	req.Header.Set("X-Initiator", determineCCInitiator(body))
+	req.Header.Set("X-Initiator", determineCCInitiator(body.Bytes()))
 
 	// 获取代理配置
 	var proxyURL string
@@ -91,7 +91,7 @@ func (s *GatewayService) ForwardCopilot(ctx context.Context, c *gin.Context, acc
 
 	// 处理错误响应
 	if resp.StatusCode >= 400 {
-		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s, request_body=%s", resp.StatusCode, string(respBody), string(body))
+		logger.LegacyPrintf("service.copilot", "Copilot API error: status=%d, body=%s, request_body=%s", resp.StatusCode, string(respBody), string(body.Bytes()))
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,

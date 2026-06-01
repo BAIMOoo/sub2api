@@ -1,0 +1,4 @@
+11c549cae2880cec71a25395b7e43123cf8affca91e26a07671d3b9460755d9d  /Users/mima0000/sub2api/.migration-backups/tokyo-to-us-20260527T080024Z/tokyo-postgres.dump
+f74b24e9e3f519c9374552296de15a086febf3f16b8d777b44d86dca8c8645d6  /Users/mima0000/sub2api/.migration-backups/tokyo-to-us-20260527T080024Z/tokyo-redis.rdb
+fd3601a2825bd0ffeda91dc751ac10e38a57bfd3a3dc907e3b38d4a7ceaa2faf  /Users/mima0000/sub2api/.migration-backups/tokyo-to-us-20260527T080024Z/us-pre-postgres.dump
+cfd135ece81a1f88ebabc4759959a92035d1919b7aff7eacca1022f5687e77bf  /Users/mima0000/sub2api/.migration-backups/tokyo-to-us-20260527T080024Z/us-pre-redis.rdb
