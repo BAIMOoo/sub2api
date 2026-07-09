@@ -156,13 +156,6 @@ func RegisterAuthRoutes(
 			}),
 			h.Auth.CreateWeChatOAuthAccount,
 		)
-		// GitHub Copilot OAuth
-		auth.POST("/oauth/copilot/start", rateLimiter.LimitWithOptions("oauth-copilot-start", 10, time.Minute, middleware.RateLimitOptions{
-			FailureMode: middleware.RateLimitFailClose,
-		}), h.CopilotOAuth.InitiateDeviceFlow)
-		auth.POST("/oauth/copilot/complete", rateLimiter.LimitWithOptions("oauth-copilot-complete", 10, time.Minute, middleware.RateLimitOptions{
-			FailureMode: middleware.RateLimitFailClose,
-		}), h.CopilotOAuth.CompleteDeviceFlow)
 		auth.GET("/oauth/oidc/start", h.Auth.OIDCOAuthStart)
 		auth.GET("/oauth/oidc/bind/start", func(c *gin.Context) {
 			query := c.Request.URL.Query()

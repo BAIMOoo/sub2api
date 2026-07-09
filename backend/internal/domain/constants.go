@@ -22,7 +22,7 @@ const (
 	PlatformOpenAI      = "openai"
 	PlatformGemini      = "gemini"
 	PlatformAntigravity = "antigravity"
-	PlatformCopilot     = "copilot"
+	PlatformGrok        = "grok"
 )
 
 // Account type constants
@@ -68,6 +68,9 @@ const (
 	SubscriptionStatusSuspended = "suspended"
 )
 
+// AntigravityGemini31ProAgentModel is the upstream route for Gemini 3.1 Pro High.
+const AntigravityGemini31ProAgentModel = "gemini-pro-agent"
+
 // DefaultAntigravityModelMapping 是 Antigravity 平台的默认模型映射
 // 当账号未配置 model_mapping 时使用此默认值
 // 与前端 useModelWhitelist.ts 中的 antigravityDefaultMappings 保持一致
@@ -103,10 +106,12 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-3-flash-preview": "gemini-3-flash",
 	"gemini-3-pro-preview":   "gemini-3-pro-high",
 	// Gemini 3.1 白名单
-	"gemini-3.1-pro-high": "gemini-3.1-pro-high",
-	"gemini-3.1-pro-low":  "gemini-3.1-pro-low",
+	AntigravityGemini31ProAgentModel: AntigravityGemini31ProAgentModel,
+	"gemini-3.1-pro":                 AntigravityGemini31ProAgentModel,
+	"gemini-3.1-pro-high":            AntigravityGemini31ProAgentModel,
+	"gemini-3.1-pro-low":             "gemini-3.1-pro-low",
 	// Gemini 3.1 preview 映射
-	"gemini-3.1-pro-preview": "gemini-3.1-pro-high",
+	"gemini-3.1-pro-preview": AntigravityGemini31ProAgentModel,
 	// Gemini 3.1 image 白名单
 	"gemini-3.1-flash-image": "gemini-3.1-flash-image",
 	// Gemini 3.1 image preview 映射
@@ -117,53 +122,6 @@ var DefaultAntigravityModelMapping = map[string]string{
 	// 其他官方模型
 	"gpt-oss-120b-medium":    "gpt-oss-120b-medium",
 	"tab_flash_lite_preview": "tab_flash_lite_preview",
-}
-
-// DefaultCopilotModelMapping 是 GitHub Copilot 平台的默认模型映射
-// 支持 GPT、Claude、Gemini、Codex 和 Embedding 模型
-var DefaultCopilotModelMapping = map[string]string{
-	// GPT 系列
-	"gpt-4":                      "gpt-4",
-	"gpt-4-turbo":                "gpt-4-turbo",
-	"gpt-4o":                     "gpt-4o",
-	"gpt-4o-mini":                "gpt-4o-mini",
-	"gpt-3.5-turbo":              "gpt-3.5-turbo",
-	"o1":                         "o1",
-	"o1-mini":                    "o1-mini",
-	"o1-preview":                 "o1-preview",
-	"gpt-4.1":                    "gpt-4.1",
-	"gpt-5.1":                    "gpt-5.1",
-	"gpt-5.2":                    "gpt-5.2",
-	"gpt-5-mini":                 "gpt-5-mini",
-	"gpt-5.4":                    "gpt-5.4",
-	"gpt-5.4-mini":               "gpt-5.4-mini",
-	// Claude 系列
-	"claude-opus-4.6":            "claude-opus-4.6",
-	"claude-opus-4-6":            "claude-opus-4.6",
-	"claude-opus-4.6-fast":       "claude-opus-4.6-fast",
-	"claude-opus-4.5":            "claude-opus-4.5",
-	"claude-opus-4-5":            "claude-opus-4.5",
-	"claude-sonnet-4.6":          "claude-sonnet-4.6",
-	"claude-sonnet-4-6":          "claude-sonnet-4.6",
-	"claude-sonnet-4.5":          "claude-sonnet-4.5",
-	"claude-sonnet-4-5":          "claude-sonnet-4.5",
-	"claude-sonnet-4":            "claude-sonnet-4",
-	"claude-haiku-4.5":           "claude-haiku-4.5",
-	"claude-haiku-4-5":           "claude-haiku-4.5",
-	"claude-haiku-4-5-20251001":  "claude-haiku-4.5",
-	"claude-3.5-sonnet":          "claude-3.5-sonnet",
-	"claude-3-5-sonnet":          "claude-3.5-sonnet",
-	// Gemini 系列
-	"gemini-2.5-pro":             "gemini-2.5-pro",
-	"gemini-3-flash-preview":     "gemini-3-flash-preview",
-	"gemini-3.1-pro-preview":     "gemini-3.1-pro-preview",
-	// Codex
-	"gpt-5.1-codex":              "gpt-5.1-codex",
-	"gpt-5.2-codex":              "gpt-5.2-codex",
-	"gpt-5.3-codex":              "gpt-5.3-codex",
-	// Embedding
-	"text-embedding-3-small":     "text-embedding-3-small",
-	"text-embedding-ada-002":     "text-embedding-ada-002",
 }
 
 // DefaultBedrockModelMapping 是 AWS Bedrock 平台的默认模型映射
@@ -183,6 +141,7 @@ var DefaultBedrockModelMapping = map[string]string{
 	"claude-opus-4-1":          "us.anthropic.claude-opus-4-1-20250805-v1:0",
 	"claude-opus-4-20250514":   "us.anthropic.claude-opus-4-20250514-v1:0",
 	// Claude Sonnet
+	"claude-sonnet-5":            "us.anthropic.claude-sonnet-5-v1",
 	"claude-sonnet-4-6-thinking": "us.anthropic.claude-sonnet-4-6",
 	"claude-sonnet-4-6":          "us.anthropic.claude-sonnet-4-6",
 	"claude-sonnet-4-5":          "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
