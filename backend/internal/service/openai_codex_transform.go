@@ -250,6 +250,13 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		result.Modified = true
 	}
 
+	// 工具声明形态对齐官方：官方从不发送顶层 tools，而是放在 input[] 的
+	// additional_tools 项里、按命名空间分组（实测：CLI/TUI 的 WS body 与 app/exec 的
+	// HTTP body 都是这个形态）。第三方客户端发来的扁平 tools 在这里改写为官方形态。
+	if promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
+		result.Modified = true
+	}
+
 	if fcRaw, ok := reqBody["function_call"]; ok {
 		if fcStr, ok := fcRaw.(string); ok {
 			// e.g. "auto", "none"
@@ -395,7 +402,10 @@ func normalizeCodexToolChoice(reqBody map[string]any) bool {
 			delete(choiceMap, "function")
 			modified = true
 		}
-		if !codexToolsContainFunctionName(reqBody["tools"], name) {
+		// 工具可能已被搬进 input[].additional_tools 的命名空间里，两处都要找，
+		// 否则客户端点名的函数会被误判为不存在、tool_choice 被悄悄降级成 auto。
+		if !codexToolsContainFunctionName(reqBody["tools"], name) &&
+			!codexAdditionalToolsContainFunctionName(reqBody["input"], name) {
 			reqBody["tool_choice"] = "auto"
 			return true
 		}
@@ -437,6 +447,130 @@ func codexToolsContainType(rawTools any, toolType string) bool {
 		}
 		if strings.TrimSpace(firstNonEmptyString(tool["type"])) == toolType {
 			return true
+		}
+	}
+	return false
+}
+
+// codexAdditionalToolsNamespaceName 是官方 Codex 客户端承载普通工作区工具时的命名空间名。
+// 实测：CLI/TUI 的 WS body 与桌面 app / codex exec 的 HTTP body 都在 input[] 首位放一个
+// additional_tools 项，内含 "functions"（另有 "clock"、"collaboration"）命名空间。
+const codexAdditionalToolsNamespaceName = "functions"
+
+// codexAdditionalToolsNamespaceDescription 是命名空间描述。上游要求该字段非空
+// （实测：缺失时报 400 "Missing required parameter: 'input[0].tools[0].description'"）。
+const codexAdditionalToolsNamespaceDescription = "Tools available in this session."
+
+// promoteTopLevelToolsToAdditionalTools 把 Responses 风格的顶层 tools 改写成官方形态：
+// input[] 首位一个 additional_tools 项，内含 "functions" 命名空间，函数工具平铺其中
+// （{"type":"function","name":…,"description":…,"parameters":…}，不再有 function 嵌套）。
+//
+// 只在「所有工具都是 function 且都带非空 description」且「input 为数组或缺失」时改写；
+// 任一条件不满足就保持原样 —— 宁可与官方形态不一致，也不猜上游校验规则而丢工具功能。
+// compact 端点形态不同（见调用方注释），不由本函数处理。
+func promoteTopLevelToolsToAdditionalTools(reqBody map[string]any, skip bool) bool {
+	if skip || reqBody == nil {
+		return false
+	}
+	rawTools, ok := reqBody["tools"].([]any)
+	if !ok || len(rawTools) == 0 {
+		return false
+	}
+	var input []any
+	if rawInput, exists := reqBody["input"]; exists {
+		input, ok = rawInput.([]any)
+		if !ok {
+			return false
+		}
+	}
+
+	entries := make([]any, 0, len(rawTools))
+	for _, rawTool := range rawTools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok || !strings.EqualFold(strings.TrimSpace(firstNonEmptyString(tool["type"])), "function") {
+			return false
+		}
+		function := tool
+		if nested, ok := tool["function"].(map[string]any); ok {
+			function = nested
+		}
+		name := strings.TrimSpace(firstNonEmptyString(function["name"]))
+		description, _ := function["description"].(string)
+		if name == "" || strings.TrimSpace(description) == "" {
+			return false
+		}
+		entry := map[string]any{"type": "function", "name": name, "description": description}
+		if parameters, ok := function["parameters"]; ok {
+			entry["parameters"] = parameters
+		}
+		if strict, ok := function["strict"]; ok {
+			entry["strict"] = strict
+		}
+		entries = append(entries, entry)
+	}
+
+	item := map[string]any{
+		"type": "additional_tools",
+		"role": "developer",
+		"tools": []any{map[string]any{
+			"type":        "namespace",
+			"name":        codexAdditionalToolsNamespaceName,
+			"description": codexAdditionalToolsNamespaceDescription,
+			"tools":       entries,
+		}},
+	}
+	reqBody["input"] = append([]any{item}, input...)
+	delete(reqBody, "tools")
+	return true
+}
+
+// codexAdditionalToolsContainFunctionName 在 input[] 的 additional_tools 项里递归查找函数名，
+// 供 tool_choice 归一化使用（工具被搬进命名空间后仍要认得客户端点名的函数）。
+func codexAdditionalToolsContainFunctionName(rawInput any, name string) bool {
+	input, ok := rawInput.([]any)
+	normalized := strings.TrimSpace(name)
+	if !ok || normalized == "" {
+		return false
+	}
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
+			continue
+		}
+		if codexToolListContainFunctionName(item["tools"], normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+// codexToolListContainFunctionName 在工具表里递归查找函数名：命名空间（type=namespace）
+// 展开其 tools 继续找，与 collectOpenAIResponsesToolNameFields 的遍历口径一致。
+func codexToolListContainFunctionName(rawTools any, normalizedName string) bool {
+	tools, ok := rawTools.([]any)
+	if !ok {
+		return false
+	}
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(firstNonEmptyString(tool["type"])) {
+		case "namespace":
+			if codexToolListContainFunctionName(tool["tools"], normalizedName) {
+				return true
+			}
+		case "function":
+			name := strings.TrimSpace(firstNonEmptyString(tool["name"]))
+			if name == "" {
+				if function, ok := tool["function"].(map[string]any); ok {
+					name = strings.TrimSpace(firstNonEmptyString(function["name"]))
+				}
+			}
+			if name == normalizedName {
+				return true
+			}
 		}
 	}
 	return false
