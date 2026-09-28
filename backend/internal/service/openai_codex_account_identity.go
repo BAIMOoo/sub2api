@@ -106,6 +106,21 @@ func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw 
 	))
 }
 
+// scopeCodexAccountIdentityValueKeepSuffix 与 scopeCodexAccountIdentityValue 相同，
+// 但保留 "<uuid>:<n>" 形式的后缀序号：官方 x-codex-window-id 与 client_metadata.window_id
+// 都是 "<会话 uuid>:<窗口序号>"，整体替换会把 ":0" 抹掉，形成官方不存在的形态。
+func scopeCodexAccountIdentityValueKeepSuffix(account *Account, apiKeyID int64, kind, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if base, suffix, ok := strings.Cut(trimmed, ":"); ok && base != "" {
+		scoped := scopeCodexAccountIdentityValue(account, apiKeyID, kind, base)
+		if scoped != "" {
+			return scoped + ":" + suffix
+		}
+		return raw
+	}
+	return scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
+}
+
 var codexAccountIdentityFields = []struct {
 	name string
 	kind string
@@ -133,7 +148,7 @@ func applyCodexAccountIdentityFields(values map[string]any, account *Account, ap
 		if !ok || strings.TrimSpace(raw) == "" {
 			continue
 		}
-		next := scopeCodexAccountIdentityValue(account, apiKeyID, field.kind, raw)
+		next := scopeCodexAccountIdentityValueKeepSuffix(account, apiKeyID, field.kind, raw)
 		if next != raw {
 			values[field.name] = next
 			changed = true
@@ -261,7 +276,7 @@ func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, api
 		}
 		raw := strings.TrimSpace(headers.Get(field.name))
 		if raw != "" {
-			headers.Set(field.name, scopeCodexAccountIdentityValue(account, apiKeyID, field.kind, raw))
+			headers.Set(field.name, scopeCodexAccountIdentityValueKeepSuffix(account, apiKeyID, field.kind, raw))
 		}
 	}
 	if raw := strings.TrimSpace(headers.Get(openAIWSTurnMetadataHeader)); raw != "" {

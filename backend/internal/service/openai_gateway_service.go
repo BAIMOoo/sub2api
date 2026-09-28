@@ -82,6 +82,11 @@ var openaiAllowedHeaders = map[string]bool{
 	"user-agent":              true,
 	"originator":              true,
 	"session_id":              true,
+	// 官方客户端（CLI/TUI 与桌面 app）实际发送的是连字符形式；先放行，随后由
+	// applyCodexAccountIdentityHeaders 就地作用域化，保证形态与官方一致。
+	"session-id":          true,
+	"thread-id":           true,
+	"x-client-request-id": true,
 	"x-codex-beta-features":   true,
 	"x-codex-installation-id": true,
 	"x-codex-turn-state":      true,
