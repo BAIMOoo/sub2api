@@ -163,14 +163,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		if isOpenAICodexModel(reqModel) && !gjson.GetBytes(body, "instructions").Exists() {
-			nextBody, setErr := sjson.SetBytes(body, "instructions", defaultCodexSynthInstructions(reqModel))
-			if setErr != nil {
-				return nil, fmt.Errorf("set passthrough codex instructions: %w", setErr)
-			}
-			body = nextBody
-		}
-
 		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(body, isOpenAIResponsesCompactPath(c))
 		if err != nil {
 			return nil, err
@@ -675,6 +667,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			sessionFallback = resolveOpenAICompactSessionID(c)
 		}
 		applyCodexSessionIdentityHeaders(req.Header, sessionFallback)
+		// 环境字段对齐官方 exec 实测值（sandbox=seccomp / workspace-write）。
+		applyCodexTurnMetadataEnvironment(req.Header)
 	} else if isOpenAIResponsesCompactPath(c) {
 		// 透传白名单会放行客户端的 Accept: text/event-stream；compact 上游是
 		// unary JSON 协议，API-key 账号同样强制 Accept，避免上游按 SSE 返回

@@ -91,6 +91,11 @@ type codexOAuthTransformOptions struct {
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
 	OmitPromotedSystemMessagesFromInput bool
+	// KeepSystemMessagesInInput 把 role:"system" 就地归一化为 role:"developer"，不再
+	// 提升/镜像到顶层 instructions。官方客户端（CLI/TUI、桌面 app、codex exec）都把
+	// 系统提示留在 input[] 里、顶层从不带 instructions（见实测记录 §B/§15/§16），
+	// 因此 Codex 路径默认走这一支；保留原分支供非 Codex 变换复用。
+	KeepSystemMessagesInInput bool
 }
 
 const (
@@ -290,11 +295,14 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	}
 
 	// ChatGPT internal Codex endpoint does not accept role:"system".
-	// Mirror its text into instructions because Codex OAuth requires it. Some
-	// callers must also keep the guidance in input as developer (notably
-	// Responses JSON object mode), while Chat Completions compatibility can
-	// omit text-only messages after promoting them losslessly.
-	if extractSystemMessagesFromInput(reqBody, opts.OmitPromotedSystemMessagesFromInput) {
+	// 官方客户端把系统提示放在 input[] 的 developer message 里，顶层从不带
+	// instructions，故 Codex 路径只做角色归一化、不再提升成 instructions；
+	// 旧分支保留给仍需 instructions 的变换（含 JSON object 模式的无损提升）。
+	if opts.KeepSystemMessagesInInput {
+		if normalizeCodexSystemRoleMessagesInInput(reqBody) {
+			result.Modified = true
+		}
+	} else if extractSystemMessagesFromInput(reqBody, opts.OmitPromotedSystemMessagesFromInput) {
 		result.Modified = true
 	}
 
@@ -1301,6 +1309,26 @@ func extractTextFromContent(content any) string {
 	default:
 		return ""
 	}
+}
+
+// normalizeCodexSystemRoleMessagesInInput 把 input[] 里的 role:"system" 就地改成
+// role:"developer"（上游 Codex 端点不接受 system），文本留在原位、不写顶层 instructions。
+// 返回是否发生修改。
+func normalizeCodexSystemRoleMessagesInInput(reqBody map[string]any) bool {
+	input, ok := reqBody["input"].([]any)
+	if !ok || len(input) == 0 {
+		return false
+	}
+	modified := false
+	for _, item := range input {
+		message, ok := item.(map[string]any)
+		if !ok || message["role"] != "system" {
+			continue
+		}
+		message["role"] = "developer"
+		modified = true
+	}
+	return modified
 }
 
 // extractSystemMessagesFromInput scans input for role=="system" and mirrors

@@ -384,11 +384,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			upstreamModel = compactModel
 		}
 	}
-	instructions := gjson.GetBytes(body, "instructions")
-	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses {
-		markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
-	}
 	if billingModel != requestedModel {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", requestedModel, billingModel, account.Name, isCodexCLI)
 	}
@@ -514,14 +509,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 true,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+				KeepSystemMessagesInInput:           true,
 			})
-			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
 		} else {
 			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
 				IsCodexCLI:                          isCodexCLI,
 				IsCompact:                           isCompactRequest,
+				SkipDefaultInstructions:             true,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
+				KeepSystemMessagesInInput:           true,
 			})
 		}
 		if codexResult.Error != nil {
@@ -1467,6 +1464,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 			sessionFallback = resolveOpenAICompactSessionID(c)
 		}
 		applyCodexSessionIdentityHeaders(req.Header, sessionFallback)
+		// 环境字段对齐官方 exec 实测值（sandbox=seccomp / workspace-write），
+		// 并去掉只有桌面 app 才带的字段。
+		applyCodexTurnMetadataEnvironment(req.Header)
 	} else if isOpenAIResponsesCompactPath(c) {
 		// compact 上游是 unary JSON 协议：API-key 账号也显式声明 Accept，
 		// 避免 OpenAI 兼容网关按 SSE 返回（#3777 期望行为 4）。

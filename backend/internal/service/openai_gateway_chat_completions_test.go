@@ -368,8 +368,9 @@ func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testi
 	require.Nil(t, result)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
-	require.True(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
-	require.Equal(t, "", gjson.GetBytes(upstream.lastBody, "instructions").String())
+	// 官方客户端顶层从不带 instructions（系统提示留在 input[] 的 developer message 里），
+	// 因此这里既不注入默认模板，也不再补一个空 instructions 字段。
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 	require.NotContains(t, string(upstream.lastBody), "Communicate with the user by streaming thinking")
 }
 
@@ -407,15 +408,19 @@ func forwardOAuthChatCompletionsForUpstreamBody(t *testing.T, body []byte) []byt
 	return upstream.lastBody
 }
 
-func TestForwardAsChatCompletions_OAuthPromotesSystemMessageWithoutDuplication(t *testing.T) {
+// 系统消息不再提升到顶层 instructions：就地归一化为 developer 留在 input[]，
+// 文本只出现一次（官方实测形态，见 B 记录）。
+func TestForwardAsChatCompletions_OAuthKeepsSystemMessageAsDeveloperInInput(t *testing.T) {
 	const systemPrompt = "Unique system prefix for token accounting."
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"` + systemPrompt + `"},{"role":"user","content":"hello"}],"stream":false}`)
 
 	upstreamBody := forwardOAuthChatCompletionsForUpstreamBody(t, body)
 
-	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "instructions").String())
-	require.Equal(t, int64(1), gjson.GetBytes(upstreamBody, "input.#").Int())
-	require.Equal(t, "user", gjson.GetBytes(upstreamBody, "input.0.role").String())
+	require.False(t, gjson.GetBytes(upstreamBody, "instructions").Exists())
+	require.Equal(t, int64(2), gjson.GetBytes(upstreamBody, "input.#").Int())
+	require.Equal(t, "developer", gjson.GetBytes(upstreamBody, "input.0.role").String())
+	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "input.0.content").String())
+	require.Equal(t, "user", gjson.GetBytes(upstreamBody, "input.1.role").String())
 	require.Equal(t, 1, strings.Count(string(upstreamBody), systemPrompt))
 }
 
@@ -425,11 +430,11 @@ func TestForwardAsChatCompletions_OAuthJsonObjectKeepsSystemMessageInInput(t *te
 
 	upstreamBody := forwardOAuthChatCompletionsForUpstreamBody(t, body)
 
-	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "instructions").String())
+	require.False(t, gjson.GetBytes(upstreamBody, "instructions").Exists())
 	require.Equal(t, int64(2), gjson.GetBytes(upstreamBody, "input.#").Int())
 	require.Equal(t, "developer", gjson.GetBytes(upstreamBody, "input.0.role").String())
 	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "input.0.content").String())
-	require.Equal(t, 2, strings.Count(string(upstreamBody), systemPrompt))
+	require.Equal(t, 1, strings.Count(string(upstreamBody), systemPrompt))
 }
 
 func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing.T) {
@@ -438,7 +443,7 @@ func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing
 
 	upstreamBody := forwardOAuthChatCompletionsForUpstreamBody(t, body)
 
-	require.Equal(t, systemPrompt, gjson.GetBytes(upstreamBody, "instructions").String())
+	require.False(t, gjson.GetBytes(upstreamBody, "instructions").Exists())
 	require.Equal(t, int64(2), gjson.GetBytes(upstreamBody, "input.#").Int())
 	require.Equal(t, "developer", gjson.GetBytes(upstreamBody, "input.0.role").String())
 	require.Equal(t, int64(2), gjson.GetBytes(upstreamBody, "input.0.content.#").Int())

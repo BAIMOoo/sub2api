@@ -871,7 +871,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	c.Request.Header.Set("session_id", "real-client-session")
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color")
 	c.Request.Header.Set("originator", "codex_cli_rs")
-	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"real-install","session_id":"real-session","sandbox":"seatbelt"}`)
+	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"real-install","session_id":"real-session","sandbox":"seatbelt","thread_source":"user"}`)
 
 	// 复刻 forwardOpenAIPassthrough 的解析+暂存 seam（默认 session 模式）
 	ids := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
@@ -890,7 +890,10 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	turnMetadata := req.Header.Get("x-codex-turn-metadata")
 	require.NotEmpty(t, turnMetadata)
 	assert.Contains(t, turnMetadata, ids.sessionID, "turn-metadata JSON 中的 session_id 应被收敛")
-	assert.Contains(t, turnMetadata, `"sandbox":"seatbelt"`, "turn-metadata 未指定字段应原样保留")
+	// 环境字段被对齐到官方 exec 实测值；其余未指定字段（如 thread_source）原样保留。
+	assert.Contains(t, turnMetadata, `"sandbox":"`+codexTurnMetadataSandbox+`"`, "sandbox 应对齐官方 exec 实测值")
+	assert.Contains(t, turnMetadata, `"sandbox_mode":"`+codexTurnMetadataSandboxMode+`"`)
+	assert.Contains(t, turnMetadata, `"thread_source":"user"`, "turn-metadata 未指定字段应原样保留")
 }
 
 func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *testing.T) {

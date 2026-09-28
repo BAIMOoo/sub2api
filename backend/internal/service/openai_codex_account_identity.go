@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -96,14 +98,66 @@ func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw 
 	if raw == "" || namespace == "" {
 		return raw
 	}
-	return deriveStableUUIDv4(fmt.Sprintf(
+	seed := fmt.Sprintf(
 		"sub2api:codex-account-identity:%s:user:%d:account:%s:kind:%s:value:%s",
 		codexAccountIdentityNamespaceVersion,
 		apiKeyID,
 		namespace,
 		kind,
 		raw,
-	))
+	)
+	// 官方客户端的会话/线程/回合标识都是 UUIDv7（时间戳型）；收敛值保持同一形态，
+	// 否则「v4 会话 id」本身就是官方形态里不存在的信号。时间戳沿用原值，
+	// 因此同一输入永远得到同一结果，且时间线与客户端原值一致。
+	// installation_id 是客户端自带的设备标识（官方为普通 v4），维持派生 v4。
+	if kind != codexIdentityKindInstallation {
+		if v7, ok := deriveStableCodexIdentityUUIDv7(seed, raw); ok {
+			return v7
+		}
+	}
+	return deriveStableUUIDv4(seed)
+}
+
+// codexIdentityKindInstallation 是设备/安装标识的作用域 kind：官方为普通 UUIDv4，
+// 不参与「保持 v7 形态」的规则。
+const codexIdentityKindInstallation = "installation"
+
+// deriveStableCodexIdentityUUIDv7 在原值是 UUIDv7 时派生出同形态的收敛值：
+// 沿用原值的 48 位毫秒时间戳，其余比特由种子确定性派生。原值不是 v7 时返回 false，
+// 由调用方回退到 UUIDv4 派生（保持既有行为，不凭空造时间戳）。
+func deriveStableCodexIdentityUUIDv7(seed, raw string) (string, bool) {
+	timestampMillis, ok := uuidV7TimestampMillis(raw)
+	if !ok {
+		return "", false
+	}
+	h := sha256.Sum256([]byte(seed))
+	b := h[:16]
+	b[0] = byte(timestampMillis >> 40)
+	b[1] = byte(timestampMillis >> 32)
+	b[2] = byte(timestampMillis >> 24)
+	b[3] = byte(timestampMillis >> 16)
+	b[4] = byte(timestampMillis >> 8)
+	b[5] = byte(timestampMillis)
+	b[6] = (b[6] & 0x0f) | 0x70 // version 7
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), true
+}
+
+// uuidV7TimestampMillis 取出 UUIDv7 的 48 位毫秒时间戳；非 v7 形态（或全零时间戳）
+// 返回 false。
+func uuidV7TimestampMillis(raw string) (uint64, bool) {
+	compact := strings.ReplaceAll(strings.TrimSpace(raw), "-", "")
+	if len(compact) != 32 || compact[12] != '7' {
+		return 0, false
+	}
+	if _, err := hex.DecodeString(compact); err != nil {
+		return 0, false
+	}
+	timestampMillis, err := strconv.ParseUint(compact[:12], 16, 64)
+	if err != nil || timestampMillis == 0 {
+		return 0, false
+	}
+	return timestampMillis, true
 }
 
 // scopeCodexAccountIdentityValueKeepSuffix 与 scopeCodexAccountIdentityValue 相同，
@@ -119,6 +173,58 @@ func scopeCodexAccountIdentityValueKeepSuffix(account *Account, apiKeyID int64, 
 		return raw
 	}
 	return scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
+}
+
+// 官方 codex exec 实测（2026-09-28，Linux）的 x-codex-turn-metadata 环境字段取值。
+const (
+	codexTurnMetadataSandbox     = "seccomp"
+	codexTurnMetadataSandboxMode = "workspace-write"
+)
+
+// codexTurnMetadataClientOnlyFields 是只有桌面 app 才会带、官方 CLI/exec 从不发送的字段。
+// 我们对外声明的是 Linux CLI（exec）身份，留着 app 专有字段会自相矛盾。
+var codexTurnMetadataClientOnlyFields = []string{"client_type", "source", "workspace_kind"}
+
+// applyCodexTurnMetadataEnvironment 把出站 x-codex-turn-metadata 的环境字段对齐官方
+// exec 实测值（sandbox=seccomp / sandbox_mode=workspace-write），并移除仅桌面 app 才有的
+// 字段。客户端透传的 Windows 取值（如 windows_elevated / danger-full-access）与
+// 「Linux CLI」身份自相矛盾，是上游可识别的形态差异。
+func applyCodexTurnMetadataEnvironment(headers http.Header) bool {
+	if headers == nil {
+		return false
+	}
+	raw := strings.TrimSpace(headers.Get("x-codex-turn-metadata"))
+	if raw == "" {
+		return false
+	}
+	metadata := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
+		return false
+	}
+	changed := false
+	if value, ok := metadata["sandbox"].(string); !ok || value != codexTurnMetadataSandbox {
+		metadata["sandbox"] = codexTurnMetadataSandbox
+		changed = true
+	}
+	if value, ok := metadata["sandbox_mode"].(string); !ok || value != codexTurnMetadataSandboxMode {
+		metadata["sandbox_mode"] = codexTurnMetadataSandboxMode
+		changed = true
+	}
+	for _, field := range codexTurnMetadataClientOnlyFields {
+		if _, ok := metadata[field]; ok {
+			delete(metadata, field)
+			changed = true
+		}
+	}
+	if !changed {
+		return false
+	}
+	rebuilt, err := marshalCodexTurnMetadata(metadata)
+	if err != nil {
+		return false
+	}
+	headers.Set("x-codex-turn-metadata", string(rebuilt))
+	return true
 }
 
 // applyCodexSessionIdentityHeaders 用官方头名重建出站会话身份，并清除 sub2api
@@ -169,8 +275,8 @@ var codexAccountIdentityFields = []struct {
 	name string
 	kind string
 }{
-	{name: "installation_id", kind: "installation"},
-	{name: "x-codex-installation-id", kind: "installation"},
+	{name: "installation_id", kind: codexIdentityKindInstallation},
+	{name: "x-codex-installation-id", kind: codexIdentityKindInstallation},
 	// 官方客户端的会话标识是"同值关系"：session-id = thread-id = x-client-request-id，
 	// 且 x-codex-window-id / window_id = "<同一 UUID>:<窗口序号>"。共用同一 kind 才能在
 	// 作用域化之后仍保持这种相等关系（同 kind + 同原值 → 同派生值）。
@@ -183,6 +289,10 @@ var codexAccountIdentityFields = []struct {
 	{name: "x-client-request-id", kind: "session"},
 	{name: "turn_id", kind: "turn"},
 	{name: "turn-id", kind: "turn"},
+	// 官方 turn_id 与 root_turn_id 是同值关系（同一回合 UUID v7，见实测 body 与
+	// x-codex-turn-metadata）。纳入同一 kind 才能保证作用域化后仍相等。
+	{name: "root_turn_id", kind: "turn"},
+	{name: "root-turn-id", kind: "turn"},
 }
 
 func applyCodexAccountIdentityFields(values map[string]any, account *Account, apiKeyID int64) bool {

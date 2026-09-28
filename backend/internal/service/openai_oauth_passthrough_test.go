@@ -167,9 +167,12 @@ func TestOpenAIGatewayService_OAuthResponsesPromotesSystemMessageWithoutDuplicat
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.NotEmpty(t, upstream.lastBody)
-	require.Equal(t, systemPrompt+"\n\n"+existingInstructions, gjson.GetBytes(upstream.lastBody, "instructions").String())
-	require.Equal(t, int64(1), gjson.GetBytes(upstream.lastBody, "input.#").Int())
-	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+	// system 消息不再提升：客户端自带的 instructions 原样保留，system 文本留在
+	// input[] 的 developer message 里，且只出现一次（不复制、不镜像）。
+	require.Equal(t, existingInstructions, gjson.GetBytes(upstream.lastBody, "instructions").String())
+	require.Equal(t, int64(2), gjson.GetBytes(upstream.lastBody, "input.#").Int())
+	require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+	require.Equal(t, "user", gjson.GetBytes(upstream.lastBody, "input.1.role").String())
 	require.Equal(t, 1, strings.Count(string(upstream.lastBody), systemPrompt))
 }
 
@@ -890,7 +893,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefault(t *testing.T) {
+// 透传路径不再为缺失 instructions 的 Codex 请求注入默认模板：官方客户端本来就不发
+// 顶层 instructions（实测：codex exec 的 HTTP body 只有 11 个顶层键、无 instructions），
+// 上游也接受这种形态。
+func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsStaysUnset(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	for _, stream := range []bool{false, true} {
@@ -934,12 +940,13 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefau
 			} else {
 				require.False(t, gjson.GetBytes(upstream.lastBody, "stream").Exists())
 			}
-			require.Equal(t, strings.TrimSpace(defaultCodexSynthInstructions("gpt-5.1-codex-max")), strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
+			require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 		})
 	}
 }
 
-func TestOpenAIGatewayService_Forward_MissingInstructionsUsesMappedModelTemplate(t *testing.T) {
+// 模型映射仍然生效，但缺失 instructions 不再按映射后的模型注入默认模板。
+func TestOpenAIGatewayService_Forward_MissingInstructionsStaysUnset(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -972,9 +979,7 @@ func TestOpenAIGatewayService_Forward_MissingInstructionsUsesMappedModelTemplate
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "gpt-6-astra", gjson.GetBytes(upstream.lastBody, "model").String())
-	instructions := gjson.GetBytes(upstream.lastBody, "instructions").String()
-	require.True(t, strings.HasPrefix(strings.TrimSpace(instructions), "You are Codex, an agent based on GPT-6."))
-	require.NotContains(t, instructions, "You are Codex, a coding agent based on GPT-5.")
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *testing.T) {

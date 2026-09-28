@@ -259,15 +259,18 @@ func canonicalizeCodexOriginator(name string) string {
 	return name
 }
 
-// CodexCLIOriginator 是 codex-rs 客户端的历史默认 originator，保留用于兼容识别。
+// CodexCLIOriginator 是 codex-rs 客户端库层的默认 originator，保留用于兼容识别。
 const CodexCLIOriginator = "codex_cli_rs"
 
 // CodexDefaultOriginator 是网关默认使用的 Codex CLI（非交互 exec）originator。
 //
-// 与官方 codex exec 的默认值 codex_cli_rs 对齐：exec 走 HTTP Responses API，
-// 与本网关的出站传输形态自洽。交互式 TUI 的 originator 是 codex-tui，但其以
-// WebSocket 为主、且 WS 失败时不会回退 HTTP，故不作为本网关的默认身份。
-const CodexDefaultOriginator = "codex_cli_rs"
+// 实测（2026-09-28，Linux 上 `codex exec` 经中间人采集）：真实的 exec 入口会把
+// originator 覆盖成 `codex_exec`，UA 首段与尾注也随之变成
+// `codex_exec/<ver> (…) (codex_exec; <ver>)`；`codex_cli_rs` 只是未覆盖时的库层默认值，
+// 没有哪个真实客户端会发 `codex_cli_rs/… (codex_exec; …)` 这种首尾不同源的组合。
+// exec 走 HTTP Responses API，与本网关的出站传输形态自洽；交互式 TUI 的 originator 是
+// codex-tui，但其以 WebSocket 为主、且 WS 失败时不会回退 HTTP，故不作为默认身份。
+const CodexDefaultOriginator = "codex_exec"
 
 // CodexUserAgentVersion 提取 Codex UA 的完整版本段，即 `{client}/{version} (...` 中的 version。
 // 与 ParseCodexEngineVersion 的区别：后者只取三段数字用于引擎版本比较（会丢掉 -alpha.4

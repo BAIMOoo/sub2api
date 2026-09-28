@@ -1381,9 +1381,8 @@ func TestForwardAsAnthropic_OAuthKeepsSystemAsDeveloperInput(t *testing.T) {
 	require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
 	require.Equal(t, "input_text", gjson.GetBytes(upstream.lastBody, "input.0.content.0.type").String())
 	require.Equal(t, "project instructions", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
-	instructions := gjson.GetBytes(upstream.lastBody, "instructions")
-	require.True(t, instructions.Exists())
-	require.Empty(t, instructions.String())
+	// 官方客户端顶层不带 instructions：系统提示就留在 input[] 的 developer message 里。
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 	requireOpenAIMessagesCodexIdentity(t, upstream.requests[0], codexCLIUserAgent, openai.CodexDefaultOriginator)
 }
 

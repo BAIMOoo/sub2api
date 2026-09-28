@@ -33,11 +33,12 @@ const (
 	openaiPlatformAPIURL            = "https://api.openai.com/v1/responses"
 	openaiPlatformAPIInputTokensURL = "https://api.openai.com/v1/responses/input_tokens"
 	openaiStickySessionTTL          = time.Hour // 粘性会话TTL
-	// 与真实 Codex TUI 的 User-Agent 结构对齐：
+	// 与真实 Codex CLI（exec/TUI）的 User-Agent 结构对齐：
 	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
 	// 缺少 OS/架构/终端后缀的形态易被上游指纹识别为非官方客户端。
 	// 该后缀是 UA 形态的唯一定义处，buildCodexCLIUserAgent 按运行时版本号复用它。
-	codexCLIUserAgentSuffix = " (Ubuntu 22.4.0; x86_64) xterm-256color"
+	// 取值来源：2026-09-28 Linux 上 `codex exec` 实测为 "(Ubuntu 24.4.0; x86_64) xterm-256color"。
+	codexCLIUserAgentSuffix = " (Ubuntu 24.4.0; x86_64) xterm-256color"
 	// codexCLIUserAgentClientName 是 UA 尾注中的客户端名：官方 codex exec 会拼上
 	// " (codex_exec; <version>)"，与首段的版本声明同源。缺失尾注是官方形态中不存在的形态。
 	codexCLIUserAgentClientName = "codex_exec"
