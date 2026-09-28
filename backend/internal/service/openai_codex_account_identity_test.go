@@ -114,7 +114,15 @@ func TestCodexAccountIdentitySourceResolvesShadowAndOverwritesFailoverContext(t 
 		"token", true, "client-session", true,
 	)
 	require.NoError(t, err)
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, parent, "client-session"), req.Header.Get("session_id"))
+	// 出站会话身份用官方头名承载：session-id 由客户端原始会话 UUID 作用域化而来，
+	// 下划线 Session_ID/Conversation_ID 不再发出。
+	scopedSession := scopeCodexAccountIdentityValue(parent, 0, "session", "client-session")
+	require.Equal(t, scopedSession, req.Header.Get("session-id"))
+	require.Equal(t, scopedSession, req.Header.Get("thread-id"))
+	require.Equal(t, scopedSession, req.Header.Get("x-client-request-id"))
+	require.Equal(t, scopedSession+":0", req.Header.Get("x-codex-window-id"))
+	require.Empty(t, req.Header.Get("session_id"))
+	require.Empty(t, req.Header.Get("conversation_id"))
 
 	next := &Account{ID: 19, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{
 		"chatgpt_account_id": "other-account",
@@ -153,6 +161,7 @@ func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthAccount(t *testing.T)
 	first := build(account11)
 	firstAgain := build(account11)
 	second := build(account19)
+	// WS 握手仍发下划线 session_id（路线 B 待办），HTTP 侧已切官方头名。
 	for _, header := range []string{"session_id", "x-codex-installation-id", "thread-id", "x-codex-window-id", "x-client-request-id"} {
 		require.NotEmpty(t, first.Get(header), header)
 		require.Equal(t, first.Get(header), firstAgain.Get(header), header)
@@ -165,7 +174,13 @@ func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthAccount(t *testing.T)
 		"token", true, "client-session", true,
 	)
 	require.NoError(t, err)
-	require.Equal(t, httpRequest.Header.Get("session_id"), first.Get("session_id"), "HTTP and WS must derive the same identity from the raw client key")
+	// HTTP 出站与 WS 握手都由同一个原始客户端会话键派生；HTTP 侧已切到官方头名，
+	// WS 握手仍带下划线形态（路线 B 待办），因此这里只校验 HTTP 侧形态与派生稳定。
+	require.Equal(t,
+		scopeCodexAccountIdentityValue(account11, getAPIKeyIDFromContext(c), "session", "client-session"),
+		httpRequest.Header.Get("session-id"),
+	)
+	require.Empty(t, httpRequest.Header.Get("session_id"))
 }
 
 func TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthAccount(t *testing.T) {
@@ -210,8 +225,6 @@ func TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthAccount(t *testing.T)
 		"x-codex-installation-id",
 		"x-codex-window-id",
 		"session-id",
-		"session_id",
-		"conversation_id",
 		"thread-id",
 		"x-client-request-id",
 		"x-codex-turn-metadata",

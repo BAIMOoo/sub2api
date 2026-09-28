@@ -260,8 +260,8 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "", gjson.GetBytes(upstream.lastBody, "instructions").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
-	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
-	require.Empty(t, upstream.lastReq.Header.Get("Conversation_Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Session-Id"), "官方会话头名（连字符形式）")
+	require.Empty(t, upstream.lastReq.Header.Get("Session_id"), "下划线形态是 sub2api 历史自造，官方不发")
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Empty(t, upstream.lastReq.Header.Get("originator"))
 }
@@ -835,7 +835,8 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	require.Equal(t, "local-test-instructions", strings.TrimSpace(gjson.GetBytes(upstream.lastBody, "instructions").String()))
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
-	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Session-Id"), "官方会话头名（连字符形式）")
+	require.Empty(t, upstream.lastReq.Header.Get("Session_id"), "下划线形态是 sub2api 历史自造，官方不发")
 	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
 	require.Equal(t, "chatgpt-acc", upstream.lastReq.Header.Get("chatgpt-account-id"))
 	require.Contains(t, rec.Body.String(), `"id":"cmp_123"`)
@@ -2287,7 +2288,10 @@ func TestOpenAIGatewayService_CodexFingerprintCompactDoesNotRewriteBodyCacheKeyO
 	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").Exists())
-	require.Empty(t, upstream.lastReq.Header.Get("x-codex-window-id"))
+	// compact 不套用上一会话暂存的收敛 ID：窗口必须由本次请求的会话标识派生。
+	scopedSession := scopeCodexAccountIdentityValue(account, getAPIKeyIDFromContext(c), "session", "header-session")
+	require.Equal(t, scopedSession+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
+	require.NotEqual(t, staleIDs.windowID, upstream.lastReq.Header.Get("x-codex-window-id"))
 }
 
 func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPromptCacheKey(t *testing.T) {

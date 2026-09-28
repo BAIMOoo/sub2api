@@ -383,11 +383,14 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	if promptCacheKey != "" {
-		apiKeyID := getAPIKeyIDFromContext(c)
+	// Codex 协议账号用官方头名承载会话身份（下划线 Session_ID/Conversation_ID 是
+	// sub2api 历史自造形态，官方客户端从不发送）；其余供应商保持原有的隔离标识。
+	if account.UsesOpenAICodexProtocol() {
+		applyCodexSessionIdentityHeaders(upstreamReq.Header, promptCacheKey)
+	} else if promptCacheKey != "" {
 		sessionKey := promptCacheKey
 		if !compatPromptCacheTenantIsolated {
-			sessionKey = isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
+			sessionKey = isolateOpenAIUpstreamSessionID(getAPIKeyIDFromContext(c), codexAccountIdentitySource(c, account), promptCacheKey)
 		}
 		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 	}

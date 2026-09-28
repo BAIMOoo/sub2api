@@ -1445,35 +1445,28 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
 	if account.UsesOpenAICodexProtocol() {
 		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
-		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。
-		clientConversationID := strings.TrimSpace(req.Header.Get("conversation_id"))
-		req.Header.Del("conversation_id")
-		req.Header.Del("session_id")
-
 		if compatMessagesBridge {
 			req.Header.Del("OpenAI-Beta")
 			req.Header.Del("originator")
 		} else {
 			req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
 		}
-		apiKeyID := getAPIKeyIDFromContext(c)
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
 			if req.Header.Get("version") == "" {
 				req.Header.Set("version", CodexCanonicalClientVersion())
 			}
-			compactSession := resolveOpenAICompactSessionID(c)
-			req.Header.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), compactSession))
 		} else {
 			req.Header.Set("accept", "text/event-stream")
 		}
-		if promptCacheKey != "" {
-			isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
-			req.Header.Set("session_id", isolated)
-			if !compatMessagesBridge || clientConversationID != "" {
-				req.Header.Set("conversation_id", isolated)
-			}
+		// 会话身份统一用官方头名重建（清除下划线 Session_ID/Conversation_ID），隔离在
+		// 随后的作用域化阶段生效；回退值在 compact 路径单独解析，其余沿用客户端
+		// prompt_cache_key（官方客户端的 prompt_cache_key 就是会话 UUID）。
+		sessionFallback := promptCacheKey
+		if sessionFallback == "" && isOpenAIResponsesCompactPath(c) {
+			sessionFallback = resolveOpenAICompactSessionID(c)
 		}
+		applyCodexSessionIdentityHeaders(req.Header, sessionFallback)
 	} else if isOpenAIResponsesCompactPath(c) {
 		// compact 上游是 unary JSON 协议：API-key 账号也显式声明 Accept，
 		// 避免 OpenAI 兼容网关按 SSE 返回（#3777 期望行为 4）。

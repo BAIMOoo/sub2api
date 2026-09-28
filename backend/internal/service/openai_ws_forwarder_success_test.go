@@ -465,10 +465,12 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModePreservesNamespacedC
 	require.NoError(t, err)
 	require.Equal(t, ids.installationID, headers.Get("x-codex-installation-id"))
 	require.NotEqual(t, "client-installation", headers.Get("x-codex-installation-id"))
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "window", "client-window"), headers.Get("x-codex-window-id"))
+	// 会话标识族共用同一作用域 kind：官方客户端里它们是同值关系
+	// （session-id = thread-id = x-client-request-id，window = "<同一 UUID>:<序号>"）。
+	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-window"), headers.Get("x-codex-window-id"))
 	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-session"), headers.Get("session-id"))
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "thread", "client-thread"), headers.Get("thread-id"))
-	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "request", "client-request"), headers.Get("x-client-request-id"))
+	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-thread"), headers.Get("thread-id"))
+	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "client-request"), headers.Get("x-client-request-id"))
 }
 
 func TestLogOpenAIWSBindResponseAccountWarn(t *testing.T) {

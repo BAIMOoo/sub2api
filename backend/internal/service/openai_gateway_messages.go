@@ -366,13 +366,18 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	// Override session_id with a deterministic UUID derived from the isolated
-	// session key, ensuring different API keys produce different upstream sessions.
+	// 会话身份：Codex 协议账号用官方头名承载（session-id / thread-id /
+	// x-client-request-id / x-codex-window-id，与官方客户端一致），隔离在作用域化
+	// 阶段生效；其余上游保持原有的隔离标识。
 	if account.Platform != PlatformGrok && promptCacheKey != "" {
-		isolatedSessionID := generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey))
-		upstreamReq.Header.Set("session_id", isolatedSessionID)
-		if upstreamReq.Header.Get("conversation_id") != "" {
-			upstreamReq.Header.Set("conversation_id", isolatedSessionID)
+		if account.UsesOpenAICodexProtocol() {
+			applyCodexSessionIdentityHeaders(upstreamReq.Header, promptCacheKey)
+		} else {
+			isolatedSessionID := generateSessionUUID(isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey))
+			upstreamReq.Header.Set("session_id", isolatedSessionID)
+			if upstreamReq.Header.Get("conversation_id") != "" {
+				upstreamReq.Header.Set("conversation_id", isolatedSessionID)
+			}
 		}
 	}
 	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
@@ -386,9 +391,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			zap.String("upstream_model", upstreamModel),
 			zap.Bool("compat_identity_restored", true),
 		)
-	}
-	if account.UsesOpenAICodexProtocol() && promptCacheKey != "" && strings.TrimSpace(c.GetHeader("conversation_id")) == "" {
-		upstreamReq.Header.Del("conversation_id")
 	}
 	if compatTurnState != "" && upstreamReq.Header.Get("x-codex-turn-state") == "" {
 		upstreamReq.Header.Set("x-codex-turn-state", compatTurnState)

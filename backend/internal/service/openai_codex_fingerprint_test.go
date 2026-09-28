@@ -882,7 +882,8 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
 	require.NoError(t, err)
 
-	assert.Equal(t, ids.sessionID, req.Header.Get("session_id"), "session 模式下出站 session_id 应为账号级收敛值")
+	assert.Equal(t, ids.sessionID, req.Header.Get("session-id"), "session 模式下出站 session-id 应为账号级收敛值")
+	assert.Equal(t, ids.sessionID, req.Header.Get("session_id"), "指纹收敛保留历史下划线形态（WS 握手兼容键依赖）")
 	assert.Equal(t, ids.installationID, req.Header.Get("x-codex-installation-id"))
 	assert.Equal(t, ids.windowID, req.Header.Get("x-codex-window-id"))
 	assert.Equal(t, ids.threadID, req.Header.Get("x-client-request-id"))
@@ -911,9 +912,13 @@ func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *te
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, req.Header.Get("session_id"))
-	assert.NotEqual(t, resolveConvergedSessionID(testCodexFingerprintSeed), req.Header.Get("session_id"), "off 模式不得收敛 session_id")
-	assert.Empty(t, req.Header.Get("x-codex-window-id"))
+	// off 模式下仍是隔离后的官方头名形态（UUID），但不得是账号级收敛值。
+	sessionID := req.Header.Get("session-id")
+	assert.NotEmpty(t, sessionID)
+	assert.Equal(t, scopeCodexAccountIdentityValue(account, 0, "session", "real-client-session"), sessionID)
+	assert.NotEqual(t, resolveConvergedSessionID(testCodexFingerprintSeed), sessionID, "off 模式不得收敛 session_id")
+	assert.Empty(t, req.Header.Get("session_id"), "官方会话头名只有连字符形式")
+	assert.Equal(t, sessionID+":0", req.Header.Get("x-codex-window-id"))
 }
 
 func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testing.T) {

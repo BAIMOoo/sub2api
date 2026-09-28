@@ -276,11 +276,9 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 		req.Header.Set("User-Agent", canonical.userAgent)
 	}
 	apiKeyID := getAPIKeyIDFromContext(c)
-	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
-		isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionID)
-		req.Header.Set("Session_ID", isolated)
-		req.Header.Set("Conversation_ID", isolated)
-	}
+	// 会话身份统一用官方头名承载；alpha 搜索的会话来源是请求体的 id。
+	// （下划线 Session_ID/Conversation_ID 是 sub2api 历史自造形态，官方客户端不发。）
+	applyCodexSessionIdentityHeaders(req.Header, strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()))
 	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), apiKeyID)
 	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
 	account.ApplyHeaderOverrides(req.Header)

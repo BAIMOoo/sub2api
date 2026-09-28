@@ -372,7 +372,10 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	// session / full 模式：改写所有相关头
 	h.Set("x-codex-window-id", ids.windowID)
 	h.Set("x-client-request-id", ids.threadID)
-	// 连字符形式和下划线形式都改写，保证一致
+	// 连字符形式和下划线形式都改写，保证一致。
+	// 注意：下划线形式是 sub2api 历史自造形态（官方客户端不发），HTTP 出站路径已在
+	// applyCodexSessionIdentityHeaders 中清除；这里保留是因为 WS 握手会用它作为连接池
+	// 的握手兼容键分桶维度，去掉会改变分桶（需与 WS 对齐一并处理）。
 	h.Set("session-id", ids.sessionID)
 	h.Set("session_id", ids.sessionID)
 	h.Set("thread-id", ids.threadID)

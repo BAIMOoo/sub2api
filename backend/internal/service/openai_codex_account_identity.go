@@ -121,21 +121,68 @@ func scopeCodexAccountIdentityValueKeepSuffix(account *Account, apiKeyID int64, 
 	return scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
 }
 
+// applyCodexSessionIdentityHeaders 用官方头名重建出站会话身份，并清除 sub2api
+// 自造的下划线形态 Session_ID / Conversation_ID（16 位哈希且两者同值，官方客户端
+// 在任何模式下都不发送这两个头）。
+//
+// 官方客户端实测（CLI/TUI 与桌面 app，WS 与 HTTP 两种模式）：session-id /
+// thread-id / x-client-request-id 三者恒为同一个 36 字符会话 UUID，
+// x-codex-window-id 则是 "<同一 UUID>:<窗口序号>"（首个窗口为 ":0"）。
+//
+// 这里写入的是客户端原始会话 UUID（缺省时回退 fallbackSessionID，通常是
+// prompt_cache_key），作用域化仍由随后的 applyCodexAccountIdentityHeaders 统一完成，
+// 因此 API key × OAuth 账号的会话隔离照常生效，同时保留官方"三头同值、窗口带后缀"的关系。
+func applyCodexSessionIdentityHeaders(headers http.Header, fallbackSessionID string) {
+	if headers == nil {
+		return
+	}
+
+	// 取值优先级：官方头名 > 客户端下划线形态 > 调用方给的会话回退值（通常是
+	// prompt_cache_key，官方客户端里它就是会话 UUID）> 其余同值身份头。
+	base := firstNonEmpty(
+		headers.Get("session-id"),
+		headers.Get("session_id"),
+		fallbackSessionID,
+		headers.Get("x-client-request-id"),
+		headers.Get("thread-id"),
+		headers.Get("conversation_id"),
+	)
+	headers.Del("session_id")
+	headers.Del("conversation_id")
+	if base == "" {
+		return
+	}
+
+	// 官方窗口是 "<会话 UUID>:<序号>"：保留客户端已有序号，缺失时按首个窗口 ":0" 补。
+	windowSuffix := ":0"
+	if _, suffix, ok := strings.Cut(headers.Get("x-codex-window-id"), ":"); ok && suffix != "" {
+		windowSuffix = ":" + suffix
+	}
+
+	headers.Set("session-id", base)
+	headers.Set("thread-id", base)
+	headers.Set("x-client-request-id", base)
+	headers.Set("x-codex-window-id", base+windowSuffix)
+}
+
 var codexAccountIdentityFields = []struct {
 	name string
 	kind string
 }{
 	{name: "installation_id", kind: "installation"},
 	{name: "x-codex-installation-id", kind: "installation"},
+	// 官方客户端的会话标识是"同值关系"：session-id = thread-id = x-client-request-id，
+	// 且 x-codex-window-id / window_id = "<同一 UUID>:<窗口序号>"。共用同一 kind 才能在
+	// 作用域化之后仍保持这种相等关系（同 kind + 同原值 → 同派生值）。
 	{name: "session_id", kind: "session"},
 	{name: "session-id", kind: "session"},
-	{name: "thread_id", kind: "thread"},
-	{name: "thread-id", kind: "thread"},
+	{name: "thread_id", kind: "session"},
+	{name: "thread-id", kind: "session"},
+	{name: "window_id", kind: "session"},
+	{name: "x-codex-window-id", kind: "session"},
+	{name: "x-client-request-id", kind: "session"},
 	{name: "turn_id", kind: "turn"},
 	{name: "turn-id", kind: "turn"},
-	{name: "window_id", kind: "window"},
-	{name: "x-codex-window-id", kind: "window"},
-	{name: "x-client-request-id", kind: "request"},
 }
 
 func applyCodexAccountIdentityFields(values map[string]any, account *Account, apiKeyID int64) bool {
@@ -269,8 +316,8 @@ func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, api
 		return
 	}
 	for _, field := range codexAccountIdentityFields {
-		// Underscore session/conversation headers are rebuilt separately from the
-		// prompt cache key by each request builder.
+		// 下划线会话头由 applyCodexSessionIdentityHeaders 统一清除并用官方头名重建，
+		// 不在这里单独作用域化。
 		if field.name == "session_id" {
 			continue
 		}

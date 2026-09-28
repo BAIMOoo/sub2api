@@ -132,10 +132,15 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	require.NoError(t, err)
 	require.Equal(t, "AgentAssertion", strings.SplitN(req.Header.Get("Authorization"), " ", 2)[0])
 	require.Equal(t, "account-agent-passthrough", req.Header.Get("chatgpt-account-id"))
-	require.NotEqual(t, "client-session", req.Header.Get("session_id"))
-	require.NotEqual(t, "client-conversation", req.Header.Get("conversation_id"))
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-session"), req.Header.Get("session_id"))
-	require.Equal(t, isolateOpenAIUpstreamSessionID(0, account, "client-conversation"), req.Header.Get("conversation_id"))
+	// 会话身份用官方头名承载：三者同值、窗口带后缀，且不发送下划线形态。
+	scopedSession := scopeCodexAccountIdentityValue(account, 0, "session", "client-session")
+	require.Empty(t, req.Header.Get("session_id"))
+	require.Empty(t, req.Header.Get("conversation_id"))
+	require.Equal(t, scopedSession, req.Header.Get("session-id"))
+	require.NotEqual(t, "client-session", req.Header.Get("session-id"))
+	require.Equal(t, scopedSession, req.Header.Get("thread-id"))
+	require.Equal(t, scopedSession, req.Header.Get("x-client-request-id"))
+	require.Equal(t, scopedSession+":0", req.Header.Get("x-codex-window-id"))
 	requestBody, err := io.ReadAll(req.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(requestBody), `"prompt_cache_key":"cache-agent"`)
@@ -158,8 +163,10 @@ func TestOpenAIAgentIdentityPassthroughKeepsSessionAndPromptCacheHeaders(t *test
 	oauthContext.Request.Header.Set("conversation_id", "client-conversation")
 	oauthReq, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), oauthContext, oauthAccount, body, "oauth-token")
 	require.NoError(t, err)
-	require.Equal(t, oauthReq.Header.Get("session_id"), req.Header.Get("session_id"))
-	require.Equal(t, oauthReq.Header.Get("conversation_id"), req.Header.Get("conversation_id"))
+	require.Equal(t, oauthReq.Header.Get("session-id"), req.Header.Get("session-id"))
+	require.Equal(t, oauthReq.Header.Get("thread-id"), req.Header.Get("thread-id"))
+	require.Equal(t, oauthReq.Header.Get("x-client-request-id"), req.Header.Get("x-client-request-id"))
+	require.Equal(t, oauthReq.Header.Get("x-codex-window-id"), req.Header.Get("x-codex-window-id"))
 }
 
 func TestOpenAIAgentIdentityErrorRedactionDoesNotLeakCredentialValues(t *testing.T) {
@@ -483,8 +490,16 @@ func TestOpenAIAgentIdentityChatRecoveryKeepsAutoDerivedSessionIsolationStable(t
 	secondKey := gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").String()
 	require.NotEmpty(t, firstKey)
 	require.Equal(t, firstKey, secondKey)
-	require.Equal(t, generateSessionUUID(isolateOpenAIUpstreamSessionID(99, codexAccountIdentitySource(c, account), firstKey)), upstream.requests[0].Header.Get("session_id"))
-	require.Equal(t, upstream.requests[0].Header.Get("session_id"), upstream.requests[1].Header.Get("session_id"))
+	// 会话头改用官方形态：session-id / thread-id / x-client-request-id 同值，
+	// 窗口为 "<同一 UUID>:<序号>"，重试（换 task_id）后保持稳定。
+	firstSession := upstream.requests[0].Header.Get("session-id")
+	require.NotEmpty(t, firstSession)
+	require.Empty(t, upstream.requests[0].Header.Get("session_id"))
+	require.Empty(t, upstream.requests[0].Header.Get("conversation_id"))
+	require.Equal(t, firstSession, upstream.requests[0].Header.Get("thread-id"))
+	require.Equal(t, firstSession, upstream.requests[0].Header.Get("x-client-request-id"))
+	require.Equal(t, firstSession+":0", upstream.requests[0].Header.Get("x-codex-window-id"))
+	require.Equal(t, firstSession, upstream.requests[1].Header.Get("session-id"))
 }
 
 func decodeAgentAssertionTask(t *testing.T, header string) string {
