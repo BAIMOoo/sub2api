@@ -48,6 +48,22 @@ func ProvideSessionLimitCache(rdb *redis.Client, cfg *config.Config) service.Ses
 	return NewSessionLimitCache(rdb, defaultIdleTimeoutMinutes)
 }
 
+// ProvideHTTPUpstream 组装出站 HTTP 上游客户端。
+//
+// 默认在裸客户端外面套一层 cookie jar 装饰器：只对发往 chatgpt.com 的请求附带
+// Cloudflare 基础设施 cookie，并回收响应 Set-Cookie（对齐官方客户端出站形态）。
+// 开关见 config.openai_upstream_cookie_jar_enabled；关闭或缺少依赖时返回裸客户端，
+// 行为与改动前完全一致。
+//
+// Wire 用本函数提供 service.HTTPUpstream；NewHTTPUpstream 保留给测试直接构造裸客户端。
+func ProvideHTTPUpstream(cfg *config.Config, db *sql.DB, encryptor service.SecretEncryptor) service.HTTPUpstream {
+	upstream := NewHTTPUpstream(cfg)
+	if cfg == nil || !cfg.OpenAIUpstreamCookieJarEnabled || db == nil || encryptor == nil {
+		return upstream
+	}
+	return NewUpstreamCookieJar(upstream, NewAccountUpstreamCookieStore(db, encryptor))
+}
+
 // ProvideSchedulerCache 创建调度快照缓存，并注入快照分块参数。
 func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.SchedulerCache {
 	mgetChunkSize := defaultSchedulerSnapshotMGetChunkSize
@@ -160,7 +176,7 @@ var ProviderSet = wire.NewSet(
 	NewProxyExitInfoProber,
 	NewClaudeUsageFetcher,
 	NewClaudeOAuthClient,
-	NewHTTPUpstream,
+	ProvideHTTPUpstream,
 	NewOpenAIOAuthClient,
 	NewOpenAIReferralClient,
 	NewGrokOAuthClient,

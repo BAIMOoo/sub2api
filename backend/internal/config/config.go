@@ -108,6 +108,11 @@ type Config struct {
 
 	// Enforce only API-key spending windows in simple mode.
 	SimpleModeKeyRateLimitEnabled bool `mapstructure:"simple_mode_key_rate_limit_enabled" yaml:"simple_mode_key_rate_limit_enabled"`
+
+	// OpenAIUpstreamCookieJarEnabled 控制是否为发往 chatgpt.com 的 Codex 出站请求
+	// 维护并附带 Cloudflare 基础设施 cookie（对齐官方客户端的出站形态）。
+	// 关闭后出站行为与改动前完全一致。
+	OpenAIUpstreamCookieJarEnabled bool `mapstructure:"openai_upstream_cookie_jar_enabled" yaml:"openai_upstream_cookie_jar_enabled"`
 }
 
 // SimpleModeConfig controls startup behavior in simple mode.
@@ -2003,6 +2008,10 @@ func setDefaults() {
 	viper.SetDefault("run_mode", RunModeStandard)
 	viper.SetDefault("simple_mode.auto_create_default_groups", true)
 	viper.SetDefault("simple_mode_key_rate_limit_enabled", false)
+
+	// 发往 chatgpt.com 的 Codex 出站请求默认附带 Cloudflare 基础设施 cookie，
+	// 与官方客户端形态对齐；如需临时回退，设为 false 即可（无需改代码）。
+	viper.SetDefault("openai_upstream_cookie_jar_enabled", true)
 
 	// Server
 	viper.SetDefault("server.host", "0.0.0.0")
