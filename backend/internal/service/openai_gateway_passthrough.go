@@ -722,6 +722,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if err := applyMappedGPT55LiteCompatibility(req, account, body); err != nil {
 		return nil, err
 	}
+	// 正文编码对齐官方 HTTP 形态：chatgpt.com Codex 后端收 zstd。
+	applyCodexRequestBodyZstd(account, req)
 	return req, nil
 }
 

@@ -69,9 +69,11 @@ func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID 
 	u.lastProxyURL = proxyURL
 	if req != nil && req.Body != nil {
 		b, _ := io.ReadAll(req.Body)
-		u.lastBody = b
-		u.bodies = append(u.bodies, append([]byte(nil), b...))
+		decoded := readCodexUpstreamBody(req.Header, b)
+		u.lastBody = decoded
+		u.bodies = append(u.bodies, decoded)
 		_ = req.Body.Close()
+		// 还原线缆上的原始字节（可能是 zstd 编码），不改变被测代码的读法。
 		req.Body = io.NopCloser(bytes.NewReader(b))
 	}
 	u.requests = append(u.requests, req)

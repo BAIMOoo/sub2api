@@ -66,6 +66,7 @@ func (u *httpBridgeIsolationUpstream) Do(req *http.Request, _ string, _ int64, _
 		return nil, err
 	}
 	_ = req.Body.Close()
+	body = readCodexUpstreamBody(req.Header, body)
 	input := gjson.GetBytes(body, "input")
 	var texts []string
 	if input.Type == gjson.String {
