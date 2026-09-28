@@ -38,10 +38,14 @@ const (
 	// 缺少 OS/架构/终端后缀的形态易被上游指纹识别为非官方客户端。
 	// 该后缀是 UA 形态的唯一定义处，buildCodexCLIUserAgent 按运行时版本号复用它。
 	codexCLIUserAgentSuffix = " (Ubuntu 22.4.0; x86_64) xterm-256color"
+	// codexCLIUserAgentClientName 是 UA 尾注中的客户端名：官方 codex exec 会拼上
+	// " (codex_exec; <version>)"，与首段的版本声明同源。缺失尾注是官方形态中不存在的形态。
+	codexCLIUserAgentClientName = "codex_exec"
 	// codexCLIUserAgent 是编译期兜底 UA；运行时优先使用由后台版本号拼出的规范 UA。
 	// 版本段必须来自 codexCLIVersion：UA 与 version 头是同一个版本声明的两个出口，
 	// 各自硬编码会漂移成互相矛盾的身份。
-	codexCLIUserAgent = openai.CodexDefaultOriginator + "/" + codexCLIVersion + codexCLIUserAgentSuffix
+	codexCLIUserAgent = openai.CodexDefaultOriginator + "/" + codexCLIVersion + codexCLIUserAgentSuffix +
+		" (" + codexCLIUserAgentClientName + "; " + codexCLIVersion + ")"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 

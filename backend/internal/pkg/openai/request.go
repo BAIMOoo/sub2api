@@ -262,8 +262,12 @@ func canonicalizeCodexOriginator(name string) string {
 // CodexCLIOriginator 是 codex-rs 客户端的历史默认 originator，保留用于兼容识别。
 const CodexCLIOriginator = "codex_cli_rs"
 
-// CodexDefaultOriginator 是网关默认使用的 Codex TUI originator。
-const CodexDefaultOriginator = "codex-tui"
+// CodexDefaultOriginator 是网关默认使用的 Codex CLI（非交互 exec）originator。
+//
+// 与官方 codex exec 的默认值 codex_cli_rs 对齐：exec 走 HTTP Responses API，
+// 与本网关的出站传输形态自洽。交互式 TUI 的 originator 是 codex-tui，但其以
+// WebSocket 为主、且 WS 失败时不会回退 HTTP，故不作为本网关的默认身份。
+const CodexDefaultOriginator = "codex_cli_rs"
 
 // CodexUserAgentVersion 提取 Codex UA 的完整版本段，即 `{client}/{version} (...` 中的 version。
 // 与 ParseCodexEngineVersion 的区别：后者只取三段数字用于引擎版本比较（会丢掉 -alpha.4
