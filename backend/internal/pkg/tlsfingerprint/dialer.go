@@ -37,6 +37,10 @@ type Profile struct {
 	// 注意：置 true 同时会关闭 Go 对响应的透明解压，本仓库的响应解压由
 	// repository.decompressResponseBody 自行处理（gzip/br/deflate/zstd），不受影响。
 	DisableCompression bool
+
+	// HTTPHeaderOrders 非空时，对命中的请求按其声明的顺序重排 HTTP/1.1 请求头
+	// （见 httporder.go）。为空表示不改写、完全由 net/http 决定。
+	HTTPHeaderOrders []*HTTPHeaderOrder
 }
 
 // Dialer creates TLS connections with custom fingerprints.

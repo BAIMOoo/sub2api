@@ -22,6 +22,8 @@ func OpenAICodexLinuxProfile() *Profile {
 		// 官方不发 Accept-Encoding，而 Go 的 Transport 默认会自动加 “Accept-Encoding: gzip”。
 		DisableCompression: true,
 		EnableGREASE:       false,
+		// 官方 HTTP/1.1 POST /backend-api/codex/responses 的头顺序（实测，见 httporder.go）。
+		HTTPHeaderOrders: []*HTTPHeaderOrder{OpenAIResponsesHeaderOrder()},
 		CipherSuites: []uint16{
 			0x1302, // TLS_AES_256_GCM_SHA384
 			0x1303, // TLS_CHACHA20_POLY1305_SHA256

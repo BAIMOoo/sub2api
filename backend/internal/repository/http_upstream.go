@@ -1487,6 +1487,20 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 		}
 	}
 
+	// HTTP 头顺序：Go 的 net/http 写头顺序固定且不可配置，这里在连接层把请求头块
+	// 重排成 profile 声明的顺序（仅命中 host+路径规则时）。连接复用、SSE、超时与
+	// 取消仍然由 net/http 负责，见 tlsfingerprint.NewOrderedWriteConn。
+	if rules := profile.HeaderOrders(); transport.DialTLSContext != nil && len(rules) > 0 {
+		inner := transport.DialTLSContext
+		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := inner(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return tlsfingerprint.NewOrderedWriteConn(conn, rules...), nil
+		}
+	}
+
 	return transport, nil
 }
 
