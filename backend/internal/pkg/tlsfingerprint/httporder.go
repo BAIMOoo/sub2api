@@ -32,9 +32,15 @@ type HTTPHeaderOrder struct {
 //     报文里出现 x-openai-internal-codex-responses-lite，位置固定在
 //     x-codex-turn-metadata 之后、x-codex-routing-hint 之前（第 5 位），
 //     并非排在 host 之前。
+//   - 2026-09-29（同日第三轮）：用"伪造一次成功开始"的办法逼客户端回放
+//     x-codex-turn-state —— 劫持下把主请求回成 200 + 该响应头 + 一条 response.created，
+//     再在 response.completed 之前掐断连接（官方把这种断流归为可重试的
+//     CodexErrorDetails::Stream）。同一会话的 6 条主请求里，首条无该头、后续 5 条
+//     全部带它（值即服务端下发的探针值），位置固定在 x-codex-beta-features 之后、
+//     x-codex-window-id 之前（第 3 位）。
 //
 // 表外的头统一排在 host 之前、并保持它们原有的相对顺序——这是回退规则，
-// 目前尚无实测样本落在其上（曾经落在这里的 lite 头现已按实测位置进表）。
+// 目前尚无实测样本落在其上（曾经落在这里的 lite 头、turn-state 头现已按实测位置进表）。
 //
 // 另外，官方 HTTP/1.1 请求的头名**全部小写**（实测 4/4 样本，含 host 与
 // content-length；WebSocket 升级请求则是另一套写法，不适用本规则）。Go 写的是
@@ -46,6 +52,7 @@ func OpenAIResponsesHeaderOrder() *HTTPHeaderOrder {
 		Order: []string{
 			"version",
 			"x-codex-beta-features",
+			"x-codex-turn-state", // 仅当本次回合的服务端响应下发过这张票时出现，位置固定在此（第 3 位）
 			"x-codex-window-id",
 			"x-codex-turn-metadata",
 			"x-openai-internal-codex-responses-lite", // 仅当官方模型的 use_responses_lite=true 时出现，位置固定在此

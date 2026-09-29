@@ -38,6 +38,15 @@ var (
 		"content-encoding", "content-type", "authorization", "chatgpt-account-id", "originator",
 		"user-agent", "host", "content-length",
 	}
+	// 带上服务端下发的粘性路由票（2026-09-29 第三轮实测：同一会话里首条请求没有、
+	// 拿到 200 响应头的后续请求都有，位置固定在第 3 位）。
+	officialOrderWithTurnState = []string{
+		"version", "x-codex-beta-features", "x-codex-turn-state", "x-codex-window-id",
+		"x-codex-turn-metadata", "x-openai-internal-codex-responses-lite", "x-codex-routing-hint",
+		"x-client-request-id", "session-id", "thread-id", "accept", "content-encoding",
+		"content-type", "authorization", "chatgpt-account-id", "originator", "user-agent", "host",
+		"content-length",
+	}
 )
 
 const officialContentLength = `{"model":"gpt-6-astra"}`
@@ -130,14 +139,19 @@ func TestOpenAIHeaderOrderMatchesOfficialTarget(t *testing.T) {
 		name       string
 		withLite   bool
 		withCookie bool
+		withTurn   bool
 		want       []string
 	}{
-		{"lite+无cookie", true, false, officialOrderWithLite},
-		{"lite+cookie", true, true, officialOrderWithLiteAndCookie},
-		{"非lite模型", false, false, officialOrderWithoutLite},
+		{"lite+无cookie", true, false, false, officialOrderWithLite},
+		{"lite+cookie", true, true, false, officialOrderWithLiteAndCookie},
+		{"非lite模型", false, false, false, officialOrderWithoutLite},
+		{"带路由票（第 3 位）", true, false, true, officialOrderWithTurnState},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := newOfficialRequest(t, "https://chatgpt.com/backend-api/codex/responses", tc.withLite, tc.withCookie)
+			if tc.withTurn {
+				req.Header.Set("X-Codex-Turn-State", "turn-state-token")
+			}
 			var raw bytes.Buffer
 			if err := req.Write(&raw); err != nil {
 				t.Fatal(err)
