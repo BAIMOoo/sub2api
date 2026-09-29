@@ -93,6 +93,17 @@ func (u *recordingUpstream) paths() []string {
 	return out
 }
 
+// queries 返回每个请求的路径 + 查询串，用于断言播种请求带的是官方 query。
+func (u *recordingUpstream) queries() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]string, 0, len(u.requests))
+	for _, req := range u.requests {
+		out = append(out, req.URL.Path+"?"+req.URL.RawQuery)
+	}
+	return out
+}
+
 func emptyResponse(status int, header http.Header) *http.Response {
 	if header == nil {
 		header = http.Header{}
@@ -234,12 +245,13 @@ func TestUpstreamCookieJarSeedsCfuvidOnceAndOnlyWhenMissing(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "播种请求应把 _cfuvid 收进 jar")
 
 	seedCalls := 0
-	for _, path := range inner.paths() {
-		if path == service.OpenAIUpstreamCookieSeedPath {
+	for _, got := range inner.queries() {
+		if got == service.OpenAIUpstreamCookieSeedPath+"?"+service.OpenAIUpstreamCookieSeedQuery {
 			seedCalls++
 		}
 	}
-	require.Equal(t, 1, seedCalls, "每个账号每 30 分钟最多播种一次")
+	require.Equal(t, 1, seedCalls, "每个账号每 30 分钟最多播种一次，且必须带官方 query")
+	require.NotContains(t, inner.queries(), "/backend-api/me?", "不得再使用非官方的 /backend-api/me")
 }
 
 func TestBuildUpstreamCookieSeedRequestUsesSameIdentityWithoutBody(t *testing.T) {
@@ -254,13 +266,23 @@ func TestBuildUpstreamCookieSeedRequestUsesSameIdentityWithoutBody(t *testing.T)
 	require.NotNil(t, seed)
 	require.Equal(t, http.MethodGet, seed.Method)
 	require.Equal(t, service.OpenAIUpstreamCookieSeedPath, seed.URL.Path)
-	require.Equal(t, "", seed.URL.RawQuery)
+	// 播种端点必须带上官方 query；主请求自己的 query（trace=1）不得被带到播种请求上。
+	require.Equal(t, service.OpenAIUpstreamCookieSeedQuery, seed.URL.RawQuery)
+	require.NotContains(t, seed.URL.RawQuery, "trace")
 	require.Equal(t, "https://chatgpt.com", seed.URL.Scheme+"://"+seed.URL.Host)
 	require.Equal(t, "Bearer test-token", seed.Header.Get("Authorization"))
 	require.Equal(t, "acct", seed.Header.Get("Chatgpt-Account-Id"))
 	require.Equal(t, "codex_exec", seed.Header.Get("Originator"))
 	require.Equal(t, "", seed.Header.Get("Content-Encoding"))
 	require.Equal(t, "", seed.Header.Get("Cookie"))
+}
+
+// TestOpenAIUpstreamCookieSeedPathIsAnOfficialEndpoint 锁定播种端点的选择依据：
+// 必须是官方 CLI 实际会请求、且实测会下发 _cfuvid 的端点，而不是我们自造的 /backend-api/me。
+func TestOpenAIUpstreamCookieSeedPathIsAnOfficialEndpoint(t *testing.T) {
+	require.Equal(t, "/backend-api/plugins/featured", service.OpenAIUpstreamCookieSeedPath)
+	require.Equal(t, "platform=codex", service.OpenAIUpstreamCookieSeedQuery)
+	require.NotEqual(t, "/backend-api/me", service.OpenAIUpstreamCookieSeedPath)
 }
 
 func TestNewUpstreamCookieJarWithoutDependenciesReturnsInner(t *testing.T) {

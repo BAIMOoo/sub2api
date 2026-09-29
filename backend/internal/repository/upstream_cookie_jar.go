@@ -106,9 +106,9 @@ func (j *upstreamCookieJar) harvestSetCookies(ctx context.Context, host string, 
 
 // seedMissingCfuvid 在 jar 里没有 _cfuvid 时补一次播种请求。
 //
-// 实测 _cfuvid 只在 GET / 与 GET /backend-api/me 之类路径下发，而 Codex responses 路径不给；
-// 官方客户端同样会访问这些接口。播种走 goroutine + 独立超时 + 每账号 30 分钟一次，
-// 失败只是少一个 cookie，不影响主请求。
+// 实测 _cfuvid 只在少数路径下发（响应路径不给），因此这里补一次 GET；端点选的是官方 CLI 实包中
+// 出现过、且实测稳定下发 _cfuvid 的插件端点，见 service.OpenAIUpstreamCookieSeedPath 的说明。
+// 播种走 goroutine + 独立超时 + 每账号 30 分钟一次，失败只是少一个 cookie，不影响主请求。
 func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL string, accountID int64, cookies []service.UpstreamCookie, profile *tlsfingerprint.Profile) {
 	if !service.OpenAICookieJarNeedsCfuvidSeed(cookies) {
 		return
@@ -178,7 +178,8 @@ func buildUpstreamCookieSeedRequest(req *http.Request) *http.Request {
 	seedURL := *req.URL
 	seedURL.Path = service.OpenAIUpstreamCookieSeedPath
 	seedURL.RawPath = ""
-	seedURL.RawQuery = ""
+	// 主请求的 query 一律丢弃，只带播种端点自己的官方 query（见 OpenAIUpstreamCookieSeedQuery）。
+	seedURL.RawQuery = service.OpenAIUpstreamCookieSeedQuery
 	seedURL.Fragment = ""
 	seed := &http.Request{
 		Method: http.MethodGet,

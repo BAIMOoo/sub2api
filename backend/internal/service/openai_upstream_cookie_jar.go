@@ -28,10 +28,25 @@ const OpenAIUpstreamCookieHost = "chatgpt.com"
 
 // OpenAIUpstreamCookieSeedPath 是补齐 _cfuvid 的“播种”路径。
 //
-// 实测：Codex responses 路径下发的 Set-Cookie 只有 __oailb/__cf_bm/__cflb；
-// _cfuvid 只在 GET / 与 GET /backend-api/me 这类路径下发。官方客户端同样会访问
-// 这类接口，因此这里选用带鉴权的 /backend-api/me 作为播种路径。
-const OpenAIUpstreamCookieSeedPath = "/backend-api/me"
+// 事实依据（2026-09-29 复核，全部为零部署实测/源码查证）：
+//
+//   - 官方 CLI 不会请求 /backend-api/me：官方源码快照全仓（含 app-server* 与 remote-control）
+//     `rg 'backend-api/me'` = 0 命中，且三次官方 CLI 会话的实际出站里也没有它。此处曾据此注释
+//     “官方客户端同样会访问这些接口”，该说法已被实测推翻，故不再使用该端点。
+//   - 实测**会**下发 _cfuvid 的路径：GET /、GET /backend-api/plugins/featured[?platform=codex]、
+//     GET /backend-api/ps/plugins/{installed,list,suggested/codex}。
+//   - 实测**不会**下发 _cfuvid 的路径：POST /backend-api/codex/responses、GET /backend-api/codex/models、
+//     GET /backend-api/wham/accounts/check、GET /backend-api/wham/settings/user。
+//
+// 因此播种改用官方 CLI 实包中出现过、且实测稳定下发 _cfuvid 的插件端点
+// （官方源码调用点：codex-rs/core-plugins/src/remote_legacy.rs:fetch_remote_featured_plugin_ids）。
+const OpenAIUpstreamCookieSeedPath = "/backend-api/plugins/featured"
+
+// OpenAIUpstreamCookieSeedQuery 是播种路径的官方查询串。
+//
+// 官方调用点固定附带 `platform=<product>`，CLI/exec 侧 product 为 codex
+// （codex-rs/protocol/src/protocol.rs:Product::Codex => "codex"）。实测该查询串下端点返回 200 并下发 _cfuvid。
+const OpenAIUpstreamCookieSeedQuery = "platform=codex"
 
 // openAIUpstreamCookieJarLimit 限制单个 jar 保存的名字数量，避免异常上游把表撑爆。
 const openAIUpstreamCookieJarLimit = 16
