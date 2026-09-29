@@ -23,12 +23,18 @@ type HTTPHeaderOrder struct {
 // OpenAIResponsesHeaderOrder 是官方 codex 客户端 HTTP/1.1
 // POST /backend-api/codex/responses 的实测头顺序。
 //
-// 采集：2026-09-28 在东京机做受控劫持（记录 req.rawHeaders，即原样线上顺序，
-// 并对 WS 升级回可重试的 503 逼其回退到 HTTPS POST），官方 codex-cli 0.157.0 与
-// 0.158.0 各 2 条样本，四次顺序完全一致。
+// 采集（两轮，均在东京机做受控劫持：记录 req.rawHeaders 即原样线上顺序，
+// 并对 WS 升级回可重试的 503 逼其回退到 HTTPS POST）：
+//   - 2026-09-28：官方 codex-cli 0.157.0 与 0.158.0 各 2 条样本（model=gpt-5.1-codex，
+//     该模型不是 Responses Lite 模型，报文里没有 lite 头），四次完全一致。
+//   - 2026-09-29：换成我们实际用的模型串重采（model=gpt-6-astra，官方内置模型目录里
+//     该模型的 use_responses_lite=true），0.157.0 与 0.158.0 各 2 条，四次完全一致 ——
+//     报文里出现 x-openai-internal-codex-responses-lite，位置固定在
+//     x-codex-turn-metadata 之后、x-codex-routing-hint 之前（第 5 位），
+//     并非排在 host 之前。
 //
-// 表外的头（例如本网关特有的 x-openai-internal-codex-responses-lite）统一排在
-// host 之前、并保持它们原有的相对顺序——这是推断，不是实测。
+// 表外的头统一排在 host 之前、并保持它们原有的相对顺序——这是回退规则，
+// 目前尚无实测样本落在其上（曾经落在这里的 lite 头现已按实测位置进表）。
 //
 // 另外，官方 HTTP/1.1 请求的头名**全部小写**（实测 4/4 样本，含 host 与
 // content-length；WebSocket 升级请求则是另一套写法，不适用本规则）。Go 写的是
@@ -42,6 +48,7 @@ func OpenAIResponsesHeaderOrder() *HTTPHeaderOrder {
 			"x-codex-beta-features",
 			"x-codex-window-id",
 			"x-codex-turn-metadata",
+			"x-openai-internal-codex-responses-lite", // 仅当官方模型的 use_responses_lite=true 时出现，位置固定在此
 			"x-codex-routing-hint",
 			"x-client-request-id",
 			"session-id",
