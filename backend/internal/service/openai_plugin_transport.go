@@ -15,6 +15,13 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			return response, err
 		}
 	}
+	// 账号显式启用 TLS 指纹时走伪装拨号器；未启用时 ResolveTLSProfile 返回 nil，
+	// 行为与原来完全一致（协议模式、连接池、h2 回退逻辑都不变）。
+	if s.tlsFPProfileService != nil {
+		if profile := s.tlsFPProfileService.ResolveTLSProfile(account); profile != nil {
+			return s.httpUpstream.DoWithTLS(request, proxyURL, account.ID, account.Concurrency, profile)
+		}
+	}
 	return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
 }
 

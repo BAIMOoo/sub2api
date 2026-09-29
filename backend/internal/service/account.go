@@ -2386,11 +2386,15 @@ func (a *Account) IsAnthropicOAuthOrSetupToken() bool {
 }
 
 // IsTLSFingerprintEnabled 检查是否启用 TLS 指纹伪装
-// 仅适用于 Anthropic OAuth/SetupToken 类型账号
-// 启用后将模拟 Claude Code (Node.js) 客户端的 TLS 握手特征
+//
+// 支持的账号形态：
+//   - Anthropic OAuth/SetupToken：模拟 Claude Code (Node.js) 的握手特征；
+//   - OpenAI OAuth（ChatGPT 订阅）：模拟官方 codex 客户端在 Linux 上的握手特征。
+//
+// 无论哪种形态，都必须由账号显式打开 extra["enable_tls_fingerprint"]=true，
+// 因此默认行为不变；具体用哪个 ClientHello 形态由 ResolveTLSProfile 按平台决定。
 func (a *Account) IsTLSFingerprintEnabled() bool {
-	// 仅支持 Anthropic OAuth/SetupToken 账号
-	if !a.IsAnthropicOAuthOrSetupToken() {
+	if !a.IsAnthropicOAuthOrSetupToken() && !a.IsOpenAIOAuth() {
 		return false
 	}
 	if a.Extra == nil {

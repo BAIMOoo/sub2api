@@ -48,18 +48,20 @@ func NewUpstreamCookieJar(inner service.HTTPUpstream, store service.UpstreamCook
 }
 
 func (j *upstreamCookieJar) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return j.roundTrip(req, proxyURL, accountID, func() (*http.Response, error) {
+	return j.roundTrip(req, proxyURL, accountID, nil, func() (*http.Response, error) {
 		return j.inner.Do(req, proxyURL, accountID, accountConcurrency)
 	})
 }
 
 func (j *upstreamCookieJar) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
-	return j.roundTrip(req, proxyURL, accountID, func() (*http.Response, error) {
+	return j.roundTrip(req, proxyURL, accountID, profile, func() (*http.Response, error) {
 		return j.inner.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
 	})
 }
 
-func (j *upstreamCookieJar) roundTrip(req *http.Request, proxyURL string, accountID int64, call func() (*http.Response, error)) (*http.Response, error) {
+// profile 是本次主请求使用的 TLS 指纹；播种请求必须沿用同一个形态，
+// 否则 chatgpt.com 会周期性看到一个 Go crypto/tls 的握手（与 W1 目标相违背）。
+func (j *upstreamCookieJar) roundTrip(req *http.Request, proxyURL string, accountID int64, profile *tlsfingerprint.Profile, call func() (*http.Response, error)) (*http.Response, error) {
 	host, target := upstreamCookieJarTarget(req, accountID)
 	if target && strings.TrimSpace(req.Header.Get("Cookie")) == "" {
 		cookies, err := j.store.LoadUpstreamCookies(req.Context(), accountID, host)
@@ -67,7 +69,7 @@ func (j *upstreamCookieJar) roundTrip(req *http.Request, proxyURL string, accoun
 			if header := service.BuildOpenAIUpstreamCookieHeader(cookies, j.now()); header != "" {
 				req.Header.Set("Cookie", header)
 			}
-			j.seedMissingCfuvid(req, host, proxyURL, accountID, cookies)
+			j.seedMissingCfuvid(req, host, proxyURL, accountID, cookies, profile)
 		}
 	}
 
@@ -107,7 +109,7 @@ func (j *upstreamCookieJar) harvestSetCookies(ctx context.Context, host string, 
 // 实测 _cfuvid 只在 GET / 与 GET /backend-api/me 之类路径下发，而 Codex responses 路径不给；
 // 官方客户端同样会访问这些接口。播种走 goroutine + 独立超时 + 每账号 30 分钟一次，
 // 失败只是少一个 cookie，不影响主请求。
-func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL string, accountID int64, cookies []service.UpstreamCookie) {
+func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL string, accountID int64, cookies []service.UpstreamCookie, profile *tlsfingerprint.Profile) {
 	if !service.OpenAICookieJarNeedsCfuvidSeed(cookies) {
 		return
 	}
@@ -123,7 +125,13 @@ func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL 
 	go func() {
 		ctx, cancel := context.WithTimeout(baseCtx, upstreamCookieSeedTimeout)
 		defer cancel()
-		resp, err := j.inner.Do(seedReq.WithContext(ctx), proxyURL, accountID, 1)
+		var resp *http.Response
+		var err error
+		if profile != nil {
+			resp, err = j.inner.DoWithTLS(seedReq.WithContext(ctx), proxyURL, accountID, 1, profile)
+		} else {
+			resp, err = j.inner.Do(seedReq.WithContext(ctx), proxyURL, accountID, 1)
+		}
 		if err != nil || resp == nil {
 			return
 		}

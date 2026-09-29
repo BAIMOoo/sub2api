@@ -30,6 +30,13 @@ type Profile struct {
 	KeyShareGroups      []uint16 // Empty uses [X25519]
 	PSKModes            []uint16 // Empty uses [psk_dhe_ke]
 	Extensions          []uint16 // Extension type IDs in order; empty uses default Node.js 24.x order
+
+	// DisableCompression 为 true 时不启用 Go 的透明压缩，即不给请求自动附加
+	// “Accept-Encoding: gzip”。官方 codex 客户端不发这个头，因此 OpenAI 形态置 true；
+	// 其余形态（如 Claude Code / Node.js，实际会带 gzip, deflate）保持 false 不变。
+	// 注意：置 true 同时会关闭 Go 对响应的透明解压，本仓库的响应解压由
+	// repository.decompressResponseBody 自行处理（gzip/br/deflate/zstd），不受影响。
+	DisableCompression bool
 }
 
 // Dialer creates TLS connections with custom fingerprints.

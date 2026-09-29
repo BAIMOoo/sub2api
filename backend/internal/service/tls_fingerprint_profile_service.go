@@ -173,7 +173,9 @@ func (s *TLSFingerprintProfileService) getRandomProfile() *tlsfingerprint.Profil
 // 逻辑：
 //  1. 未启用 TLS 指纹 → 返回 nil（不伪装）
 //  2. 启用 + 绑定了 profile_id → 从缓存查找对应 profile
-//  3. 启用 + 未绑定或找不到 → 返回空 Profile（使用代码内置默认值）
+//  3. 启用 + 未绑定或找不到 → 按平台返回内置默认形态
+//     - Anthropic：内置 Node.js 24.x（Claude Code）形态
+//     - OpenAI OAuth：内置官方 codex CLI（Linux/OpenSSL）形态
 func (s *TLSFingerprintProfileService) ResolveTLSProfile(account *Account) *tlsfingerprint.Profile {
 	if account == nil || !account.IsTLSFingerprintEnabled() {
 		return nil
@@ -190,7 +192,11 @@ func (s *TLSFingerprintProfileService) ResolveTLSProfile(account *Account) *tlsf
 			return p
 		}
 	}
-	// TLS 启用但无绑定 profile → 空 Profile → dialer 使用内置默认值
+	// TLS 启用但无绑定 profile → 用按平台的内置默认形态（不落到别的平台的形态上）
+	if account.IsOpenAIOAuth() {
+		return tlsfingerprint.OpenAICodexLinuxProfile()
+	}
+	// Anthropic：空 Profile → dialer 使用内置默认值（Node.js 24.x / Claude Code）
 	return &tlsfingerprint.Profile{Name: "Built-in Default (Node.js 24.x)"}
 }
 

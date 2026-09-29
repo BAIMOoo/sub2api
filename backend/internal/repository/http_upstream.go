@@ -1450,6 +1450,9 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 		ResponseHeaderTimeout: settings.responseHeaderTimeout,
 		// 禁用默认的 TLS，我们使用自定义的 DialTLSContext
 		ForceAttemptHTTP2: false,
+		// 官方 codex 客户端不发 Accept-Encoding，Go 默认会替我们自动附加
+		// “Accept-Encoding: gzip”。由 profile 决定是否关闭（见 tlsfingerprint.Profile）。
+		DisableCompression: profile != nil && profile.DisableCompression,
 	}
 
 	// 根据代理类型选择合适的 TLS 指纹 Dialer
