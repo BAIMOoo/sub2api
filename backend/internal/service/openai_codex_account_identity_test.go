@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -222,7 +225,6 @@ func TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthAccount(t *testing.T)
 	second := build(19, "chatgpt-account-19")
 
 	identityHeaders := []string{
-		"x-codex-installation-id",
 		"x-codex-window-id",
 		"session-id",
 		"thread-id",
@@ -240,4 +242,57 @@ func TestBuildUpstreamRequestNamespacesCodexIdentityByOAuthAccount(t *testing.T)
 		require.NotEqual(t, first.Get(header), second.Get(header), "account failover must rotate upstream identity: %s", header)
 	}
 	require.GreaterOrEqual(t, checked, 5, "test must exercise the real outbound identity surface")
+	// 桌面 app 会带 x-codex-installation-id 进来，但官方 HTTP 出站不发这个头，
+	// 因此透传白名单不再放行它：客户端带了也不得出现在出站头里。
+	require.Empty(t, first.Get("x-codex-installation-id"))
+	require.Empty(t, second.Get("x-codex-installation-id"))
+}
+
+// 出站去掉 x-codex-installation-id 头，但正文 client_metadata 里的同名键保持不变
+// （官方命令行确实只在正文里带 installation_id，作用域化规则也不受影响）。
+func TestForwardDropsClientInstallationIDHeaderButKeepsBodyClientMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.144.1")
+	c.Request.Header.Set("originator", "codex_cli_rs")
+	c.Request.Header.Set("x-codex-installation-id", "client-installation")
+
+	body := []byte(`{"model":"gpt-5.6-codex","stream":false,"prompt_cache_key":"client-session","client_metadata":{"x-codex-installation-id":"client-installation"},"input":[{"type":"message","role":"user","content":"hi"}]}`)
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid"}},
+		Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:             91,
+		Name:           "oauth-installation-drop",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeOAuth,
+		Concurrency:    1,
+		Credentials:    map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"),
+		"客户端带来的 x-codex-installation-id 不得出现在出站头里")
+	require.NotEmpty(t, upstream.lastBody)
+	require.Equal(t,
+		scopeCodexAccountIdentityValue(account, getAPIKeyIDFromContext(c), codexIdentityKindInstallation, "client-installation"),
+		gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String(),
+		"正文 client_metadata 里的同名键仍按既有作用域化规则保留",
+	)
 }

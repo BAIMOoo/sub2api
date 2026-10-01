@@ -3299,9 +3299,23 @@ func TestOpenAIBuildUpstreamRequestPreservesCodexIdentityHeaders(t *testing.T) {
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", false, "", true)
 	require.NoError(t, err)
 	require.Equal(t, "window-http", req.Header.Get("X-Codex-Window-ID"))
-	require.Equal(t, "installation-http", req.Header.Get("X-Codex-Installation-ID"))
+	// 官方 HTTP 出站不发 x-codex-installation-id（官方源码里该头只用于 app-server 的
+	// remote-control 通道），客户端带了也不透传。
+	require.Empty(t, req.Header.Get("X-Codex-Installation-ID"))
 	require.Empty(t, req.Header.Get("X-Test"))
 	require.True(t, openai.EvaluateEngineFingerprint(req.Header, body, openai.DefaultEngineFingerprintSignals))
+}
+
+// 两条 HTTP 出站白名单都不得放行 x-codex-installation-id：官方命令行在 HTTP 路径不发该头，
+// 桌面 app 带进来的值不得被原样转发。正文 client_metadata 的同名键不受这里影响。
+func TestOpenAIAllowedHeaderWhitelistsExcludeInstallationID(t *testing.T) {
+	whitelists := map[string]map[string]bool{
+		"openaiAllowedHeaders":            openaiAllowedHeaders,
+		"openaiPassthroughAllowedHeaders": openaiPassthroughAllowedHeaders,
+	}
+	for name, whitelist := range whitelists {
+		require.False(t, whitelist["x-codex-installation-id"], name)
+	}
 }
 
 func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t *testing.T) {

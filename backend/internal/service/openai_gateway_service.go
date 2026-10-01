@@ -76,6 +76,9 @@ const (
 )
 
 // OpenAI allowed headers whitelist (for non-passthrough).
+// 注意：官方客户端只在正文 client_metadata 里带 installation_id，HTTP 出站不发
+// x-codex-installation-id（官方源码里该头只用于 app-server 的 remote-control 通道）。
+// 桌面 app 会把它带进来，这里刻意不放行，避免从客户端原样转发出去。
 var openaiAllowedHeaders = map[string]bool{
 	"accept-language": true,
 	"content-type":    true,
@@ -85,19 +88,19 @@ var openaiAllowedHeaders = map[string]bool{
 	"session_id":      true,
 	// 官方客户端（CLI/TUI 与桌面 app）实际发送的是连字符形式；先放行，随后由
 	// applyCodexAccountIdentityHeaders 就地作用域化，保证形态与官方一致。
-	"session-id":              true,
-	"thread-id":               true,
-	"x-client-request-id":     true,
-	"x-codex-beta-features":   true,
-	"x-codex-installation-id": true,
-	"x-codex-turn-state":      true,
-	"x-codex-turn-metadata":   true,
-	"x-codex-window-id":       true,
-	responsesLiteHeaderKey:    true,
+	"session-id":            true,
+	"thread-id":             true,
+	"x-client-request-id":   true,
+	"x-codex-beta-features": true,
+	"x-codex-turn-state":    true,
+	"x-codex-turn-metadata": true,
+	"x-codex-window-id":     true,
+	responsesLiteHeaderKey:  true,
 }
 
 // OpenAI passthrough allowed headers whitelist.
 // 透传模式下仅放行这些低风险请求头，避免将非标准/环境噪声头传给上游触发风控。
+// 与 openaiAllowedHeaders 一致：不放行 x-codex-installation-id，客户端带进来也不出站。
 var openaiPassthroughAllowedHeaders = map[string]bool{
 	"accept":          true,
 	"accept-language": true,
@@ -109,15 +112,14 @@ var openaiPassthroughAllowedHeaders = map[string]bool{
 	"session_id":      true,
 	// 官方客户端（CLI/TUI 与桌面 app）实际发送的是连字符形式；放行后由
 	// applyCodexSessionIdentityHeaders 统一重建并用官方头名出站。
-	"session-id":              true,
-	"thread-id":               true,
-	"x-client-request-id":     true,
-	"x-codex-beta-features":   true,
-	"x-codex-installation-id": true,
-	"x-codex-turn-state":      true,
-	"x-codex-turn-metadata":   true,
-	"x-codex-window-id":       true,
-	responsesLiteHeaderKey:    true,
+	"session-id":            true,
+	"thread-id":             true,
+	"x-client-request-id":   true,
+	"x-codex-beta-features": true,
+	"x-codex-turn-state":    true,
+	"x-codex-turn-metadata": true,
+	"x-codex-window-id":     true,
+	responsesLiteHeaderKey:  true,
 }
 
 // codex_cli_only 拒绝时记录的请求头白名单（仅用于诊断日志，不参与上游透传）
