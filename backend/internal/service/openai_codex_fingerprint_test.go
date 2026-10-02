@@ -744,6 +744,34 @@ func TestApplyCodexFingerprintPromptCacheKey_Negatives(t *testing.T) {
 	}
 }
 
+// TestCodexFingerprintHeadersKeepLegacyWireNamesOnlyOnWS 校验两条出站投影的分工：
+// WS 握手保留 installation 头与下划线 session_id（连接池分桶键依赖它们），
+// HTTP 出站两者都不发（官方客户端在 HTTP 路径不发送这两个头名）。
+func TestCodexFingerprintHeadersKeepLegacyWireNamesOnlyOnWS(t *testing.T) {
+	account := newTestOAuthAccount(4241, map[string]any{codexFingerprintModeExtraKey: "session"})
+	ids := resolveCodexFingerprintIDs(account, "client-session-wire", codexFingerprintSession)
+	require.NotNil(t, ids)
+
+	ws := http.Header{}
+	applyCodexFingerprintHeaders(ws, ids)
+	assert.Equal(t, ids.installationID, ws.Get("x-codex-installation-id"), "WS 分桶键依赖 installation 头")
+	assert.Equal(t, ids.sessionID, ws.Get("session_id"), "WS 分桶键依赖下划线 session_id")
+	assert.Equal(t, ids.sessionID, ws.Get("session-id"))
+	assert.Equal(t, ids.threadID, ws.Get("thread-id"))
+
+	httpOnly := http.Header{}
+	// 客户端/更早环节可能带进来的自造头名，必须被 HTTP 投影清掉。
+	httpOnly.Set("x-codex-installation-id", "client-install")
+	httpOnly.Set("session_id", "client-session")
+	applyCodexFingerprintHeadersHTTP(httpOnly, ids)
+	assert.Empty(t, httpOnly.Get("x-codex-installation-id"))
+	assert.Empty(t, httpOnly.Get("session_id"))
+	assert.Equal(t, ids.sessionID, httpOnly.Get("session-id"))
+	assert.Equal(t, ids.threadID, httpOnly.Get("thread-id"))
+	assert.Equal(t, ids.threadID, httpOnly.Get("x-client-request-id"))
+	assert.Equal(t, ids.windowID, httpOnly.Get("x-codex-window-id"))
+}
+
 func TestApplyCodexFingerprintClientMetadataRaw_MatchesMapVariant(t *testing.T) {
 	embedded := `{\"installation_id\":\"real-install\",\"session_id\":\"real-session\",\"sandbox\":\"seatbelt\"}`
 	bodies := map[string]string{
@@ -883,8 +911,9 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	require.NoError(t, err)
 
 	assert.Equal(t, ids.sessionID, req.Header.Get("session-id"), "session 模式下出站 session-id 应为账号级收敛值")
-	assert.Equal(t, ids.sessionID, req.Header.Get("session_id"), "指纹收敛保留历史下划线形态（WS 握手兼容键依赖）")
-	assert.Equal(t, ids.installationID, req.Header.Get("x-codex-installation-id"))
+	assert.Empty(t, req.Header.Get("session_id"), "HTTP 出站不发下划线 session_id（官方客户端不发，WS 分桶键才需要）")
+	assert.Empty(t, req.Header.Get("x-codex-installation-id"), "HTTP 出站不发 installation 头（官方只放在正文 client_metadata）")
+	assert.Equal(t, ids.threadID, req.Header.Get("thread-id"))
 	assert.Equal(t, ids.windowID, req.Header.Get("x-codex-window-id"))
 	assert.Equal(t, ids.threadID, req.Header.Get("x-client-request-id"))
 	turnMetadata := req.Header.Get("x-codex-turn-metadata")

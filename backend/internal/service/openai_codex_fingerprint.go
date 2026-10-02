@@ -53,6 +53,12 @@ func applyStagedCodexFingerprintHeaders(c *gin.Context, account *Account, h http
 	applyCodexFingerprintHeaders(h, stagedCodexFingerprintIDs(c, account))
 }
 
+// applyStagedCodexFingerprintHeadersHTTP 是 HTTP 出站用的版本：只写官方客户端真的会
+// 发送的头名（见 applyCodexFingerprintHeadersHTTP）。WS 握手仍用上面那个版本。
+func applyStagedCodexFingerprintHeadersHTTP(c *gin.Context, account *Account, h http.Header) {
+	applyCodexFingerprintHeadersHTTP(h, stagedCodexFingerprintIDs(c, account))
+}
+
 func applyStagedCodexFingerprintClientMetadata(c *gin.Context, account *Account, reqBody map[string]any) bool {
 	return applyCodexFingerprintClientMetadata(reqBody, stagedCodexFingerprintIDs(c, account))
 }
@@ -354,13 +360,44 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。
 // 在 buildUpstreamRequest 的白名单透传之后、enforceCodexIdentityHeaders 之前调用。
+//
+// 本函数保留 sub2api 历史上自造的头名（下划线 session_id）与 installation 头，
+// 因为它们同时是 **WS 握手** 的连接池分桶维度（见 openai_ws_pool.go 的
+// openAIWSHandshakeCompatibilityKey）。HTTP 出站请用 applyCodexFingerprintHeadersHTTP。
 func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
+	applyCodexFingerprintHeadersWithWireNames(h, ids, true)
+}
+
+// applyCodexFingerprintHeadersHTTP 收敛 HTTP 出站标识时只使用官方客户端真的会发送的头名：
+// session-id / thread-id / x-client-request-id / x-codex-window-id。
+//
+// 两点与 WS 版本不同，动机都是"HTTP 路径不出现官方不存在的形态"（实测：官方 HTTP/SSE
+// 请求里既没有 x-codex-installation-id —— 它只出现在桌面 app 的通道与正文
+// client_metadata，也没有下划线 session_id）：
+//   - 不写 x-codex-installation-id（设备标识仍会收敛到 x-codex-turn-metadata 与正文
+//     client_metadata 里，官方确实在这两个位置携带它）；
+//   - 不写下划线 session_id。
+//
+// 注意：session/full 模式下 session_id 与 thread_id 是两个不同的收敛值，而官方客户端
+// 始终三头同值；这是收敛功能自身的取舍（"1 会话 + N 线程"模型），不是本次改动引入的，
+// 需要改的话属于产品决策，见 codexFingerprintMode 的注释。
+func applyCodexFingerprintHeadersHTTP(h http.Header, ids *codexFingerprintIDs) {
+	applyCodexFingerprintHeadersWithWireNames(h, ids, false)
+}
+
+func applyCodexFingerprintHeadersWithWireNames(h http.Header, ids *codexFingerprintIDs, legacyWireNames bool) {
 	if h == nil || ids == nil {
 		return
 	}
 
-	// 所有非 off 模式都收敛 installation_id
-	h.Set("x-codex-installation-id", ids.installationID)
+	if legacyWireNames {
+		// 所有非 off 模式都收敛 installation_id
+		h.Set("x-codex-installation-id", ids.installationID)
+	} else {
+		// 清掉可能由客户端或更早环节带进来的自造头名，保证 HTTP 出站形态干净。
+		h.Del("x-codex-installation-id")
+		h.Del("session_id")
+	}
 
 	if ids.mode == codexFingerprintDevice {
 		rewriteCodexTurnMetadataFields(h, map[string]any{
@@ -377,7 +414,9 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	// applyCodexSessionIdentityHeaders 中清除；这里保留是因为 WS 握手会用它作为连接池
 	// 的握手兼容键分桶维度，去掉会改变分桶（需与 WS 对齐一并处理）。
 	h.Set("session-id", ids.sessionID)
-	h.Set("session_id", ids.sessionID)
+	if legacyWireNames {
+		h.Set("session_id", ids.sessionID)
+	}
 	h.Set("thread-id", ids.threadID)
 
 	rewriteCodexTurnMetadataFields(h, map[string]any{

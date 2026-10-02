@@ -2393,6 +2393,10 @@ func (a *Account) IsAnthropicOAuthOrSetupToken() bool {
 //
 // 无论哪种形态，都必须由账号显式打开 extra["enable_tls_fingerprint"]=true，
 // 因此默认行为不变；具体用哪个 ClientHello 形态由 ResolveTLSProfile 按平台决定。
+//
+// OpenAI 侧只认 type=oauth（SetupToken 不含在内）：我们没有验证过 setup token
+// 凭据在 OpenAI 侧的握手形态，宁可不启用也不猜。给 setup token 账号打开该开关
+// 不会生效、也不会有提示——如需支持请先补一次官方形态的实测。
 func (a *Account) IsTLSFingerprintEnabled() bool {
 	if !a.IsAnthropicOAuthOrSetupToken() && !a.IsOpenAIOAuth() {
 		return false

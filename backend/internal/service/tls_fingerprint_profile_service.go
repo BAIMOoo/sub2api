@@ -37,6 +37,13 @@ type TLSFingerprintProfileService struct {
 	// 本地 ID→Profile 映射缓存，用于 DoWithTLS 热路径快速查找
 	localCache map[int64]*model.TLSFingerprintProfile
 	localMu    sync.RWMutex
+
+	// randomByAccount 记住 id=-1（随机形态）账号抽到的形态。
+	// 连接池缓存键包含形态身份（见 repository 的 getClientEntryWithTLS），
+	// 若每次请求都重新随机，同一账号会不停地重建连接与重新握手；
+	// 因此"随机"是每账号一次的选择，缓存刷新时清空。
+	randomByAccount map[int64]*tlsfingerprint.Profile
+	randomMu        sync.Mutex
 }
 
 // NewTLSFingerprintProfileService 创建 TLS 指纹模板服务
@@ -183,12 +190,16 @@ func (s *TLSFingerprintProfileService) ResolveTLSProfile(account *Account) *tlsf
 	id := account.GetTLSFingerprintProfileID()
 	if id > 0 {
 		if p := s.GetProfileByID(id); p != nil {
-			return p
+			return applyOpenAICodexHTTPShape(account, p)
 		}
 	}
 	if id == -1 {
-		// 随机选择一个 profile
-		if p := s.getRandomProfile(); p != nil {
+		// 随机形态只对 Anthropic 生效：表里混着各种平台的形态，给 OpenAI 账号随机抽一个
+		// 反而会造出官方 codex 客户端不存在的 ClientHello。
+		if account.IsOpenAIOAuth() {
+			return tlsfingerprint.OpenAICodexLinuxProfile()
+		}
+		if p := s.getRandomProfileForAccount(account.ID); p != nil {
 			return p
 		}
 	}
@@ -198,6 +209,44 @@ func (s *TLSFingerprintProfileService) ResolveTLSProfile(account *Account) *tlsf
 	}
 	// Anthropic：空 Profile → dialer 使用内置默认值（Node.js 24.x / Claude Code）
 	return &tlsfingerprint.Profile{Name: "Built-in Default (Node.js 24.x)"}
+}
+
+// applyOpenAICodexHTTPShape 给 OpenAI OAuth 账号用的形态补上“官方 HTTP 形态”：
+// 请求头顺序表 + 关闭 Go 的自动 Accept-Encoding。
+//
+// 背景：tls_fingerprint_profiles 表只存 ClientHello 字段，
+// internal/model 的 ToTLSProfile() 不映射这两个 HTTP 层字段（没有对应列）。
+// 面板绑定 profile 后若不补，出站会退回 Go 的默认头序、并自动带上
+// `Accept-Encoding: gzip`，正好丢掉两项已经和官方对齐的东西。
+// 入参每次都是新构造的形态对象（ToTLSProfile 返回副本），这里再复制一层避免共享。
+func applyOpenAICodexHTTPShape(account *Account, p *tlsfingerprint.Profile) *tlsfingerprint.Profile {
+	if p == nil || account == nil || !account.IsOpenAIOAuth() {
+		return p
+	}
+	clone := *p
+	clone.DisableCompression = true
+	if len(clone.HTTPHeaderOrders) == 0 {
+		clone.HTTPHeaderOrders = tlsfingerprint.OpenAICodexLinuxProfile().HTTPHeaderOrders
+	}
+	return &clone
+}
+
+// getRandomProfileForAccount 为 id=-1 的账号抽取形态并**按账号固定**，理由见 randomByAccount。
+func (s *TLSFingerprintProfileService) getRandomProfileForAccount(accountID int64) *tlsfingerprint.Profile {
+	s.randomMu.Lock()
+	defer s.randomMu.Unlock()
+	if p, ok := s.randomByAccount[accountID]; ok && p != nil {
+		return p
+	}
+	p := s.getRandomProfile()
+	if p == nil {
+		return nil
+	}
+	if s.randomByAccount == nil {
+		s.randomByAccount = make(map[int64]*tlsfingerprint.Profile)
+	}
+	s.randomByAccount[accountID] = p
+	return p
 }
 
 // --- 缓存管理 ---
@@ -237,6 +286,11 @@ func (s *TLSFingerprintProfileService) setLocalCache(profiles []*model.TLSFinger
 	s.localMu.Lock()
 	s.localCache = m
 	s.localMu.Unlock()
+
+	// 形态表变了，之前随机抽中的形态可能已被删除或改过，重新抽。
+	s.randomMu.Lock()
+	s.randomByAccount = nil
+	s.randomMu.Unlock()
 }
 
 func (s *TLSFingerprintProfileService) newCacheRefreshContext() (context.Context, context.CancelFunc) {

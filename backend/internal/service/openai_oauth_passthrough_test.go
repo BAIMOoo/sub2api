@@ -2172,9 +2172,12 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAnd
 	wantSession := resolveConvergedSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
 
-	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	// HTTP 出站不发 installation 头与下划线 session_id（官方客户端不在 HTTP 路径发送这两个头名）；
+	// installation_id 仍然收敛，只是载体为 x-codex-turn-metadata 与正文 client_metadata。
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, wantInstall, gjson.Get(upstream.lastReq.Header.Get("x-codex-turn-metadata"), "installation_id").String())
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
 	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
@@ -2234,9 +2237,11 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParity
 	wantSession := resolveConvergedSessionID(seed)
 	wantThread := resolveConvergedThreadID(seed, "header-session")
 
-	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	// 透传路径同样只写官方头名（不发 installation 头与下划线 session_id）。
+	require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, wantInstall, gjson.Get(upstream.lastReq.Header.Get("x-codex-turn-metadata"), "installation_id").String())
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
-	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("thread-id"))
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
 	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
@@ -2338,7 +2343,8 @@ func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPro
 	wantSession := resolveConvergedSessionID(seed)
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
-	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))
+	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"), "HTTP 出站不发下划线形态（官方客户端不发）")
 }
 
 func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {
