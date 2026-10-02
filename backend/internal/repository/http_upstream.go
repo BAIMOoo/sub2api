@@ -560,6 +560,12 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀
 	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault)
 	poolKey := buildPoolKey(settings, upstreamProtocolModeDefault) + ":tls"
+	// 形态身份也必须进缓存键：同一账号换了绑定/被编辑过形态后，旧连接池里的连接
+	// 仍然带着旧 profile 的 ClientHello，只靠空闲淘汰等不到重建（活跃账号的条目
+	// 每次请求都会刷新 lastUsed）。
+	if profile != nil {
+		poolKey += ":" + profile.Identity()
+	}
 
 	now := time.Now()
 	nowUnix := now.UnixNano()

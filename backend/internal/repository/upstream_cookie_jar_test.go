@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -124,6 +125,35 @@ func newJarForTest(inner service.HTTPUpstream, store service.UpstreamCookieStore
 }
 
 const codexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
+
+// failingUpstreamCookieStore 让读/写/清空都失败：验证存储故障只影响 cookie，
+// 不影响主请求，也不会凭空注入 cookie（失败会打 slog.Warn，便于事后排查）。
+type failingUpstreamCookieStore struct{}
+
+func (failingUpstreamCookieStore) LoadUpstreamCookies(context.Context, int64, string) ([]service.UpstreamCookie, error) {
+	return nil, errors.New("cookie store unavailable")
+}
+
+func (failingUpstreamCookieStore) SaveUpstreamCookies(context.Context, int64, string, []service.UpstreamCookie) error {
+	return errors.New("cookie store unavailable")
+}
+
+func (failingUpstreamCookieStore) ClearUpstreamCookies(context.Context, int64, string) error {
+	return errors.New("cookie store unavailable")
+}
+
+func TestUpstreamCookieJarStoreFailureDoesNotBreakRequest(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	inner := newRecordingUpstream(func(*http.Request) *http.Response { return emptyResponse(http.StatusOK, nil) })
+	jar := newJarForTest(inner, failingUpstreamCookieStore{}, now)
+
+	req := newRequest(t, http.MethodPost, codexResponsesURL)
+	resp, err := jar.Do(req, "", 9, 1)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Empty(t, req.Header.Get("Cookie"), "读失败时不得凭空注入 cookie")
+	require.Len(t, inner.requests, 1, "存储故障不得影响主请求")
+}
 
 func TestUpstreamCookieJarInjectsWhitelistedCookiesOnly(t *testing.T) {
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)

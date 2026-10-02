@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,28 +49,35 @@ func NewUpstreamCookieJar(inner service.HTTPUpstream, store service.UpstreamCook
 }
 
 func (j *upstreamCookieJar) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
-	return j.roundTrip(req, proxyURL, accountID, nil, func() (*http.Response, error) {
+	return j.roundTrip(req, proxyURL, accountID, accountConcurrency, nil, func() (*http.Response, error) {
 		return j.inner.Do(req, proxyURL, accountID, accountConcurrency)
 	})
 }
 
 func (j *upstreamCookieJar) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
-	return j.roundTrip(req, proxyURL, accountID, profile, func() (*http.Response, error) {
+	return j.roundTrip(req, proxyURL, accountID, accountConcurrency, profile, func() (*http.Response, error) {
 		return j.inner.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
 	})
 }
 
 // profile 是本次主请求使用的 TLS 指纹；播种请求必须沿用同一个形态，
 // 否则 chatgpt.com 会周期性看到一个 Go crypto/tls 的握手（与 W1 目标相违背）。
-func (j *upstreamCookieJar) roundTrip(req *http.Request, proxyURL string, accountID int64, profile *tlsfingerprint.Profile, call func() (*http.Response, error)) (*http.Response, error) {
+// accountConcurrency 同样要透传给播种请求：连接池隔离=account/account_proxy 时它决定
+// 池大小、并参与池缓存键，播种若用别的值会把主请求的客户端条目顶掉重建。
+func (j *upstreamCookieJar) roundTrip(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, call func() (*http.Response, error)) (*http.Response, error) {
 	host, target := upstreamCookieJarTarget(req, accountID)
 	if target && strings.TrimSpace(req.Header.Get("Cookie")) == "" {
 		cookies, err := j.store.LoadUpstreamCookies(req.Context(), accountID, host)
-		if err == nil {
+		if err != nil {
+			// 读失败要留痕：静默跳过会让出站形态悄悄退回"不带 cookie"，事后无从排查。
+			// 只记账号/主机与错误，绝不记 cookie 值。
+			slog.Warn("openai_upstream_cookie_load_failed",
+				"account_id", accountID, "host", host, "error", err)
+		} else {
 			if header := service.BuildOpenAIUpstreamCookieHeader(cookies, j.now()); header != "" {
 				req.Header.Set("Cookie", header)
 			}
-			j.seedMissingCfuvid(req, host, proxyURL, accountID, cookies, profile)
+			j.seedMissingCfuvid(req, host, proxyURL, accountID, accountConcurrency, cookies, profile)
 		}
 	}
 
@@ -89,7 +97,10 @@ func (j *upstreamCookieJar) harvestSetCookies(ctx context.Context, host string, 
 	if resp.StatusCode == http.StatusForbidden || strings.TrimSpace(resp.Header.Get("cf-mitigated")) != "" {
 		// 安全网：CF 挑战/403 说明当前 cookie 组合不被接受，直接清空，
 		// 下一次请求回到“不带 cookie”的已知可用形态（实测该形态稳定 200）。
-		_ = j.store.ClearUpstreamCookies(ctx, accountID, host)
+		if err := j.store.ClearUpstreamCookies(ctx, accountID, host); err != nil {
+			slog.Warn("openai_upstream_cookie_clear_failed",
+				"account_id", accountID, "host", host, "status", resp.StatusCode, "error", err)
+		}
 		return
 	}
 	harvested := service.ParseOpenAIUpstreamSetCookies(resp.Header, j.now())
@@ -98,10 +109,16 @@ func (j *upstreamCookieJar) harvestSetCookies(ctx context.Context, host string, 
 	}
 	existing, err := j.store.LoadUpstreamCookies(ctx, accountID, host)
 	if err != nil {
+		slog.Warn("openai_upstream_cookie_load_failed",
+			"account_id", accountID, "host", host, "error", err)
 		existing = nil
 	}
 	merged := service.MergeOpenAIUpstreamCookies(existing, harvested)
-	_ = j.store.SaveUpstreamCookies(ctx, accountID, host, merged)
+	if err := j.store.SaveUpstreamCookies(ctx, accountID, host, merged); err != nil {
+		// 值不落盘会让 cookie 集合悄悄退化；同样只记账号/主机与错误。
+		slog.Warn("openai_upstream_cookie_save_failed",
+			"account_id", accountID, "host", host, "count", len(merged), "error", err)
+	}
 }
 
 // seedMissingCfuvid 在 jar 里没有 _cfuvid 时补一次播种请求。
@@ -109,7 +126,7 @@ func (j *upstreamCookieJar) harvestSetCookies(ctx context.Context, host string, 
 // 实测 _cfuvid 只在少数路径下发（响应路径不给），因此这里补一次 GET；端点选的是官方 CLI 实包中
 // 出现过、且实测稳定下发 _cfuvid 的插件端点，见 service.OpenAIUpstreamCookieSeedPath 的说明。
 // 播种走 goroutine + 独立超时 + 每账号 30 分钟一次，失败只是少一个 cookie，不影响主请求。
-func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL string, accountID int64, cookies []service.UpstreamCookie, profile *tlsfingerprint.Profile) {
+func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL string, accountID int64, accountConcurrency int, cookies []service.UpstreamCookie, profile *tlsfingerprint.Profile) {
 	if !service.OpenAICookieJarNeedsCfuvidSeed(cookies) {
 		return
 	}
@@ -128,9 +145,9 @@ func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL 
 		var resp *http.Response
 		var err error
 		if profile != nil {
-			resp, err = j.inner.DoWithTLS(seedReq.WithContext(ctx), proxyURL, accountID, 1, profile)
+			resp, err = j.inner.DoWithTLS(seedReq.WithContext(ctx), proxyURL, accountID, accountConcurrency, profile)
 		} else {
-			resp, err = j.inner.Do(seedReq.WithContext(ctx), proxyURL, accountID, 1)
+			resp, err = j.inner.Do(seedReq.WithContext(ctx), proxyURL, accountID, accountConcurrency)
 		}
 		if err != nil || resp == nil {
 			return

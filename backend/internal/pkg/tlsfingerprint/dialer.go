@@ -5,7 +5,9 @@ package tlsfingerprint
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
@@ -41,6 +43,45 @@ type Profile struct {
 	// HTTPHeaderOrders 非空时，对命中的请求按其声明的顺序重排 HTTP/1.1 请求头
 	// （见 httporder.go）。为空表示不改写、完全由 net/http 决定。
 	HTTPHeaderOrders []*HTTPHeaderOrder
+}
+
+// Identity 返回该形态的稳定身份摘要，供连接池缓存键使用：
+// 身份相同可以复用连接，身份变了（面板改了绑定、profile 被编辑过）必须重建，
+// 否则账号会一直用旧 profile 的 ClientHello 出站，改了配置也看不到变化。
+//
+// 只摘要形态字段，不含账号信息；nil 返回空串。
+func (p *Profile) Identity() string {
+	if p == nil {
+		return ""
+	}
+	h := sha256.New()
+	write := func(values ...any) {
+		for _, v := range values {
+			_, _ = fmt.Fprintf(h, "%v|", v)
+		}
+	}
+	write(
+		p.Name,
+		p.EnableGREASE,
+		p.DisableCompression,
+		p.CipherSuites,
+		p.Curves,
+		p.PointFormats,
+		p.SignatureAlgorithms,
+		p.ALPNProtocols,
+		p.SupportedVersions,
+		p.KeyShareGroups,
+		p.PSKModes,
+		p.Extensions,
+	)
+	for _, rule := range p.HTTPHeaderOrders {
+		if rule == nil {
+			write("<nil>")
+			continue
+		}
+		write(rule.Host, rule.Paths, rule.Order)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // Dialer creates TLS connections with custom fingerprints.
