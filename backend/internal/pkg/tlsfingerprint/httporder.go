@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -15,8 +16,11 @@ import (
 // 在连接层把已经写出的「请求头块」缓存下来、重排后再发出去。
 // 连接复用、SSE 流式读取、超时与取消仍然全部由 net/http 负责。
 type HTTPHeaderOrder struct {
-	Host  string   // 只对该 host 生效（大小写不敏感）
-	Paths []string // 只对这些路径前缀生效；为空表示该 host 的全部路径
+	Host string // 只对该 host 生效（大小写不敏感）
+	// Paths 只对这些路径**精确匹配**生效（不含子路径）；为空表示该 host 的全部路径。
+	// 之所以不做前缀匹配：`/backend-api/codex/responses` 是 `/responses/compact` 的前缀，
+	// 而 compact 是另一条协议线、我们没有它的官方顺序靶子，误命中会声明一个未实测的形态。
+	Paths []string
 	Order []string // 头名（小写），按期望顺序排列
 }
 
@@ -45,6 +49,10 @@ type HTTPHeaderOrder struct {
 // 另外，官方 HTTP/1.1 请求的头名**全部小写**（实测 4/4 样本，含 host 与
 // content-length；WebSocket 升级请求则是另一套写法，不适用本规则）。Go 写的是
 // 规范形式（Host / Content-Length / Accept…），因此重排时一并改成小写。
+//
+// 作用范围只有这条精确路径：`/backend-api/codex/responses/compact`（compact 客户端
+// 端点）与 `/responses/{id}/cancel` 之类的子路径**不**套用本表 —— compact 是另一条
+// 协议线，我们没有它的官方顺序样本，宁可不改也不声明一个未实测的形态。
 func OpenAIResponsesHeaderOrder() *HTTPHeaderOrder {
 	return &HTTPHeaderOrder{
 		Host:  "chatgpt.com",
@@ -90,13 +98,18 @@ const maxOrderedHeaderBytes = 64 << 10
 
 type orderedWriteConn struct {
 	net.Conn
-	rules  []*HTTPHeaderOrder
-	buf    []byte
-	bypass bool
+	rules []*HTTPHeaderOrder
+	buf   []byte
+	// bodyLeft 是当前请求仍需原样透传的正文长度。头块写完之后只按长度跳过正文、
+	// 不扫描其中的字节，避免把正文里出现的 CRLFCRLF 误判成下一个请求的头块。
+	bodyLeft int64
+	// passthrough 为真时之后的所有字节原样透传（无法安全确定正文边界、或头块异常大）。
+	passthrough bool
 }
 
 // NewOrderedWriteConn 包装一个（已完成握手的）连接：命中规则的 HTTP/1.1 请求
-// 会按声明的头顺序写出，其余请求与所有后续字节一律原样透传。
+// 会按声明的头顺序写出；同一条连接上后续的每个请求都会重新判定，
+// 未命中规则的请求、正文、以及所有非请求字节一律原样透传。
 // 没有任何可用规则时直接返回原连接。
 func NewOrderedWriteConn(c net.Conn, rules ...*HTTPHeaderOrder) net.Conn {
 	kept := make([]*HTTPHeaderOrder, 0, len(rules))
@@ -112,39 +125,97 @@ func NewOrderedWriteConn(c net.Conn, rules ...*HTTPHeaderOrder) net.Conn {
 }
 
 func (c *orderedWriteConn) Write(p []byte) (int, error) {
-	if c.bypass {
+	if c.passthrough {
 		return c.Conn.Write(p)
 	}
+	total := len(p)
+
+	// 正在透传正文：按剩余长度原样写出，剩下没写完的才是「下一个请求的开头」。
+	if c.bodyLeft > 0 {
+		n := int64(len(p))
+		if n > c.bodyLeft {
+			n = c.bodyLeft
+		}
+		if _, err := c.Conn.Write(p[:n]); err != nil {
+			return 0, err
+		}
+		c.bodyLeft -= n
+		p = p[n:]
+		if len(p) == 0 {
+			return total, nil
+		}
+	}
+
 	c.buf = append(c.buf, p...)
 	end := bytes.Index(c.buf, headerTerminator)
 	if end < 0 {
 		if len(c.buf) > maxOrderedHeaderBytes {
-			// 头块异常大：原样透传，不要再缓冲。
-			return c.flushAsIs(len(p))
+			// 头块异常大：原样透传，本连接之后不再重排。
+			return c.flushAsIs(total)
 		}
 		// 头块还没写完，先记下；调用方认为本次写入已完成。
-		return len(p), nil
+		return total, nil
 	}
 	head := c.buf[:end+len(headerTerminator)]
 	rest := c.buf[end+len(headerTerminator):]
 	c.buf = nil
-	c.bypass = true
+
 	out := c.reorder(head)
-	out = append(out, rest...)
-	if _, err := c.Conn.Write(out); err != nil {
+	block := make([]byte, 0, len(out)+len(rest))
+	block = append(block, out...)
+	block = append(block, rest...)
+	if _, err := c.Conn.Write(block); err != nil {
 		return 0, err
 	}
-	return len(p), nil
+
+	// 头块紧邻的字节一定属于本请求的正文，据此记下还需要原样透传多少字节。
+	bodyLen, ok := outboundRequestBodyLength(out)
+	if !ok {
+		// 无法判断正文边界（如 chunked）：本连接之后一律原样透传，绝不误改正文。
+		c.passthrough = true
+		return total, nil
+	}
+	if left := bodyLen - int64(len(rest)); left > 0 {
+		c.bodyLeft = left
+	}
+	return total, nil
 }
 
 func (c *orderedWriteConn) flushAsIs(n int) (int, error) {
-	c.bypass = true
+	c.passthrough = true
 	buf := c.buf
 	c.buf = nil
 	if _, err := c.Conn.Write(buf); err != nil {
 		return 0, err
 	}
 	return n, nil
+}
+
+// outboundRequestBodyLength 从（已重排的）头块里取出正文长度。
+// 没有 content-length 也没有 transfer-encoding 表示本次请求没有正文（长度 0）；
+// 出现 transfer-encoding（chunked 等无法定长的写法）或 content-length 非法时返回
+// ok=false，调用方据此停止重排，避免把正文当成下一个请求。
+func outboundRequestBodyLength(head []byte) (int64, bool) {
+	body := head[:len(head)-len(headerTerminator)]
+	for _, line := range bytes.Split(body, []byte("\r\n"))[1:] {
+		colon := bytes.IndexByte(line, ':')
+		if colon <= 0 {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(string(line[:colon])))
+		value := strings.TrimSpace(string(line[colon+1:]))
+		switch name {
+		case "content-length":
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || n < 0 {
+				return 0, false
+			}
+			return n, true
+		case "transfer-encoding":
+			return 0, false
+		}
+	}
+	return 0, true
 }
 
 // reorder 只重排「请求行之后的头行」：请求行、头行的字节内容与整体长度都不变，
@@ -232,8 +303,8 @@ func (c *orderedWriteConn) match(lines [][]byte) []string {
 		if len(rule.Paths) == 0 {
 			return rule.Order
 		}
-		for _, prefix := range rule.Paths {
-			if strings.HasPrefix(target, prefix) {
+		for _, exact := range rule.Paths {
+			if target == exact {
 				return rule.Order
 			}
 		}

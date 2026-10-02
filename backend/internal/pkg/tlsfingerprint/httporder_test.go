@@ -295,3 +295,109 @@ func mustHost(t *testing.T, rawURL string) string {
 	}
 	return u.Host
 }
+
+// rawHTTPRequest 手写一条线上的 HTTP/1.1 请求，用来精确控制「一条连接上的第几条请求」。
+func rawHTTPRequest(method, target, body string, headers [][2]string) []byte {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\n", method, target)
+	b.WriteString("Host: chatgpt.com\r\n")
+	if body != "" {
+		fmt.Fprintf(&b, "Content-Length: %d\r\n", len(body))
+	}
+	for _, h := range headers {
+		fmt.Fprintf(&b, "%s: %s\r\n", h[0], h[1])
+	}
+	b.WriteString("\r\n")
+	b.WriteString(body)
+	return b.Bytes()
+}
+
+func codexResponsesRaw(target string) []byte {
+	return rawHTTPRequest("POST", target, `{"model":"gpt-6-astra"}`, [][2]string{
+		{"Version", "0.158.0"},
+		{"X-Codex-Beta-Features", "remote_compaction_v2"},
+		{"Accept", "text/event-stream"},
+		{"Authorization", "Bearer <redacted>"},
+	})
+}
+
+// writeSequence 把多段原始字节依次写进同一个 wrapper，返回对端收到的全部字节。
+func writeSequence(t *testing.T, raws ...[]byte) []byte {
+	t.Helper()
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
+	got := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(server)
+		got <- b
+	}()
+	wrapped := NewOrderedWriteConn(client, OpenAIResponsesHeaderOrder())
+	for _, raw := range raws {
+		if _, err := wrapped.Write(raw); err != nil {
+			t.Fatalf("wrapper write: %v", err)
+		}
+	}
+	_ = wrapped.Close()
+	return <-got
+}
+
+// 只有这四个头 + host/content-length 时的期望顺序（重排后头名全小写）。
+var expectedOrderForMinimalRequest = []string{
+	"version", "x-codex-beta-features", "accept", "authorization", "host", "content-length",
+}
+
+// TestOpenAIHeaderOrderEveryRequestOnSameConnIsReordered 同一条连接上连发两条主请求：
+// 两条都必须按官方顺序写出（不能只重排第一条）——这正是 keep-alive 复用时的真实场景。
+func TestOpenAIHeaderOrderEveryRequestOnSameConnIsReordered(t *testing.T) {
+	first := codexResponsesRaw("/backend-api/codex/responses")
+	second := codexResponsesRaw("/backend-api/codex/responses")
+	// 重排保持字节长度不变，因此「分别单发」的结果可以直接拼接作为期望值。
+	want := append(writeSequence(t, first), writeSequence(t, second)...)
+	got := writeSequence(t, first, second)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("同一条连接上的第二条请求没有重排\nwant %q\n got %q", want, got)
+	}
+	assertOrder(t, got[:len(first)], expectedOrderForMinimalRequest)
+	assertOrder(t, got[len(first):], expectedOrderForMinimalRequest)
+}
+
+// TestOpenAIHeaderOrderResumesAfterNonMatchingRequest 先来一条非目标请求（GET /models），
+// 之后的主请求仍必须重排：不能因为「本连接已经出现过非目标请求」就放弃。
+func TestOpenAIHeaderOrderResumesAfterNonMatchingRequest(t *testing.T) {
+	models := rawHTTPRequest("GET", "/backend-api/codex/models", "", [][2]string{{"Authorization", "Bearer <redacted>"}})
+	responses := codexResponsesRaw("/backend-api/codex/responses")
+	got := writeSequence(t, models, responses)
+	if !bytes.HasPrefix(got, models) {
+		t.Fatalf("非目标请求被改写\nwant %q\n got %q", models, got[:len(models)])
+	}
+	assertOrder(t, got[len(models):], expectedOrderForMinimalRequest)
+}
+
+// TestOpenAIHeaderOrderCompactSubpathUntouched compact 是另一条协议线、没有官方顺序样本，
+// 因此 `/backend-api/codex/responses/compact` 必须逐字节原样透传（不做前缀匹配）。
+func TestOpenAIHeaderOrderCompactSubpathUntouched(t *testing.T) {
+	raw := codexResponsesRaw("/backend-api/codex/responses/compact")
+	if got := writeSequence(t, raw); !bytes.Equal(got, raw) {
+		t.Fatalf("compact 子路径不应被重排\nwant %q\n got %q", raw, got)
+	}
+}
+
+// TestOpenAIHeaderOrderChunkedBodyDisablesReorder 无法判断正文边界（chunked）时，
+// 本连接之后一律原样透传——宁可不再重排，也不能把正文当成下一个请求的头块。
+func TestOpenAIHeaderOrderChunkedBodyDisablesReorder(t *testing.T) {
+	chunked := []byte("POST /backend-api/codex/responses HTTP/1.1\r\n" +
+		"Host: chatgpt.com\r\nTransfer-Encoding: chunked\r\nVersion: 0.158.0\r\n\r\n" +
+		"5\r\nhello\r\n0\r\n\r\n")
+	responses := codexResponsesRaw("/backend-api/codex/responses")
+	got := writeSequence(t, chunked, responses)
+	if len(got) != len(chunked)+len(responses) {
+		t.Fatalf("字节数变化：%d != %d", len(got), len(chunked)+len(responses))
+	}
+	if !bytes.Contains(got[:len(chunked)], []byte("5\r\nhello\r\n0\r\n\r\n")) {
+		t.Fatal("chunked 正文被破坏")
+	}
+	if second := got[len(chunked):]; !bytes.Equal(second, responses) {
+		t.Fatalf("chunked 之后的请求必须原样透传\nwant %q\n got %q", responses, second)
+	}
+}
