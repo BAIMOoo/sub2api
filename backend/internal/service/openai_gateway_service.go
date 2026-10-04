@@ -79,6 +79,9 @@ const (
 // 注意：官方客户端只在正文 client_metadata 里带 installation_id，HTTP 出站不发
 // x-codex-installation-id（官方源码里该头只用于 app-server 的 remote-control 通道）。
 // 桌面 app 会把它带进来，这里刻意不放行，避免从客户端原样转发出去。
+// 同样刻意不放行调用方的 OpenAI-Beta（上游 PR #7617 往这里加过该条，合并时按本
+// fork 的形态收敛策略剔除）：出站形态由 Codex 身份层统一生成，不透传调用方自选的
+// beta 令牌，避免与官方 CLI 的 HTTP 形态不一致。
 var openaiAllowedHeaders = map[string]bool{
 	"accept-language": true,
 	"content-type":    true,
