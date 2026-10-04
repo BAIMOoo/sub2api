@@ -27,10 +27,12 @@ var (
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 )
 
+// githubRepo 是管理页「在线更新 / 回滚」拉取 release 的来源仓库。
+// 编译期常量：改动后必须重新构建二进制才会生效（原值为上游 Wei-Shaw/sub2api）。
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Wei-Shaw/sub2api"
+	githubRepo     = "BAIMOoo/sub2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"
