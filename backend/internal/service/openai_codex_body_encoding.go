@@ -11,7 +11,7 @@ import (
 )
 
 // codexRequestBodyContentEncoding 是官方客户端发往 ChatGPT Codex 后端的请求体编码。
-// 官方 HTTP 路径实测：content-encoding: zstd（25,344 → 73,404 字节的正文）。
+// 官方 HTTP 路径实测：content-encoding: zstd；压缩前后大小随请求正文变化。
 // sub2api 此前一律发明文 JSON，属于官方形态中不存在的写法。
 const codexRequestBodyContentEncoding = "zstd"
 

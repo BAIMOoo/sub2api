@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -1884,6 +1885,57 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
+	var sseLineCount int
+	var sseDataEventCount int
+	lastSSEEventType := ""
+
+	// Keep one structured diagnostic record for every abnormal stream boundary.
+	// Passthrough has a separate scanner from the transformed Responses path, so
+	// it must emit the same correlation fields for production-side diagnosis.
+	logStreamDiagnostic := func(phase string, err error) {
+		clientRequestID := strings.TrimSpace(c.GetHeader("X-Client-Request-ID"))
+		if clientRequestID == "" {
+			clientRequestID, _ = ctx.Value(ctxkey.ClientRequestID).(string)
+			clientRequestID = strings.TrimSpace(clientRequestID)
+		}
+		requestID, _ := ctx.Value(ctxkey.RequestID).(string)
+		fields := []zap.Field{
+			zap.String("diagnostic_tag", "responses_stream_v1"),
+			zap.String("phase", phase),
+			zap.String("client_request_id", clientRequestID),
+			zap.String("request_id", strings.TrimSpace(requestID)),
+			zap.String("upstream_request_id", upstreamRequestID),
+			zap.Int("upstream_status", resp.StatusCode),
+			zap.String("model", originalModel),
+			zap.Int64("account_id", account.ID),
+			zap.String("account_platform", string(account.Platform)),
+			zap.Int64("duration_ms", time.Since(startTime).Milliseconds()),
+			zap.Bool("client_disconnected", clientDisconnected),
+			zap.Bool("request_context_canceled", ctx.Err() != nil),
+			zap.Bool("client_output_started", clientOutputStarted),
+			zap.Bool("semantic_output_seen", semanticOutputSeen),
+			zap.Bool("saw_terminal_event", sawTerminalEvent),
+			zap.Bool("saw_failed_event", sawFailedEvent),
+			zap.String("terminal_event_type", terminalEventType),
+			zap.String("last_sse_event_type", lastSSEEventType),
+			zap.Int("sse_line_count", sseLineCount),
+			zap.Int("sse_data_event_count", sseDataEventCount),
+			zap.Int("pending_line_count", len(pendingLines)),
+			zap.String("response_id", responseID),
+			zap.Int("input_tokens", usage.InputTokens),
+			zap.Int("output_tokens", usage.OutputTokens),
+		}
+		if firstTokenMs != nil {
+			fields = append(fields, zap.Int("first_token_ms", *firstTokenMs))
+		}
+		if err != nil {
+			fields = append(fields, zap.Error(err))
+		}
+		logger.FromContext(ctx).With(zap.String("component", "service.openai_gateway.responses_stream")).Warn(
+			"openai.responses.stream_diag",
+			fields...,
+		)
+	}
 
 	// ── 首个可见输出之前的下游 keepalive ──────────────────────────────────
 	//
@@ -1937,6 +1989,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		for _, pending := range pendingLines {
 			if _, err := fmt.Fprintln(w, pending); err != nil {
 				clientDisconnected = true
+				logStreamDiagnostic("downstream_pending_write", err)
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 				return false
 			}
@@ -1957,6 +2010,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
 			clientDisconnected = true
+			logStreamDiagnostic("error_event_write", err)
 			return
 		}
 		clientOutputStarted = true
@@ -1988,6 +2042,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 
 	for documentScanner.Scan() {
 		line := documentScanner.Text()
+		sseLineCount++
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
 			pendingSSEEventType = eventType
 			eventType = strings.TrimSpace(eventType)
@@ -1996,6 +2051,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		lineStartsClientOutput := false
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			sseDataEventCount++
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			rawEventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
@@ -2030,6 +2086,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			eventType := effectiveOpenAISSEEventType(dataBytes, rawEventType)
+			lastSSEEventType = eventType
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
 				suppressCurrentEvent = true
 			}
@@ -2191,6 +2248,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
+				logStreamDiagnostic("downstream_write", err)
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 			} else {
 				clientOutputStarted = true
@@ -2223,13 +2281,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			logStreamDiagnostic("upstream_read_canceled", err)
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 		}
 		if errors.Is(err, bufio.ErrTooLong) {
+			logStreamDiagnostic("upstream_sse_line_too_long", err)
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, err)
 			return resultWithUsage(), err
 		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+			logStreamDiagnostic("upstream_read_before_output", err)
 			msg := "OpenAI stream disconnected before completion"
 			if errText := strings.TrimSpace(err.Error()); errText != "" {
 				msg += ": " + errText
@@ -2238,8 +2299,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, msg)
 		}
 		if clientDisconnected {
+			logStreamDiagnostic("upstream_read_after_client_disconnect", err)
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", err)
 		}
+		logStreamDiagnostic("upstream_read_error", err)
 		s.recordOpenAIProxyStreamDisconnect(account, err, upstreamRequestID)
 		logger.LegacyPrintf("service.openai_gateway",
 			"[OpenAI passthrough] 流读取异常中断: account=%d request_id=%s err=%v",
@@ -2251,6 +2314,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	if sawFailedEvent {
 		return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
+	}
+	if !sawDone && !sawTerminalEvent {
+		logStreamDiagnostic("finalize_missing_terminal", errors.New("stream ended before terminal event"))
 	}
 	if !clientDisconnected && !sawDone && !sawTerminalEvent && ctx.Err() == nil {
 		logger.FromContext(ctx).With(
