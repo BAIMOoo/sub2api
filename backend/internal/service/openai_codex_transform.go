@@ -93,10 +93,9 @@ type codexOAuthTransformOptions struct {
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
 	OmitPromotedSystemMessagesFromInput bool
-	// KeepSystemMessagesInInput 把 role:"system" 就地归一化为 role:"developer"，不再
-	// 提升/镜像到顶层 instructions。官方客户端（CLI/TUI、桌面 app、codex exec）都把
-	// 系统提示留在 input[] 里、顶层从不带 instructions（见实测记录 §B/§15/§16），
-	// 因此 Codex 路径默认走这一支；保留原分支供非 Codex 变换复用。
+	// KeepSystemMessagesInInput 把 role:"system" 就地归一化为 role:"developer"，
+	// 不提升/镜像到顶层 instructions。官方 Responses Lite 把基础指令放在 input，
+	// 标准 Responses 模式使用顶层 instructions；已有原生字段应保持其调用方布局。
 	KeepSystemMessagesInInput bool
 	// ResponsesLite selects where an injected hosted tool is declared.
 	ResponsesLite bool
@@ -254,10 +253,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		result.Modified = true
 	}
 
-	// 工具声明形态对齐官方：官方从不发送顶层 tools，而是放在 input[] 的
-	// additional_tools 项里、按命名空间分组（实测：CLI/TUI 的 WS body 与 app/exec 的
-	// HTTP body 都是这个形态）。第三方客户端发来的扁平 tools 在这里改写为官方形态。
-	if promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
+	// 官方工具布局由 Responses Lite 模式决定，与 HTTP/WS 传输方式无关。
+	// 只在 Lite 模式兼容搬迁第三方函数工具；标准模式保留合法的顶层 tools。
+	if opts.ResponsesLite && promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
 		result.Modified = true
 	}
 
@@ -306,9 +304,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	}
 
 	// ChatGPT internal Codex endpoint does not accept role:"system".
-	// 官方客户端把系统提示放在 input[] 的 developer message 里，顶层从不带
-	// instructions，故 Codex 路径只做角色归一化、不再提升成 instructions；
-	// 旧分支保留给仍需 instructions 的变换（含 JSON object 模式的无损提升）。
+	// Lite 的基础指令放在 input[] 的 developer message，标准模式使用顶层
+	// instructions。由调用方决定兼容 system 消息的位置，保留已有原生指令；
+	// JSON object 模式仍可使用无损提升分支。
 	if opts.KeepSystemMessagesInInput {
 		if normalizeCodexSystemRoleMessagesInInput(reqBody) {
 			result.Modified = true
@@ -463,20 +461,20 @@ func codexToolsContainType(rawTools any, toolType string) bool {
 }
 
 // codexAdditionalToolsNamespaceName 是官方 Codex 客户端承载普通工作区工具时的命名空间名。
-// 实测：CLI/TUI 的 WS body 与桌面 app / codex exec 的 HTTP body 都在 input[] 首位放一个
-// additional_tools 项，内含 "functions"（另有 "clock"、"collaboration"）命名空间。
+// Responses Lite 请求在 input[] 首位放 additional_tools，内含 "functions"
+// （另有 "clock"、"collaboration"）命名空间；标准模式使用顶层 tools。
 const codexAdditionalToolsNamespaceName = "functions"
 
 // codexAdditionalToolsNamespaceDescription 是命名空间描述。上游要求该字段非空
 // （实测：缺失时报 400 "Missing required parameter: 'input[0].tools[0].description'"）。
 const codexAdditionalToolsNamespaceDescription = "Tools available in this session."
 
-// promoteTopLevelToolsToAdditionalTools 把 Responses 风格的顶层 tools 改写成官方形态：
+// promoteTopLevelToolsToAdditionalTools 把顶层函数 tools 改写成 Responses Lite 形态：
 // input[] 首位一个 additional_tools 项，内含 "functions" 命名空间，函数工具平铺其中
 // （{"type":"function","name":…,"description":…,"parameters":…}，不再有 function 嵌套）。
 //
 // 只在「所有工具都是 function 且都带非空 description」且「input 为数组或缺失」时改写；
-// 任一条件不满足就保持原样 —— 宁可与官方形态不一致，也不猜上游校验规则而丢工具功能。
+// 任一条件不满足就保持原样，避免丢弃工具功能。
 // compact 端点形态不同（见调用方注释），不由本函数处理。
 func promoteTopLevelToolsToAdditionalTools(reqBody map[string]any, skip bool) bool {
 	if skip || reqBody == nil {

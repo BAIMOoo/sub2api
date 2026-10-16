@@ -17,9 +17,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Exercise the fork's system-message/tool layout together with the upstream
-// history repair through both transform branches. Lite must never acquire a
-// top-level hosted search tool, including after function tools are promoted.
+// Exercise system-message preservation and upstream search-history repair
+// through both transform branches. Codex exec 0.158.0 declares standard tools
+// at the top level and Lite tools in input additional_tools.
 func TestForward_CodexForkIdentityWithUpstreamSearchHistory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, lite := range []bool{false, true} {
@@ -81,7 +81,7 @@ func TestForward_CodexForkIdentityWithUpstreamSearchHistory(t *testing.T) {
 					items := gjson.GetBytes(forwarded, "input").Array()
 					require.Equal(t, "compaction_trigger", items[len(items)-1].Get("type").String())
 
-					searchPath := "tools.0"
+					searchPath := `tools.#(type=="web_search")`
 					if lite {
 						searchPath = `input.#(type=="additional_tools").tools.#(type=="web_search")`
 						topLevelTools := gjson.GetBytes(forwarded, "tools")
@@ -96,7 +96,13 @@ func TestForward_CodexForkIdentityWithUpstreamSearchHistory(t *testing.T) {
 					require.Equal(t, gjson.False, search.Get("external_web_access").Type)
 					if functionTools {
 						require.Equal(t, "lookup", gjson.GetBytes(forwarded, "tool_choice.name").String())
-						tool := gjson.GetBytes(forwarded, `input.#(type=="additional_tools").tools.#(type=="namespace").tools.0`)
+						toolPath := `tools.#(type=="function")`
+						if lite {
+							toolPath = `input.#(type=="additional_tools").tools.#(type=="namespace").tools.0`
+						} else {
+							require.False(t, gjson.GetBytes(forwarded, `input.#(type=="additional_tools")`).Exists())
+						}
+						tool := gjson.GetBytes(forwarded, toolPath)
 						require.Equal(t, "lookup", tool.Get("name").String())
 						require.Equal(t, "Look up a value.", tool.Get("description").String())
 						require.True(t, tool.Get("strict").Bool())

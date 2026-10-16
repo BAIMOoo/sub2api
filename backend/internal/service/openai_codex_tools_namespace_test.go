@@ -6,9 +6,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 官方 Codex 客户端（CLI/TUI 的 WS body、桌面 app 与 codex exec 的 HTTP body）都把工具声明
-// 放在 input[] 的 additional_tools 项里、按命名空间分组，顶层从不出现 tools。
-// 这里验证第三方客户端的扁平 tools 会被改写成同一形态。
+// 官方 Codex 按 Responses Lite 模式选择工具布局：Lite 使用 input.additional_tools，
+// 标准模式使用顶层 tools。这里显式验证 Lite 的第三方函数工具兼容变换。
 func TestApplyCodexOAuthTransform_PromotesTopLevelToolsToAdditionalToolsNamespace(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.6-sol",
@@ -29,11 +28,11 @@ func TestApplyCodexOAuthTransform_PromotesTopLevelToolsToAdditionalToolsNamespac
 		"tool_choice": "auto",
 	}
 
-	result := applyCodexOAuthTransform(reqBody, false, false)
+	result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{ResponsesLite: true})
 	require.True(t, result.Modified)
 
 	_, hasTopLevelTools := reqBody["tools"]
-	require.False(t, hasTopLevelTools, "官方形态里没有顶层 tools")
+	require.False(t, hasTopLevelTools, "Lite 函数工具应进入 additional_tools")
 
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
@@ -78,7 +77,7 @@ func TestApplyCodexOAuthTransform_PromotesLegacyFunctionsIntoNamespace(t *testin
 		},
 	}
 
-	applyCodexOAuthTransform(reqBody, false, false)
+	applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{ResponsesLite: true})
 
 	require.NotContains(t, reqBody, "functions")
 	require.NotContains(t, reqBody, "tools")
@@ -98,7 +97,7 @@ func TestApplyCodexOAuthTransform_PromotesLegacyFunctionsIntoNamespace(t *testin
 	require.Equal(t, "lookup", entry["name"])
 }
 
-// 出现非 function 工具（如内置的 web_search）时保持原样：宁可与官方形态不一致，也不丢功能。
+// 出现非 function 工具（如内置的 web_search）时，搬迁函数保持原样，不丢工具。
 func TestApplyCodexOAuthTransform_KeepsTopLevelToolsWhenNotAllFunctions(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.6-sol",
@@ -109,7 +108,7 @@ func TestApplyCodexOAuthTransform_KeepsTopLevelToolsWhenNotAllFunctions(t *testi
 		},
 	}
 
-	applyCodexOAuthTransform(reqBody, false, false)
+	applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{ResponsesLite: true})
 
 	tools, ok := reqBody["tools"].([]any)
 	require.True(t, ok, "混合工具类型时保持顶层 tools")
@@ -131,7 +130,7 @@ func TestApplyCodexOAuthTransform_KeepsTopLevelToolsWithoutDescription(t *testin
 		},
 	}
 
-	applyCodexOAuthTransform(reqBody, false, false)
+	applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{ResponsesLite: true})
 
 	require.Contains(t, reqBody, "tools")
 	require.NotContains(t, reqBody, "input.additional_tools")
@@ -171,7 +170,7 @@ func TestApplyCodexOAuthTransform_KeepsNamedFunctionToolChoiceAfterPromotion(t *
 		"tool_choice": map[string]any{"type": "function", "name": "get_weather"},
 	}
 
-	applyCodexOAuthTransform(reqBody, false, false)
+	applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{ResponsesLite: true})
 
 	choice, ok := reqBody["tool_choice"].(map[string]any)
 	require.True(t, ok, "点名函数时不应被降级为字符串 auto")
@@ -189,7 +188,69 @@ func TestApplyCodexOAuthTransform_CompactKeepsTopLevelTools(t *testing.T) {
 		},
 	}
 
-	applyCodexOAuthTransform(reqBody, false, true)
+	applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{ResponsesLite: true, IsCompact: true})
 
 	require.Contains(t, reqBody, "tools")
+}
+
+func TestApplyCodexOAuthTransform_StandardKeepsNativeTopLevelTools(t *testing.T) {
+	tool := map[string]any{
+		"type": "function", "name": "echo", "description": "Echo a value.",
+		"parameters": map[string]any{"type": "object"}, "strict": true,
+	}
+	reqBody := map[string]any{
+		"model": "gpt-5.6-sol", "instructions": "Caller base instructions.",
+		"input": []any{map[string]any{"type": "message", "role": "user", "content": "hello"}},
+		"tools": []any{tool}, "tool_choice": "auto",
+	}
+	result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{SkipDefaultInstructions: true})
+	require.NoError(t, result.Error)
+	require.Equal(t, []any{tool}, reqBody["tools"])
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 1, "standard tools must not add a Lite carrier")
+	require.Equal(t, "Caller base instructions.", reqBody["instructions"])
+}
+
+func TestApplyCodexOAuthTransform_LiteKeepsNativeAdditionalTools(t *testing.T) {
+	tools := []any{map[string]any{
+		"type": "namespace", "name": "functions", "description": "Function tools.",
+		"tools": []any{map[string]any{"type": "function", "name": "echo", "description": "Echo a value."}},
+	}}
+	reqBody := map[string]any{
+		"model": "gpt-5.6-sol", "instructions": "", "tool_choice": "auto",
+		"input": []any{
+			map[string]any{"type": "additional_tools", "id": "at_native", "role": "developer", "tools": tools},
+			map[string]any{"type": "message", "id": "msg_native", "role": "developer", "content": "Caller base instructions."},
+		},
+	}
+	result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+		ResponsesLite: true, KeepSystemMessagesInInput: true, SkipDefaultInstructions: true,
+	})
+	require.NoError(t, result.Error)
+	require.NotContains(t, reqBody, "tools")
+	require.Equal(t, "", reqBody["instructions"], "native empty instructions must not acquire defaults")
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 2, "native Lite carrier must not be duplicated")
+	carrier, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "additional_tools", carrier["type"])
+	require.Equal(t, "at_native", carrier["id"])
+	require.Equal(t, tools, carrier["tools"])
+	message, ok := input[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "msg_native", message["id"])
+}
+
+func TestApplyCodexOAuthTransform_StandardKeepsNativeInstructions(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.6-sol", "instructions": "Caller base instructions.",
+		"input": []any{map[string]any{"type": "message", "role": "developer", "content": "Caller developer message."}},
+		"tools": []any{}, "tool_choice": "auto",
+	}
+	result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{SkipDefaultInstructions: true})
+	require.NoError(t, result.Error)
+	require.Equal(t, "Caller base instructions.", reqBody["instructions"])
+	require.Len(t, reqBody["input"], 1)
 }
