@@ -84,16 +84,6 @@ func (u *recordingUpstream) cookieAt(index int) string {
 	return u.cookies[index]
 }
 
-func (u *recordingUpstream) paths() []string {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	out := make([]string, 0, len(u.requests))
-	for _, req := range u.requests {
-		out = append(out, req.URL.Path)
-	}
-	return out
-}
-
 // queries 返回每个请求的路径 + 查询串，用于断言播种请求带的是官方 query。
 func (u *recordingUpstream) queries() []string {
 	u.mu.Lock()
@@ -201,7 +191,11 @@ func TestUpstreamCookieJarIgnoresNonChatGPTHosts(t *testing.T) {
 func TestUpstreamCookieJarHarvestsSetCookie(t *testing.T) {
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	store := &fakeUpstreamCookieStore{}
-	inner := newRecordingUpstream(func(*http.Request) *http.Response {
+	inner := newRecordingUpstream(func(req *http.Request) *http.Response {
+		// Only the main response sets these cookies; seeding is tested separately.
+		if req.URL.Path != "/backend-api/codex/responses" {
+			return emptyResponse(http.StatusOK, nil)
+		}
 		header := http.Header{}
 		header.Add("Set-Cookie", "__oailb=routing; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax")
 		header.Add("Set-Cookie", "__cf_bm=bm; Path=/; Domain=chatgpt.com; Max-Age=1800; Secure")
@@ -235,7 +229,12 @@ func TestUpstreamCookieJarClearsJarOnChallenge(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &fakeUpstreamCookieStore{jar: []service.UpstreamCookie{{Name: "__cf_bm", Value: "bm"}}}
-			inner := newRecordingUpstream(func(*http.Request) *http.Response { return emptyResponse(tc.status, tc.header) })
+			inner := newRecordingUpstream(func(req *http.Request) *http.Response {
+				if req.URL.Path != "/backend-api/codex/responses" {
+					return emptyResponse(http.StatusOK, nil)
+				}
+				return emptyResponse(tc.status, tc.header)
+			})
 			jar := newJarForTest(inner, store, now)
 
 			resp, err := jar.Do(newRequest(t, http.MethodPost, codexResponsesURL), "", 9, 1)

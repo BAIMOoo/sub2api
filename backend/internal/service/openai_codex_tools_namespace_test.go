@@ -42,7 +42,9 @@ func TestApplyCodexOAuthTransform_PromotesTopLevelToolsToAdditionalToolsNamespac
 	require.True(t, ok)
 	require.Equal(t, "additional_tools", first["type"])
 	require.Equal(t, "developer", first["role"])
-	require.Equal(t, "message", input[1].(map[string]any)["type"], "工具的声明项放在 input 最前")
+	message, ok := input[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", message["type"], "工具的声明项放在 input 最前")
 
 	namespaces, ok := first["tools"].([]any)
 	require.True(t, ok)
@@ -80,11 +82,20 @@ func TestApplyCodexOAuthTransform_PromotesLegacyFunctionsIntoNamespace(t *testin
 
 	require.NotContains(t, reqBody, "functions")
 	require.NotContains(t, reqBody, "tools")
-	input := reqBody["input"].([]any)
-	first := input[0].(map[string]any)
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	first, ok := input[0].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "additional_tools", first["type"])
-	namespace := first["tools"].([]any)[0].(map[string]any)
-	require.Equal(t, "lookup", namespace["tools"].([]any)[0].(map[string]any)["name"])
+	namespaces, ok := first["tools"].([]any)
+	require.True(t, ok)
+	namespace, ok := namespaces[0].(map[string]any)
+	require.True(t, ok)
+	entries, ok := namespace["tools"].([]any)
+	require.True(t, ok)
+	entry, ok := entries[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "lookup", entry["name"])
 }
 
 // 出现非 function 工具（如内置的 web_search）时保持原样：宁可与官方形态不一致，也不丢功能。
@@ -103,8 +114,11 @@ func TestApplyCodexOAuthTransform_KeepsTopLevelToolsWhenNotAllFunctions(t *testi
 	tools, ok := reqBody["tools"].([]any)
 	require.True(t, ok, "混合工具类型时保持顶层 tools")
 	require.Len(t, tools, 2)
-	input := reqBody["input"].([]any)
-	require.Equal(t, "message", input[0].(map[string]any)["type"], "不插入 additional_tools")
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	message, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", message["type"], "不插入 additional_tools")
 }
 
 // 缺 description 时保持原样（上游对命名空间内工具要求描述非空）。
@@ -121,8 +135,11 @@ func TestApplyCodexOAuthTransform_KeepsTopLevelToolsWithoutDescription(t *testin
 
 	require.Contains(t, reqBody, "tools")
 	require.NotContains(t, reqBody, "input.additional_tools")
-	input := reqBody["input"].([]any)
-	require.Equal(t, "message", input[0].(map[string]any)["type"])
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	message, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", message["type"])
 }
 
 // input 不是数组（例如老的字符串 prompt）时不动，避免把用户输入顶掉。

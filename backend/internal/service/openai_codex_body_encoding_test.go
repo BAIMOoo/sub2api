@@ -68,7 +68,9 @@ func TestApplyCodexRequestBodyZstdCompressesChatGPTPost(t *testing.T) {
 	// GetBody 必须给出与正文同一份编码后的字节，供重试与插件路径重放。
 	replay, err := req.GetBody()
 	require.NoError(t, err)
-	defer replay.Close()
+	defer func() {
+		require.NoError(t, replay.Close())
+	}()
 	replayed, err := io.ReadAll(replay)
 	require.NoError(t, err)
 	require.Equal(t, wire, replayed)

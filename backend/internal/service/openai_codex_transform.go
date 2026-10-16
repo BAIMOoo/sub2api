@@ -98,6 +98,8 @@ type codexOAuthTransformOptions struct {
 	// 系统提示留在 input[] 里、顶层从不带 instructions（见实测记录 §B/§15/§16），
 	// 因此 Codex 路径默认走这一支；保留原分支供非 Codex 变换复用。
 	KeepSystemMessagesInInput bool
+	// ResponsesLite selects where an injected hosted tool is declared.
+	ResponsesLite bool
 }
 
 const (
@@ -359,6 +361,12 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		} else {
 			reqBody["input"] = []any{}
 		}
+		result.Modified = true
+	}
+
+	// Runs after input filtering so it sees the final replayed history. The
+	// compact endpoint has its own wire shape and is left untouched.
+	if !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
 		result.Modified = true
 	}
 
