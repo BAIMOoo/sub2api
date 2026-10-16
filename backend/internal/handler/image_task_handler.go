@@ -122,7 +122,19 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		"poll_url":   pollURL,
 	})
 
-	go h.run(task.ID, platform, taskCtx, recorder, cancel)
+	{
+		migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/image_task_handler.go:125")
+		migrationDetachedFn := h.run
+		migrationDetachedArg0 := task.ID
+		migrationDetachedArg1 := platform
+		migrationDetachedArg2 := taskCtx
+		migrationDetachedArg3 := recorder
+		migrationDetachedArg4 := cancel
+		go func() {
+			defer migrationDetachedDone()
+			migrationDetachedFn(migrationDetachedArg0, migrationDetachedArg1, migrationDetachedArg2, migrationDetachedArg3, migrationDetachedArg4)
+		}()
+	}
 }
 
 func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) bool {

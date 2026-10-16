@@ -1879,7 +1879,11 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 	ap.creating += need
 	p.metrics.scaleUpTotal.Add(int64(need))
 
-	go p.prewarmConns(accountID, req, need, generation)
+	migrationDone := BeginMigrationDetachedTask("openai.ws_prewarm")
+	go func(accountID int64, req openAIWSAcquireRequest, need int, generation uint64) {
+		defer migrationDone()
+		p.prewarmConns(accountID, req, need, generation)
+	}(accountID, req, need, generation)
 }
 
 func (p *openAIWSConnPool) targetConnCountLocked(ap *openAIWSAccountPool, maxConns int) int {

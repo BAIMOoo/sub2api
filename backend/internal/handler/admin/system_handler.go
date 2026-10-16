@@ -215,11 +215,16 @@ func (h *SystemHandler) RestartService(c *gin.Context) {
 
 		// Schedule service restart in background after sending response
 		// This ensures the client receives the success response before the service restarts
-		go func() {
-			// Wait a moment to ensure the response is sent
-			time.Sleep(500 * time.Millisecond)
-			sysutil.RestartServiceAsync()
-		}()
+		{
+			migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/system_handler.go:218")
+			go func() {
+				defer migrationDetachedDone()
+
+				// Wait a moment to ensure the response is sent
+				time.Sleep(500 * time.Millisecond)
+				sysutil.RestartServiceAsync()
+			}()
+		}
 		succeeded = true
 		return gin.H{
 			"message":      "Service restart initiated",

@@ -1487,12 +1487,21 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 		if input.LongContextBillingEnabled != nil {
 			applyLongContextBilling = *input.LongContextBillingEnabled
 		}
-		pricing, err := s.GetModelPricing(input.Model)
+		pricingAt := timezone.Now()
+		pricing, err := s.getModelPricingAt(input.Model, pricingAt)
 		if err != nil {
 			return nil, err
 		}
 		breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongContextBilling)
-		applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers))
+		reasoningMultiplier := reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers)
+		applyCostBreakdownMultiplier(breakdown, reasoningMultiplier)
+		migrationObserveTokenPricing(input.Ctx, breakdown, migrationTokenPricingDecision{
+			Model: input.Model, PricingAt: pricingAt, Source: "catalog_direct", Tokens: input.Tokens,
+			RateMultiplier: input.RateMultiplier, ServiceTier: input.ServiceTier, ReasoningEffort: input.ReasoningEffort,
+			UnitPricing: *pricing, ApplyLongContext: applyLongContextBilling,
+			ContextTokens:          input.Tokens.InputTokens + input.Tokens.CacheCreationTokens + input.Tokens.CacheReadTokens,
+			DeepSeekPeakMultiplier: 1, ChannelTimeMultiplier: 1, ReasoningEffortMultiplier: reasoningMultiplier,
+		})
 		return breakdown, nil
 	}
 
@@ -1567,8 +1576,10 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// 06:00–10:00 UTC，仅工作日；北京时间周末全天低谷）按 2× 低谷价计费。
 	// 仅作用于默认价卡（Source=LiteLLM，无分组/渠道自定义定价）——分组/渠道
 	// 自定义定价保持运营者语义，不叠加。先克隆再乘，避免污染共享 fallbackPrices 指针。
+	deepseekMultiplier := 1.0
 	if resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
 		if mult := deepseekPeakMultiplierAt(pricingAt); mult > 1 {
+			deepseekMultiplier = mult
 			cloned := *pricing
 			cloned.InputPricePerToken *= mult
 			cloned.OutputPricePerToken *= mult
@@ -1581,8 +1592,21 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	applyLongCtx := len(resolved.Intervals) == 0 && contextTierPricingEnabled
 
 	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
-	applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
-	applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers))
+	timeMultiplier := resolvedChannelTimeMultiplier(resolved, input.PricingAt)
+	reasoningMultiplier := reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers)
+	applyCostBreakdownMultiplier(breakdown, timeMultiplier)
+	applyCostBreakdownMultiplier(breakdown, reasoningMultiplier)
+	decision := migrationTokenPricingDecision{
+		Model: input.Model, PricingAt: pricingAt, Source: resolved.Source, Tokens: input.Tokens,
+		RateMultiplier: input.RateMultiplier, ServiceTier: input.ServiceTier, ReasoningEffort: input.ReasoningEffort,
+		UnitPricing: *pricing, ContextTokens: totalContext, IntervalContextTokens: pricingContext,
+		SelectedInterval: FindMatchingInterval(resolved.Intervals, pricingContext), ApplyLongContext: applyLongCtx,
+		DeepSeekPeakMultiplier: deepseekMultiplier, ChannelTimeMultiplier: timeMultiplier, ReasoningEffortMultiplier: reasoningMultiplier,
+	}
+	if resolved.channelPricing != nil {
+		decision.ChannelTimeRules = resolved.channelPricing.TimePricing
+	}
+	migrationObserveTokenPricing(input.Ctx, breakdown, decision)
 	return breakdown, nil
 }
 
@@ -1811,18 +1835,40 @@ func (s *BillingService) calculateCostInternalWithPolicy(
 	channelPricing *ChannelModelPricing,
 	longContextBillingEnabled bool,
 ) (*CostBreakdown, error) {
+	return s.calculateCostInternalWithPolicyObserved(nil, model, tokens, rateMultiplier, serviceTier, channelPricing, longContextBillingEnabled)
+}
+
+func (s *BillingService) calculateCostInternalWithPolicyObserved(
+	ctx context.Context,
+	model string,
+	tokens UsageTokens,
+	rateMultiplier float64,
+	serviceTier string,
+	channelPricing *ChannelModelPricing,
+	longContextBillingEnabled bool,
+) (*CostBreakdown, error) {
 	var pricing *ModelPricing
 	var err error
+	pricingAt := timezone.Now()
+	source := "catalog_direct"
 	if channelPricing != nil {
 		pricing, err = s.GetModelPricingWithChannel(model, channelPricing)
+		source = PricingSourceChannel
 	} else {
-		pricing, err = s.GetModelPricing(model)
+		pricing, err = s.getModelPricingAt(model, pricingAt)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	return s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, longContextBillingEnabled), nil
+	breakdown := s.computeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, longContextBillingEnabled)
+	migrationObserveTokenPricing(ctx, breakdown, migrationTokenPricingDecision{
+		Model: model, PricingAt: pricingAt, Source: source, Tokens: tokens,
+		RateMultiplier: rateMultiplier, ServiceTier: serviceTier, UnitPricing: *pricing,
+		ContextTokens:    tokens.InputTokens + tokens.CacheCreationTokens + tokens.CacheReadTokens,
+		ApplyLongContext: longContextBillingEnabled, DeepSeekPeakMultiplier: 1, ChannelTimeMultiplier: 1, ReasoningEffortMultiplier: 1,
+	})
+	return breakdown, nil
 }
 
 // applyModelSpecificPricingPolicy 对目录数据做模型特定修正：DeepSeek 官方价

@@ -289,7 +289,8 @@ func (s *ConcurrencyService) AcquireOpenAIWSIngressLease(ctx context.Context, ap
 		stopCh:      make(chan struct{}),
 		refreshDone: make(chan struct{}),
 	}
-	go lease.refreshLoop()
+	migrationDone := BeginMigrationDetachedTask("concurrency.ingress_lease_renewal")
+	go func() { defer migrationDone(); lease.refreshLoop() }()
 	return lease, true, nil
 }
 

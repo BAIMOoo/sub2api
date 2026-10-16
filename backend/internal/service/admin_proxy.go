@@ -89,7 +89,16 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 		return nil, err
 	}
 	// Probe latency asynchronously so creation isn't blocked by network timeout.
-	go s.probeProxyLatency(context.Background(), proxy)
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/admin_proxy.go:92")
+		migrationDetachedFn := s.probeProxyLatency
+		migrationDetachedArg0 := context.Background()
+		migrationDetachedArg1 := proxy
+		go func() {
+			defer migrationDetachedDone()
+			migrationDetachedFn(migrationDetachedArg0, migrationDetachedArg1)
+		}()
+	}
 	return proxy, nil
 }
 

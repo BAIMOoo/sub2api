@@ -301,7 +301,7 @@ func ProvideUpstreamBillingProbeService(
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startMigrationBackgroundWorker("UpstreamBillingProbe", svc.Start)
 	return svc
 }
 
@@ -593,7 +593,8 @@ func releaseUpstreamBillingProbeLeaderLock(release func(), releaseAt time.Time) 
 		release()
 		return
 	}
-	time.AfterFunc(delay, release)
+	migrationDone := BeginMigrationDetachedTask("upstream_billing.delayed_lock_release")
+	time.AfterFunc(delay, func() { defer migrationDone(); release() })
 }
 
 func (s *UpstreamBillingProbeService) SetAccountEnabled(ctx context.Context, accountID int64, enabled bool) error {

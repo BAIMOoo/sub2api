@@ -279,11 +279,16 @@ func (s *SubscriptionService) maybeInvalidateAssignmentCaches(userID, groupID in
 
 	s.InvalidateSubCache(userID, groupID)
 	if s.billingCacheService != nil {
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-		}()
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/subscription_service.go:282")
+			go func() {
+				defer migrationDetachedDone()
+
+				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+			}()
+		}
 	}
 }
 
@@ -551,11 +556,16 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 	s.InvalidateSubCache(input.UserID, input.GroupID)
 	if s.billingCacheService != nil {
 		userID, groupID := input.UserID, input.GroupID
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-		}()
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/subscription_service.go:554")
+			go func() {
+				defer migrationDetachedDone()
+
+				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+			}()
+		}
 	}
 
 	return sub, false, nil
@@ -724,11 +734,16 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 	s.InvalidateSubCache(sub.UserID, sub.GroupID)
 	if s.billingCacheService != nil {
 		userID, groupID := sub.UserID, sub.GroupID
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-		}()
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/subscription_service.go:727")
+			go func() {
+				defer migrationDetachedDone()
+
+				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+			}()
+		}
 	}
 
 	return sub, nil

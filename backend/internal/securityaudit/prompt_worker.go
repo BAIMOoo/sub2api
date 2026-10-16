@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"context"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,9 +29,10 @@ type Runner struct {
 	clock   Clock
 	runtime WorkerRuntime
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	mu                sync.Mutex
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	migrationWorkGate service.MigrationWorkGate
 }
 
 func NewRunner(config ConfigStore, repo JobRepository, payload PayloadStore, scanner PromptScanner, metrics Metrics) *Runner {
@@ -98,17 +100,24 @@ func (r *Runner) worker(ctx context.Context, workerID int) {
 				continue
 			}
 			for {
+				release, admitted := r.migrationWorkGate.TryEnter()
+				if !admitted {
+					break
+				}
 				job, claimed, err := r.repo.ClaimNextJob(ctx, r.clock.Now())
 				if err != nil {
+					release()
 					r.setLastError("claim_job_failed", err.Error())
 					break
 				}
 				if !claimed {
+					release()
 					break
 				}
 				r.runtime.active.Add(1)
 				r.processSafely(ctx, workerID, cfg, job)
 				r.runtime.active.Add(-1)
+				release()
 			}
 		}
 	}
@@ -266,8 +275,13 @@ func (r *Runner) reclaimer(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			release, admitted := r.migrationWorkGate.TryEnter()
+			if !admitted {
+				continue
+			}
 			now := r.clock.Now()
 			count, err := r.repo.ReclaimStale(ctx, now.Add(-2*time.Minute), now.Add(-90*time.Second), 100)
+			release()
 			if err != nil {
 				r.setLastError("reclaim_failed", err.Error())
 				continue

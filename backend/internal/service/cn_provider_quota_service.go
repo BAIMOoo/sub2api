@@ -108,7 +108,7 @@ func (s *CNProviderQuotaService) QueryUsageForAccount(ctx context.Context, accou
 		return nil, err
 	}
 	key := "cn_quota:" + strconv.FormatInt(account.ID, 10)
-	resultCh := s.flight.DoChan(key, func() (any, error) {
+	resultCh := MigrationSingleflightDoChan("cn_provider.quota_singleflight", &s.flight, key, func() (any, error) {
 		probeCtx, cancel := context.WithTimeout(context.Background(), cnQuotaUpstreamTimeout+5*time.Second)
 		defer cancel()
 		return s.queryUsageForAccount(probeCtx, account)

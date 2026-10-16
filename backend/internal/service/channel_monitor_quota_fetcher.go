@@ -140,7 +140,7 @@ func (f *ChannelMonitorQuotaFetcher) Fetch(ctx context.Context, accountID int64)
 	// singleflight 合并同账号并发抓取；脱离调用方 ctx（仿 CN 配额服务），
 	// 避免某个监控的取消波及共享同一账号的其他监控。
 	key := "monitor-quota:" + strconv.FormatInt(accountID, 10)
-	ch := f.flight.DoChan(key, func() (any, error) {
+	ch := MigrationSingleflightDoChan("channel.quota_singleflight", &f.flight, key, func() (any, error) {
 		return f.fetchShared(accountID), nil
 	})
 	select {

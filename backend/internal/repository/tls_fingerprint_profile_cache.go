@@ -96,6 +96,18 @@ func (c *tlsFingerprintProfileCache) NotifyUpdate(ctx context.Context) error {
 
 // SubscribeUpdates 订阅缓存更新通知
 func (c *tlsFingerprintProfileCache) SubscribeUpdates(ctx context.Context, handler func()) {
+	if handled, _, err := service.StartMigrationRedisSubscription(ctx, c.rdb, service.MigrationRedisSubscription{
+		Name: "tls_fingerprint", Channel: tlsFPProfilePubSubKey,
+		Handle: func(context.Context, string) {
+			_ = c.ClearMigrationLocalCache(context.Background())
+			handler()
+		},
+	}); handled {
+		if err != nil {
+			slog.Error("migration TLS fingerprint subscription failed", "error", err)
+		}
+		return
+	}
 	go func() {
 		sub := c.rdb.Subscribe(ctx, tlsFPProfilePubSubKey)
 		defer func() { _ = sub.Close() }()
@@ -119,4 +131,11 @@ func (c *tlsFingerprintProfileCache) SubscribeUpdates(ctx context.Context, handl
 			}
 		}
 	}()
+}
+
+func (c *tlsFingerprintProfileCache) ClearMigrationLocalCache(_ context.Context) error {
+	c.localMu.Lock()
+	c.localCache = nil
+	c.localMu.Unlock()
+	return nil
 }

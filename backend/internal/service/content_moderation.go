@@ -511,6 +511,7 @@ type ContentModerationHashCache interface {
 }
 
 type ContentModerationService struct {
+	migrationWorkGate        MigrationWorkGate
 	settingRepo              SettingRepository
 	repo                     ContentModerationRepository
 	hashCache                ContentModerationHashCache
@@ -556,6 +557,7 @@ type contentModerationRuntimeSnapshot struct {
 }
 
 type contentModerationTask struct {
+	migrationDone    func()
 	input            ContentModerationCheckInput
 	content          ContentModerationInput
 	inputHash        string
@@ -1195,10 +1197,12 @@ func (s *ContentModerationService) enqueueAsync(input ContentModerationCheckInpu
 		inputHash:  hashText,
 		enqueuedAt: time.Now(),
 	}
+	task.migrationDone = BeginMigrationDetachedTask("content_moderation.async_queue")
 	select {
 	case s.asyncQueue <- task:
 		s.asyncEnqueued.Add(1)
 	default:
+		task.migrationDone()
 		slog.Warn("content_moderation.async_queue_full", "user_id", input.UserID, "endpoint", input.Endpoint)
 		s.asyncDropped.Add(1)
 	}
@@ -1230,10 +1234,12 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 		applySideEffects: applySideEffects,
 		enqueuedAt:       time.Now(),
 	}
+	task.migrationDone = BeginMigrationDetachedTask("content_moderation.async_queue")
 	select {
 	case s.asyncQueue <- task:
 		s.asyncEnqueued.Add(1)
 	default:
+		task.migrationDone()
 		slog.Warn("content_moderation.record_queue_full",
 			"user_id", input.UserID,
 			"endpoint", input.Endpoint,
@@ -1244,55 +1250,67 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 
 func (s *ContentModerationService) worker(id int) {
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
-		runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
-		if err != nil || runtimeSnapshot == nil || runtimeSnapshot.config == nil || id >= runtimeSnapshot.config.WorkerCount {
-			cancel()
-			time.Sleep(time.Second)
-			continue
-		}
-		cfg := runtimeSnapshot.config
-		task, ok := s.dequeueAsyncTask(ctx, time.Second)
+		release, ok := s.migrationWorkGate.TryEnter()
 		if !ok {
-			cancel()
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		func() {
-			defer cancel()
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("content_moderation.worker_panic", "worker_id", id, "recover", r)
-				}
-			}()
-			if task.log != nil {
-				s.asyncActive.Add(1)
-				defer s.asyncActive.Add(-1)
-				queueDelay := int(time.Since(task.enqueuedAt).Milliseconds())
-				task.log.QueueDelayMS = &queueDelay
-				taskCfg := task.config
-				if taskCfg == nil {
-					taskCfg = cfg
-				}
-				s.persistContentModerationLog(ctx, taskCfg, task.log, task.inputHash, task.recordHash, task.applySideEffects)
-				s.asyncProcessed.Add(1)
-				return
+		func() { defer release(); s.workerOnce(id) }()
+	}
+}
+
+func (s *ContentModerationService) workerOnce(id int) {
+	ctx, cancel := context.WithTimeout(context.Background(), maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
+	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil || runtimeSnapshot == nil || runtimeSnapshot.config == nil || id >= runtimeSnapshot.config.WorkerCount {
+		cancel()
+		time.Sleep(time.Second)
+		return
+	}
+	cfg := runtimeSnapshot.config
+	task, ok := s.dequeueAsyncTask(ctx, time.Second)
+	if !ok {
+		cancel()
+		return
+	}
+	func() {
+		if task.migrationDone != nil {
+			defer task.migrationDone()
+		}
+		defer cancel()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("content_moderation.worker_panic", "worker_id", id, "recover", r)
 			}
-			if !cfg.Enabled || cfg.Mode == ContentModerationModeOff || len(cfg.apiKeys()) == 0 {
-				return
-			}
-			if !cfg.includesGroup(task.input.GroupID) {
-				return
-			}
-			if !cfg.includesModel(task.input.Model) {
-				return
-			}
+		}()
+		if task.log != nil {
 			s.asyncActive.Add(1)
 			defer s.asyncActive.Add(-1)
 			queueDelay := int(time.Since(task.enqueuedAt).Milliseconds())
-			_ = s.checkSync(ctx, task.input, cfg, task.content, task.inputHash, &queueDelay, false)
+			task.log.QueueDelayMS = &queueDelay
+			taskCfg := task.config
+			if taskCfg == nil {
+				taskCfg = cfg
+			}
+			s.persistContentModerationLog(ctx, taskCfg, task.log, task.inputHash, task.recordHash, task.applySideEffects)
 			s.asyncProcessed.Add(1)
-		}()
-	}
+			return
+		}
+		if !cfg.Enabled || cfg.Mode == ContentModerationModeOff || len(cfg.apiKeys()) == 0 {
+			return
+		}
+		if !cfg.includesGroup(task.input.GroupID) {
+			return
+		}
+		if !cfg.includesModel(task.input.Model) {
+			return
+		}
+		s.asyncActive.Add(1)
+		defer s.asyncActive.Add(-1)
+		queueDelay := int(time.Since(task.enqueuedAt).Milliseconds())
+		_ = s.checkSync(ctx, task.input, cfg, task.content, task.inputHash, &queueDelay, false)
+		s.asyncProcessed.Add(1)
+	}()
 }
 
 func (s *ContentModerationService) dequeueAsyncTask(ctx context.Context, idleWait time.Duration) (contentModerationTask, bool) {
@@ -1481,6 +1499,11 @@ func (s *ContentModerationService) cleanupWorker() {
 }
 
 func (s *ContentModerationService) runCleanupOnce() {
+	release, ok := s.migrationWorkGate.TryEnter()
+	if !ok {
+		return
+	}
+	defer release()
 	if s == nil || s.repo == nil || s.settingRepo == nil {
 		return
 	}
@@ -1570,7 +1593,9 @@ func (s *ContentModerationService) triggerRuntimeSnapshotRefresh() {
 		s.runtimeRefreshMu.Unlock()
 		return
 	}
+	migrationDone := BeginMigrationDetachedTask("content_moderation.runtime_refresh")
 	go func() {
+		defer migrationDone()
 		defer s.runtimeRefreshMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), contentModerationRuntimeRefreshTimeout)
 		defer cancel()
@@ -3163,4 +3188,26 @@ func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log
 	}
 	subject := fmt.Sprintf("[%s] 网络安全策略拦截 / Cyber Policy Notice", sanitizeEmailHeader(siteName))
 	return s.emailService.SendEmail(ctx, log.UserEmail, subject, buildCyberPolicyNoticeEmailBody(siteName, log))
+}
+
+// BeginMigrationQuiet drains accepted queue entries before fencing the idle
+// configuration readers and periodic retention cleanup. It never cancels an
+// accepted moderation decision or drops the queue to manufacture an idle state.
+func (s *ContentModerationService) BeginMigrationQuiet(ctx context.Context) (func(), error) {
+	if s == nil {
+		return nil, fmt.Errorf("content moderation unavailable")
+	}
+	if err := WaitForMigrationDetachedTasks(ctx); err != nil {
+		return nil, err
+	}
+	return s.migrationWorkGate.Pause(ctx)
+}
+
+func (s *ContentModerationService) MigrationTaskStats() MigrationTaskStats {
+	if s == nil {
+		return MigrationTaskStats{}
+	}
+	stats := s.migrationWorkGate.Stats()
+	stats.Pending = uint64(len(s.asyncQueue))
+	return stats
 }

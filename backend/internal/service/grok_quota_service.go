@@ -352,7 +352,7 @@ func (s *GrokQuotaService) runProbeFlight(
 	if s == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "GROK_QUOTA_NOT_CONFIGURED", "grok quota service is not configured")
 	}
-	resultCh := s.probeFlight.DoChan(key, func() (any, error) {
+	resultCh := MigrationSingleflightDoChan("grok.probe_singleflight", &s.probeFlight, key, func() (any, error) {
 		sharedCtx, cancel := context.WithTimeout(context.Background(), grokQuotaUpstreamTimeout+5*time.Second)
 		defer cancel()
 		return probe(sharedCtx)

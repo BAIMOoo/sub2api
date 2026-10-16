@@ -472,29 +472,34 @@ func (c *IdempotencyCoordinator) renewProcessingLease(ctx context.Context, recor
 	}
 	renewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-renewCtx.Done():
-				return
-			case <-ticker.C:
-				now := time.Now()
-				callCtx, callCancel := context.WithTimeout(renewCtx, min(2*time.Second, interval))
-				ok, err := c.repo.ExtendProcessingLock(callCtx, record.ID, record.RequestFingerprint, now.Add(lease), now.Add(ttl))
-				callCancel()
-				if err != nil {
-					RecordIdempotencyStoreUnavailable("", record.Scope, "renew_processing_lock_error")
-					continue
-				}
-				if !ok {
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/idempotency.go:475")
+		go func() {
+			defer migrationDetachedDone()
+
+			defer close(done)
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-renewCtx.Done():
 					return
+				case <-ticker.C:
+					now := time.Now()
+					callCtx, callCancel := context.WithTimeout(renewCtx, min(2*time.Second, interval))
+					ok, err := c.repo.ExtendProcessingLock(callCtx, record.ID, record.RequestFingerprint, now.Add(lease), now.Add(ttl))
+					callCancel()
+					if err != nil {
+						RecordIdempotencyStoreUnavailable("", record.Scope, "renew_processing_lock_error")
+						continue
+					}
+					if !ok {
+						return
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 	return func() {
 		cancel()
 		<-done

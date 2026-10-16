@@ -83,19 +83,20 @@ func (s *OpsService) GetAuthCacheInvalidationHealth(ctx context.Context) OpsAuth
 }
 
 type AuthCacheInvalidationWorker struct {
-	repo      AuthCacheInvalidationOutboxRepository
-	cache     APIKeyCache
-	local     *APIKeyService
-	workerID  string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	start     sync.Once
-	stop      sync.Once
-	running   atomic.Bool
-	processed atomic.Uint64
-	failures  atomic.Uint64
-	lastError atomic.Value
+	migrationWorkGate MigrationWorkGate
+	repo              AuthCacheInvalidationOutboxRepository
+	cache             APIKeyCache
+	local             *APIKeyService
+	workerID          string
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                sync.WaitGroup
+	start             sync.Once
+	stop              sync.Once
+	running           atomic.Bool
+	processed         atomic.Uint64
+	failures          atomic.Uint64
+	lastError         atomic.Value
 }
 
 func NewAuthCacheInvalidationWorker(repo AuthCacheInvalidationOutboxRepository, cache APIKeyCache, local ...*APIKeyService) *AuthCacheInvalidationWorker {
@@ -150,6 +151,11 @@ func (w *AuthCacheInvalidationWorker) run() {
 }
 
 func (w *AuthCacheInvalidationWorker) processBatch(ctx context.Context) error {
+	release, ok := w.migrationWorkGate.TryEnter()
+	if !ok {
+		return nil
+	}
+	defer release()
 	events, err := w.repo.Claim(ctx, w.workerID, authInvalidationBatchSize, authInvalidationLease)
 	if err != nil {
 		return fmt.Errorf("claim auth cache invalidations: %w", err)
@@ -172,6 +178,13 @@ func (w *AuthCacheInvalidationWorker) processBatch(ctx context.Context) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+func (w *AuthCacheInvalidationWorker) BeginMigrationQuiet(ctx context.Context) (func(), error) {
+	return w.migrationWorkGate.Pause(ctx)
+}
+func (w *AuthCacheInvalidationWorker) MigrationTaskStats() MigrationTaskStats {
+	return w.migrationWorkGate.Stats()
 }
 
 func (w *AuthCacheInvalidationWorker) processEvent(parent context.Context, event AuthCacheInvalidationEvent) {

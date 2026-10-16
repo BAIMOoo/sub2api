@@ -236,7 +236,12 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			return nil, fmt.Errorf("save live call mapping: %w", saveErr)
 		}
 		created.Account = account
-		go s.observeLiveCall(record)
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_live.go:239")
+			migrationDetachedFn := s.observeLiveCall
+			migrationDetachedArg0 := record
+			go func() { defer migrationDetachedDone(); migrationDetachedFn(migrationDetachedArg0) }()
+		}
 		return created, nil
 	}
 	if lastErr != nil {
@@ -515,7 +520,12 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 	upstream, err := s.dialLiveSideband(ctx, record)
 	if err != nil {
 		_, _ = store.ReleaseLiveController(context.Background(), record.CallHash, owner)
-		go s.observeLiveCall(record)
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_live.go:518")
+			migrationDetachedFn := s.observeLiveCall
+			migrationDetachedArg0 := record
+			go func() { defer migrationDetachedDone(); migrationDetachedFn(migrationDetachedArg0) }()
+		}
 		return err
 	}
 	defer func() { _ = upstream.Close() }()
@@ -524,39 +534,49 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 	proxyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 2)
-	go func() {
-		for {
-			messageType, payload, readErr := downstream.Read(proxyCtx)
-			if readErr != nil {
-				errCh <- readErr
-				return
-			}
-			if writeErr := upstream.WriteFrame(proxyCtx, messageType, payload); writeErr != nil {
-				errCh <- writeErr
-				return
-			}
-		}
-	}()
-	go func() {
-		for {
-			messageType, payload, readErr := upstream.ReadFrame(proxyCtx)
-			if readErr != nil {
-				errCh <- liveSidebandReadError(readErr)
-				return
-			}
-			if writeErr := downstream.Write(proxyCtx, messageType, payload); writeErr != nil {
-				errCh <- writeErr
-				return
-			}
-			if messageType == coderws.MessageText {
-				eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
-				if eventType == "session.closed" || eventType == "session.ended" {
-					errCh <- ErrLiveCallNotFound
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_live.go:527")
+		go func() {
+			defer migrationDetachedDone()
+
+			for {
+				messageType, payload, readErr := downstream.Read(proxyCtx)
+				if readErr != nil {
+					errCh <- readErr
+					return
+				}
+				if writeErr := upstream.WriteFrame(proxyCtx, messageType, payload); writeErr != nil {
+					errCh <- writeErr
 					return
 				}
 			}
-		}
-	}()
+		}()
+	}
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_live.go:540")
+		go func() {
+			defer migrationDetachedDone()
+
+			for {
+				messageType, payload, readErr := upstream.ReadFrame(proxyCtx)
+				if readErr != nil {
+					errCh <- liveSidebandReadError(readErr)
+					return
+				}
+				if writeErr := downstream.Write(proxyCtx, messageType, payload); writeErr != nil {
+					errCh <- writeErr
+					return
+				}
+				if messageType == coderws.MessageText {
+					eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+					if eventType == "session.closed" || eventType == "session.ended" {
+						errCh <- ErrLiveCallNotFound
+						return
+					}
+				}
+			}
+		}()
+	}
 
 	runErr := s.runLiveController(proxyCtx, record, upstream, errCh)
 	cancel()
@@ -565,7 +585,12 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 		s.finalizeLiveCall(record)
 		return runErr
 	}
-	go s.observeLiveCall(record)
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_live.go:568")
+		migrationDetachedFn := s.observeLiveCall
+		migrationDetachedArg0 := record
+		go func() { defer migrationDetachedDone(); migrationDetachedFn(migrationDetachedArg0) }()
+	}
 	return runErr
 }
 
@@ -684,25 +709,30 @@ func (s *OpenAIGatewayService) runLiveObserverConnection(record *LiveCallRecord,
 	defer cancel()
 	frameCh := make(chan []byte, 1)
 	errCh := make(chan error, 1)
-	go func() {
-		for {
-			messageType, payload, err := upstream.ReadFrame(ctx)
-			if err != nil {
-				select {
-				case errCh <- liveSidebandReadError(err):
-				case <-ctx.Done():
-				}
-				return
-			}
-			if messageType == coderws.MessageText {
-				select {
-				case frameCh <- payload:
-				case <-ctx.Done():
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_live.go:687")
+		go func() {
+			defer migrationDetachedDone()
+
+			for {
+				messageType, payload, err := upstream.ReadFrame(ctx)
+				if err != nil {
+					select {
+					case errCh <- liveSidebandReadError(err):
+					case <-ctx.Done():
+					}
 					return
 				}
+				if messageType == coderws.MessageText {
+					select {
+					case frameCh <- payload:
+					case <-ctx.Done():
+						return
+					}
+				}
 			}
-		}
-	}()
+		}()
+	}
 	refreshTicker := time.NewTicker(liveLeaseRefreshInterval)
 	defer refreshTicker.Stop()
 	controllerTicker := time.NewTicker(liveObserverPollInterval)

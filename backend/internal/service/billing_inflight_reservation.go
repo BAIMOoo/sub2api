@@ -143,28 +143,33 @@ func (r *InflightReservation) startRenewal(renewer InflightBalanceReservationRen
 	}
 	r.stopRenew = make(chan struct{})
 	r.renewDone = make(chan struct{})
-	go func() {
-		defer close(r.renewDone)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-r.stopRenew:
-				return
-			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
-				alive, err := renewer.RenewInflightBalance(ctx, r.userID, r.requestID, r.ttl)
-				cancel()
-				if err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation renew failed for user %d: %v", r.userID, err)
-					continue
-				}
-				if !alive {
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/billing_inflight_reservation.go:146")
+		go func() {
+			defer migrationDetachedDone()
+
+			defer close(r.renewDone)
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-r.stopRenew:
 					return
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(context.Background(), inflightReservationRenewTimeout)
+					alive, err := renewer.RenewInflightBalance(ctx, r.userID, r.requestID, r.ttl)
+					cancel()
+					if err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: inflight reservation renew failed for user %d: %v", r.userID, err)
+						continue
+					}
+					if !alive {
+						return
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 }
 
 type inflightReservationCtxKey struct{}

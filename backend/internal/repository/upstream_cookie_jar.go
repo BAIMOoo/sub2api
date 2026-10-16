@@ -139,23 +139,28 @@ func (j *upstreamCookieJar) seedMissingCfuvid(req *http.Request, host, proxyURL 
 	}
 	// 主请求返回后其 context 会被取消，播种必须脱离它，但仍保留其中的值（trace 等）。
 	baseCtx := context.WithoutCancel(req.Context())
-	go func() {
-		ctx, cancel := context.WithTimeout(baseCtx, upstreamCookieSeedTimeout)
-		defer cancel()
-		var resp *http.Response
-		var err error
-		if profile != nil {
-			resp, err = j.inner.DoWithTLS(seedReq.WithContext(ctx), proxyURL, accountID, accountConcurrency, profile)
-		} else {
-			resp, err = j.inner.Do(seedReq.WithContext(ctx), proxyURL, accountID, accountConcurrency)
-		}
-		if err != nil || resp == nil {
-			return
-		}
-		defer func() { _ = resp.Body.Close() }()
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		j.harvestSetCookies(ctx, host, accountID, resp)
-	}()
+	{
+		migrationDetachedDone := service.BeginMigrationDetachedTask("internal/repository/upstream_cookie_jar.go:142")
+		go func() {
+			defer migrationDetachedDone()
+
+			ctx, cancel := context.WithTimeout(baseCtx, upstreamCookieSeedTimeout)
+			defer cancel()
+			var resp *http.Response
+			var err error
+			if profile != nil {
+				resp, err = j.inner.DoWithTLS(seedReq.WithContext(ctx), proxyURL, accountID, accountConcurrency, profile)
+			} else {
+				resp, err = j.inner.Do(seedReq.WithContext(ctx), proxyURL, accountID, accountConcurrency)
+			}
+			if err != nil || resp == nil {
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+			j.harvestSetCookies(ctx, host, accountID, resp)
+		}()
+	}
 }
 
 func (j *upstreamCookieJar) claimSeedSlot(accountID int64) bool {

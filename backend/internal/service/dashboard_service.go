@@ -261,22 +261,27 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 		return
 	}
 
-	go func() {
-		defer atomic.StoreInt32(&s.refreshing, 0)
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/dashboard_service.go:264")
+		go func() {
+			defer migrationDetachedDone()
 
-		ctx, cancel := context.WithTimeout(context.Background(), s.refreshTimeout)
-		defer cancel()
+			defer atomic.StoreInt32(&s.refreshing, 0)
 
-		stats, err := s.fetchDashboardStats(ctx)
-		if err != nil {
-			logger.LegacyPrintf("service.dashboard", "[Dashboard] 仪表盘缓存异步刷新失败: %v", err)
-			return
-		}
-		s.applyAggregationStatus(ctx, stats)
-		cacheCtx, cancel := s.cacheOperationContext()
-		defer cancel()
-		s.saveDashboardStatsCache(cacheCtx, stats)
-	}()
+			ctx, cancel := context.WithTimeout(context.Background(), s.refreshTimeout)
+			defer cancel()
+
+			stats, err := s.fetchDashboardStats(ctx)
+			if err != nil {
+				logger.LegacyPrintf("service.dashboard", "[Dashboard] 仪表盘缓存异步刷新失败: %v", err)
+				return
+			}
+			s.applyAggregationStatus(ctx, stats)
+			cacheCtx, cancel := s.cacheOperationContext()
+			defer cancel()
+			s.saveDashboardStatsCache(cacheCtx, stats)
+		}()
+	}
 }
 
 func (s *DashboardService) fetchDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {

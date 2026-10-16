@@ -471,18 +471,23 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 	// 异步设置 Antigravity 隐私，避免大量导入时阻塞请求
 	if len(privacyAccounts) > 0 {
 		adminSvc := h.adminService
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("import_antigravity_privacy_panic", "recover", r)
+		{
+			migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/account_data.go:474")
+			go func() {
+				defer migrationDetachedDone()
+
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("import_antigravity_privacy_panic", "recover", r)
+					}
+				}()
+				bgCtx := context.Background()
+				for _, acc := range privacyAccounts {
+					adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
 				}
+				slog.Info("import_antigravity_privacy_done", "count", len(privacyAccounts))
 			}()
-			bgCtx := context.Background()
-			for _, acc := range privacyAccounts {
-				adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
-			}
-			slog.Info("import_antigravity_privacy_done", "count", len(privacyAccounts))
-		}()
+		}
 	}
 
 	return result, nil

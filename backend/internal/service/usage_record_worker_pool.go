@@ -113,6 +113,7 @@ type UsageRecordWorkerPool struct {
 	autoScaleCancel       context.CancelFunc
 	lifecycleWg           sync.WaitGroup
 	stopOnce              sync.Once
+	migrationWork         migrationWorkCounter
 }
 
 // NewUsageRecordWorkerPool 从配置构建使用量记录池。
@@ -162,14 +163,19 @@ func (p *UsageRecordWorkerPool) Submit(task UsageRecordTask) UsageRecordSubmitMo
 		return UsageRecordSubmitModeDroppedStopped
 	}
 
-	_, ok := p.pool.TrySubmit(func() {
+	ticket := p.migrationWork.accept()
+	run := func() {
+		ticket.start()
+		defer ticket.finish(false)
 		p.execute(task)
-	})
+	}
+	_, ok := p.pool.TrySubmit(run)
 	if ok {
 		return UsageRecordSubmitModeEnqueued
 	}
 
 	if p.pool.Stopped() {
+		ticket.finish(false)
 		p.droppedPoolStopped.Add(1)
 		p.logDrop("stopped")
 		return UsageRecordSubmitModeDroppedStopped
@@ -178,16 +184,17 @@ func (p *UsageRecordWorkerPool) Submit(task UsageRecordTask) UsageRecordSubmitMo
 	switch p.overflowPolicy {
 	case config.UsageRecordOverflowPolicySync:
 		p.syncFallback.Add(1)
-		p.execute(task)
+		run()
 		return UsageRecordSubmitModeSync
 	case config.UsageRecordOverflowPolicySample:
 		if p.shouldSyncFallback() {
 			p.syncFallback.Add(1)
-			p.execute(task)
+			run()
 			return UsageRecordSubmitModeSync
 		}
 	}
 
+	ticket.finish(false)
 	p.droppedQueueFull.Add(1)
 	p.logDrop("full")
 	return UsageRecordSubmitModeDropped
@@ -224,7 +231,26 @@ func (p *UsageRecordWorkerPool) Stop() {
 		}
 		p.lifecycleWg.Wait()
 		p.pool.StopAndWait()
+		_ = p.WaitForIdle(context.Background())
 	})
+}
+
+// WaitForIdle includes inline overflow execution, unlike pond's queue/worker
+// counts. It does not stop admission; ingress/producers must remain fenced.
+func (p *UsageRecordWorkerPool) WaitForIdle(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	return p.migrationWork.wait(ctx)
+}
+
+func (p *UsageRecordWorkerPool) MigrationTaskStats() MigrationTaskStats {
+	if p == nil {
+		return MigrationTaskStats{}
+	}
+	stats := p.migrationWork.snapshot()
+	stats.Dropped = p.droppedQueueFull.Load() + p.droppedPoolStopped.Load()
+	return stats
 }
 
 func (p *UsageRecordWorkerPool) startAutoScaler() {

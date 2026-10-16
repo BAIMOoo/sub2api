@@ -17,11 +17,12 @@ const (
 
 // EmailTask 邮件发送任务
 type EmailTask struct {
-	Email    string
-	SiteName string
-	TaskType string // "verify_code" or "password_reset"
-	ResetURL string // Only used for password_reset task type
-	Locale   string // Optional Accept-Language locale hint
+	migrationDone func()
+	Email         string
+	SiteName      string
+	TaskType      string // "verify_code" or "password_reset"
+	ResetURL      string // Only used for password_reset task type
+	Locale        string // Optional Accept-Language locale hint
 }
 
 // EmailQueueService 异步邮件队列服务
@@ -78,6 +79,9 @@ func (s *EmailQueueService) worker(id int) {
 
 // processTask 处理任务
 func (s *EmailQueueService) processTask(workerID int, task EmailTask) {
+	if task.migrationDone != nil {
+		defer task.migrationDone()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -108,11 +112,13 @@ func (s *EmailQueueService) EnqueueVerifyCode(email, siteName string, locale ...
 		Locale:   firstEmailLocale(locale),
 	}
 
+	task.migrationDone = BeginMigrationDetachedTask("email.verify_code")
 	select {
 	case s.taskChan <- task:
 		logger.LegacyPrintf("service.email_queue", "[EmailQueue] Enqueued verify code task for %s", email)
 		return nil
 	default:
+		task.migrationDone()
 		return fmt.Errorf("email queue is full")
 	}
 }
@@ -127,11 +133,13 @@ func (s *EmailQueueService) EnqueuePasswordReset(email, siteName, resetURL strin
 		Locale:   firstEmailLocale(locale),
 	}
 
+	task.migrationDone = BeginMigrationDetachedTask("email.password_reset")
 	select {
 	case s.taskChan <- task:
 		logger.LegacyPrintf("service.email_queue", "[EmailQueue] Enqueued password reset task for %s", email)
 		return nil
 	default:
+		task.migrationDone()
 		return fmt.Errorf("email queue is full")
 	}
 }

@@ -2,9 +2,13 @@ package repository
 
 import (
 	"crypto/tls"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -21,7 +25,37 @@ import (
 // 2. MinIdleConns: 保持最小空闲连接，减少冷启动延迟（默认 10）
 // 3. DialTimeout/ReadTimeout/WriteTimeout: 精确控制各阶段超时
 func InitRedis(cfg *config.Config) *redis.Client {
-	client := redis.NewClient(buildRedisOptions(cfg))
+	options := buildRedisOptions(cfg)
+	var client *redis.Client
+	raw := strings.TrimSpace(os.Getenv("MIGRATION_REDIS_ENABLED"))
+	enabled := false
+	if raw != "" {
+		var err error
+		enabled, err = strconv.ParseBool(raw)
+		if err != nil {
+			panic("invalid MIGRATION_REDIS_ENABLED: expected a boolean")
+		}
+	}
+	if enabled {
+		var err error
+		initial, initialErr := service.MigrationInitialEndpoints()
+		if initialErr != nil {
+			panic(initialErr)
+		}
+		address := options.Addr
+		if initial.Redis == "target" {
+			address = strings.TrimSpace(os.Getenv("MIGRATION_REDIS_TARGET_ADDR"))
+			if err := validateMigrationRedisAddress(address); err != nil || address == options.Addr {
+				panic("invalid migration Redis startup target")
+			}
+		}
+		client, _, err = newMigrationRedisClient(options, address)
+		if err != nil {
+			panic("migration Redis initialization failed: " + err.Error())
+		}
+	} else {
+		client = redis.NewClient(options)
+	}
 	if cfg.Server.EnableServerTiming {
 		client.AddHook(serverTimingRedisHook{})
 	}

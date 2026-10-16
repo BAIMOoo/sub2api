@@ -555,6 +555,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
+	migrationUsage, migrationOK := prepareMigrationHTTPUsage(c, MigrationCompletionResponses, reqStream, imageIntent)
+	if !migrationOK {
+		return
+	}
+	defer migrationUsage.Close()
 	var imageReleaseFunc func()
 	if imageIntent {
 		var imageAcquired bool
@@ -827,7 +832,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+				if err := migrationRecordUsageResult(ctx, h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
 					User:               apiKey.User,
@@ -845,7 +850,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
 					NativeCompactionV2: nativeV2,
-				}); err != nil {
+				})); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.responses"),
 						zap.Int64("user_id", subject.UserID),
@@ -1233,6 +1238,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	migrationUsage, migrationOK := prepareMigrationHTTPUsage(c, MigrationCompletionMessages, reqStream, false)
+	if !migrationOK {
+		return
+	}
+	defer migrationUsage.Close()
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
@@ -1421,7 +1431,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+				if err := migrationRecordUsageResult(ctx, h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
 					User:               apiKey.User,
@@ -1438,7 +1448,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
-				}); err != nil {
+				})); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.messages"),
 						zap.Int64("user_id", subject.UserID),
@@ -3334,6 +3344,9 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 	if task == nil {
 		return
 	}
+	if runMigrationHTTPUsageTask(parent, task) {
+		return
+	}
 	task, abandon := wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
 		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
@@ -3374,6 +3387,9 @@ func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Contex
 
 func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
 	if task == nil {
+		return
+	}
+	if runMigrationHTTPUsageTask(parent, task) {
 		return
 	}
 	task, _ = wrapUsageRecordTaskContext(parent, task)
@@ -4322,53 +4338,58 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			cancel()
 		}
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if cmSvc != nil {
-			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
-				LogOnly:         cyberLogOnly,
-				RequestID:       requestID,
-				UserID:          userID,
-				UserEmail:       userEmail,
-				APIKeyID:        apiKeyID,
-				APIKeyName:      apiKeyName,
-				GroupID:         groupID,
-				GroupName:       groupName,
-				Endpoint:        inboundEndpoint,
-				Model:           model,
-				UpstreamMessage: mark.Message,
-				UpstreamBody:    mark.Body,
-				UpstreamStatus:  mark.UpstreamStatus,
-				UpstreamInTok:   mark.UpstreamInTok,
-				UpstreamOutTok:  mark.UpstreamOutTok,
-			})
-		}
-		if forwardErrored && gwSvc != nil {
-			gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
-				APIKey:             apiKey,
-				Account:            account,
-				Subscription:       subscription,
-				RequestID:          requestID,
-				Model:              model,
-				Stream:             stream,
-				InputTokens:        mark.UpstreamInTok,
-				OutputTokens:       mark.UpstreamOutTok,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIPStr,
-				SessionID:          sessionID,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      apiKeySvc,
-				NativeCompactionV2: nativeCompactionV2,
-				ChannelUsageFields: channelFields,
-			})
-		}
-		if opsSvc != nil {
-			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
-		}
-	}()
+	{
+		migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/openai_gateway_handler.go:4341")
+		go func() {
+			defer migrationDetachedDone()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if cmSvc != nil {
+				cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
+					LogOnly:         cyberLogOnly,
+					RequestID:       requestID,
+					UserID:          userID,
+					UserEmail:       userEmail,
+					APIKeyID:        apiKeyID,
+					APIKeyName:      apiKeyName,
+					GroupID:         groupID,
+					GroupName:       groupName,
+					Endpoint:        inboundEndpoint,
+					Model:           model,
+					UpstreamMessage: mark.Message,
+					UpstreamBody:    mark.Body,
+					UpstreamStatus:  mark.UpstreamStatus,
+					UpstreamInTok:   mark.UpstreamInTok,
+					UpstreamOutTok:  mark.UpstreamOutTok,
+				})
+			}
+			if forwardErrored && gwSvc != nil {
+				gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
+					APIKey:             apiKey,
+					Account:            account,
+					Subscription:       subscription,
+					RequestID:          requestID,
+					Model:              model,
+					Stream:             stream,
+					InputTokens:        mark.UpstreamInTok,
+					OutputTokens:       mark.UpstreamOutTok,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIPStr,
+					SessionID:          sessionID,
+					RequestPayloadHash: requestPayloadHash,
+					APIKeyService:      apiKeySvc,
+					NativeCompactionV2: nativeCompactionV2,
+					ChannelUsageFields: channelFields,
+				})
+			}
+			if opsSvc != nil {
+				enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
+			}
+		}()
+	}
 }
 
 // clearCyberPolicyTurnState resets the cyber mark and recorded guard after a

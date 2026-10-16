@@ -356,6 +356,11 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
+	if capture := migrationUsageCaptureFromContext(ctx); capture != nil {
+		// Terminal output is still held by the opt-in caller. Capture bypasses
+		// every legacy DB/cache/deferred side effect, including nil-repo fallback.
+		return false, capture.captureBilling(cmd, usageLog, p, deps)
+	}
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
 		if p.SimpleModeKeyRateLimitOnly {
 			return false, ErrSimpleModeKeyRateLimitBillingUnavailable
@@ -436,21 +441,26 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 				// 降级路径:flusher 未启用时保留原有异步直写 DB
 				dbCtx, dbCancel := detachUpstreamContext(ctx)
 				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							logger.LegacyPrintf("service.gateway", "ALERT: panic in user platform quota incr goroutine user=%d platform=%s: %v", userID, platform, r)
+				{
+					migrationDetachedDone := BeginMigrationDetachedTask("internal/service/gateway_usage_billing.go:444")
+					go func() {
+						defer migrationDetachedDone()
+
+						defer func() {
+							if r := recover(); r != nil {
+								logger.LegacyPrintf("service.gateway", "ALERT: panic in user platform quota incr goroutine user=%d platform=%s: %v", userID, platform, r)
+							}
+						}()
+						defer dbCancel()
+						if err := deps.userPlatformQuotaRepo.IncrementUsageWithReset(dbCtx, userID, platform, cost, time.Now().UTC()); err != nil {
+							// 失败计数器:暴露给 GatewayUserPlatformQuotaIncrStats(),由 ops 面板做斜率告警。
+							userPlatformQuotaDBIncrErrorTotal.Add(1)
+							// ALERT 级别:DB 持久化失败意味着 Redis cache 失效后该笔 cost 永久丢失,
+							// 用户配额视图与实际消费会偏差,oncall 需要据此对账或人工补录。
+							logger.LegacyPrintf("service.gateway", "ALERT: incr user platform quota DB failed user=%d platform=%s cost=%f: %v", userID, platform, cost, err)
 						}
 					}()
-					defer dbCancel()
-					if err := deps.userPlatformQuotaRepo.IncrementUsageWithReset(dbCtx, userID, platform, cost, time.Now().UTC()); err != nil {
-						// 失败计数器:暴露给 GatewayUserPlatformQuotaIncrStats(),由 ops 面板做斜率告警。
-						userPlatformQuotaDBIncrErrorTotal.Add(1)
-						// ALERT 级别:DB 持久化失败意味着 Redis cache 失效后该笔 cost 永久丢失,
-						// 用户配额视图与实际消费会偏差,oncall 需要据此对账或人工补录。
-						logger.LegacyPrintf("service.gateway", "ALERT: incr user platform quota DB failed user=%d platform=%s cost=%f: %v", userID, platform, cost, err)
-					}
-				}()
+				}
 			}
 			// flusher_enabled=true:不直写 DB,flusher 异步批量刷
 		}
@@ -458,8 +468,28 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	// Notification checks run async — all parameters are already captured,
 	// no dependency on the request context or upstream connection.
-	go notifyBalanceLow(p, deps, result)
-	go notifyAccountQuota(p, deps, result)
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/gateway_usage_billing.go:466")
+		migrationDetachedFn := notifyBalanceLow
+		migrationDetachedArg0 := p
+		migrationDetachedArg1 := deps
+		migrationDetachedArg2 := result
+		go func() {
+			defer migrationDetachedDone()
+			migrationDetachedFn(migrationDetachedArg0, migrationDetachedArg1, migrationDetachedArg2)
+		}()
+	}
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/gateway_usage_billing.go:467")
+		migrationDetachedFn := notifyAccountQuota
+		migrationDetachedArg0 := p
+		migrationDetachedArg1 := deps
+		migrationDetachedArg2 := result
+		go func() {
+			defer migrationDetachedDone()
+			migrationDetachedFn(migrationDetachedArg0, migrationDetachedArg1, migrationDetachedArg2)
+		}()
+	}
 }
 
 func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -613,6 +643,12 @@ func (s *GatewayService) billingDeps() *billingDeps {
 }
 
 func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usageLog *UsageLog, logKey string) {
+	if capture := migrationUsageCaptureFromContext(ctx); capture != nil {
+		// The replay transaction owns the log together with monetary effects.
+		// Usage-only paths fail CheckPersisted instead of silently writing DB.
+		capture.observeUsageLog(usageLog)
+		return
+	}
 	if repo == nil || usageLog == nil {
 		return
 	}
@@ -978,6 +1014,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 			}
 			tokenCost.TotalCost += searchCost.TotalCost
 			tokenCost.ActualCost += searchCost.ActualCost
+			migrationObserveSearchSurcharge(ctx, tokenCost, searchCost, result.SearchCount, price, multiplier)
 		}
 	}
 	return tokenCost

@@ -390,7 +390,7 @@ func ProvideOpenCodeGoUsageService(
 	svc := NewOpenCodeGoUsageService(accountRepo, httpUpstream, settingService)
 	svc.lockCache = lockCache
 	svc.db = db
-	svc.Start()
+	startMigrationBackgroundWorker("OpenCodeGoUsage", svc.Start)
 	return svc
 }
 

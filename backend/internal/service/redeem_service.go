@@ -573,11 +573,16 @@ func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64
 		if s.billingCacheService == nil {
 			return
 		}
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
-		}()
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/redeem_service.go:576")
+			go func() {
+				defer migrationDetachedDone()
+
+				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
+			}()
+		}
 	case RedeemTypeConcurrency:
 		if s.authCacheInvalidator != nil {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
@@ -594,11 +599,16 @@ func (s *RedeemService) invalidateRedeemCaches(ctx context.Context, userID int64
 		}
 		if redeemCode.GroupID != nil {
 			groupID := *redeemCode.GroupID
-			go func() {
-				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
-			}()
+			{
+				migrationDetachedDone := BeginMigrationDetachedTask("internal/service/redeem_service.go:597")
+				go func() {
+					defer migrationDetachedDone()
+
+					cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_ = s.billingCacheService.InvalidateSubscription(cacheCtx, userID, groupID)
+				}()
+			}
 		}
 	}
 }

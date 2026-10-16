@@ -172,10 +172,15 @@ func (c *opsWSQPSCache) start(opsService *service.OpsService) {
 		c.running = true
 		c.mu.Unlock()
 
-		go func() {
-			defer close(done)
-			c.refreshLoop(ctx)
-		}()
+		{
+			migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/ops_ws_handler.go:175")
+			go func() {
+				defer migrationDetachedDone()
+
+				defer close(done)
+				c.refreshLoop(ctx)
+			}()
+		}
 		return
 	}
 }
@@ -437,37 +442,42 @@ func handleQPSWebSocket(parentCtx context.Context, conn *websocket.Conn) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer cancel()
+	{
+		migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/ops_ws_handler.go:440")
+		go func() {
+			defer migrationDetachedDone()
 
-		conn.SetReadLimit(qpsWSMaxReadBytes)
-		if err := conn.SetReadDeadline(time.Now().Add(qpsWSPongWait)); err != nil {
-			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] set read deadline failed: %v", err)
-			return
-		}
-		conn.SetPongHandler(func(string) error {
-			return conn.SetReadDeadline(time.Now().Add(qpsWSPongWait))
-		})
-		conn.SetCloseHandler(func(code int, text string) error {
-			select {
-			case closeFrameCh <- websocket.FormatCloseMessage(code, text):
-			default:
-			}
-			cancel()
-			return nil
-		})
+			defer wg.Done()
+			defer cancel()
 
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
-					logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] read failed: %v", err)
-				}
+			conn.SetReadLimit(qpsWSMaxReadBytes)
+			if err := conn.SetReadDeadline(time.Now().Add(qpsWSPongWait)); err != nil {
+				logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] set read deadline failed: %v", err)
 				return
 			}
-		}
-	}()
+			conn.SetPongHandler(func(string) error {
+				return conn.SetReadDeadline(time.Now().Add(qpsWSPongWait))
+			})
+			conn.SetCloseHandler(func(code int, text string) error {
+				select {
+				case closeFrameCh <- websocket.FormatCloseMessage(code, text):
+				default:
+				}
+				cancel()
+				return nil
+			})
+
+			for {
+				_, _, err := conn.ReadMessage()
+				if err != nil {
+					if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
+						logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] read failed: %v", err)
+					}
+					return
+				}
+			}
+		}()
+	}
 
 	// Push QPS data every 2 seconds (values are globally cached and refreshed at most once per qpsWSRefreshInterval).
 	pushTicker := time.NewTicker(qpsWSPushInterval)

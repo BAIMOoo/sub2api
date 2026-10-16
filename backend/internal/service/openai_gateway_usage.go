@@ -321,6 +321,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		// usage row instead of dropping it on the Standard re-evaluation.
 		if standardErr == nil && cost != nil && standardCost != nil {
 			cost.ActualCost = standardCost.ActualCost
+			migrationObserveStandardCharge(ctx, cost, standardCost)
 		}
 	}
 
@@ -636,8 +637,10 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	// Search surcharge is additive. Never let a zero/default search cost mask a
 	// real token-pricing failure for requests that attempted token billing.
 	searchCost := (*CostBreakdown)(nil)
+	var searchPrice *float64
 	if result != nil && result.SearchCount > 0 {
 		price := groupSearchPricePer1kFromAPIKey(apiKey)
+		searchPrice = price
 		if price != nil && *price == 0 {
 			logger.L().Info("openai_usage.search_price_per_1k_explicit_free",
 				zap.Int("search_count", result.SearchCount),
@@ -675,6 +678,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	// Additive: tokens + search surcharge.
 	tokenCost.TotalCost += searchCost.TotalCost
 	tokenCost.ActualCost += searchCost.ActualCost
+	migrationObserveSearchSurcharge(ctx, tokenCost, searchCost, result.SearchCount, searchPrice, webSearchMultiplier)
 	return tokenCost, nil
 }
 
@@ -729,11 +733,13 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageTokenCost(
 			LongContextBillingEnabled: longContextBillingGate,
 		})
 	}
-	return s.billingService.calculateCostWithServiceTierPolicy(
+	return s.billingService.calculateCostInternalWithPolicyObserved(
+		ctx,
 		billingModel,
 		tokens,
 		multiplier,
 		serviceTier,
+		nil,
 		longContextBillingGate == nil || *longContextBillingGate,
 	)
 }
@@ -1139,13 +1145,18 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 		return
 	}
 
-	go func() {
-		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err == nil {
-			notifyOpenAIAutoReset(accountID)
-		}
-	}()
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_gateway_usage.go:1148")
+		go func() {
+			defer migrationDetachedDone()
+
+			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err == nil {
+				notifyOpenAIAutoReset(accountID)
+			}
+		}()
+	}
 }
 
 func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.Context, accountID int64, headers http.Header) {

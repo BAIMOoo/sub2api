@@ -22,8 +22,9 @@ type grokImportProber interface {
 }
 
 type grokImportProbeTask struct {
-	prober    grokImportProber
-	accountID int64
+	migrationDone func()
+	prober        grokImportProber
+	accountID     int64
 }
 
 type grokImportProbeScheduler struct {
@@ -79,7 +80,7 @@ func (s *grokImportProbeScheduler) schedule(prober grokImportProber, account *se
 		slog.Debug("grok_import_active_probe_dropped", "account_id", account.ID, "reason", "queue_full")
 		return
 	}
-	s.queue = append(s.queue, grokImportProbeTask{prober: prober, accountID: account.ID})
+	s.queue = append(s.queue, grokImportProbeTask{prober: prober, accountID: account.ID, migrationDone: service.BeginMigrationDetachedTask("admin.grok_import_probe_queue")})
 	s.pending[account.ID] = struct{}{}
 	if s.workers < s.concurrency {
 		s.workers++
@@ -97,7 +98,12 @@ func (s *grokImportProbeScheduler) worker() {
 		if !ok {
 			return
 		}
-		s.run(task.prober, task.accountID)
+		func() {
+			if task.migrationDone != nil {
+				defer task.migrationDone()
+			}
+			s.run(task.prober, task.accountID)
+		}()
 		s.finish(task.accountID)
 	}
 }

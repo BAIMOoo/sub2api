@@ -548,13 +548,18 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	s.tryAccrueAffiliateRebateForAdminRecharge(ctx, userID, operation, balance)
 
 	if s.billingCacheService != nil {
-		go func() {
-			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, userID); err != nil {
-				logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d err=%v", userID, err)
-			}
-		}()
+		{
+			migrationDetachedDone := BeginMigrationDetachedTask("internal/service/admin_user.go:551")
+			go func() {
+				defer migrationDetachedDone()
+
+				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, userID); err != nil {
+					logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d err=%v", userID, err)
+				}
+			}()
+		}
 	}
 
 	if balanceDiff != 0 {

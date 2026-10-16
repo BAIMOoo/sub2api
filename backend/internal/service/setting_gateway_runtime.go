@@ -1098,7 +1098,7 @@ func (s *SettingService) GetOpenAIQuotaAutoPauseSettings(ctx context.Context) Op
 	// Stale or unset: trigger background refresh without blocking this request.
 	// singleflight.DoChan dedupes concurrent refreshes; we deliberately ignore the
 	// returned channel — the result is observable via the atomic cache.
-	s.openAIQuotaAutoPauseSettingsSF.DoChan(openAIQuotaAutoPauseSettingsRefreshKey, func() (any, error) {
+	MigrationSingleflightDoChan("settings.quota_auto_pause_singleflight", &s.openAIQuotaAutoPauseSettingsSF, openAIQuotaAutoPauseSettingsRefreshKey, func() (any, error) {
 		s.refreshOpenAIQuotaAutoPauseSettings(context.Background())
 		return nil, nil
 	})

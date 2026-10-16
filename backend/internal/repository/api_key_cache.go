@@ -116,6 +116,16 @@ func (c *apiKeyCache) PublishAuthCacheInvalidation(ctx context.Context, cacheKey
 
 // SubscribeAuthCacheInvalidation subscribes to cache invalidation messages
 func (c *apiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error {
+	if handled, done, err := service.StartMigrationRedisSubscription(ctx, c.rdb, service.MigrationRedisSubscription{
+		Name: "auth", Channel: authCacheInvalidateChannel,
+		Handle: func(_ context.Context, payload string) { handler(payload) },
+		Ready:  func() { service.NotifyAuthCacheSubscriptionReady(ctx) },
+	}); handled {
+		if err != nil {
+			return err
+		}
+		return <-done
+	}
 	pubsub := c.rdb.Subscribe(ctx, authCacheInvalidateChannel)
 
 	// Verify subscription is working

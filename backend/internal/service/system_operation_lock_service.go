@@ -132,7 +132,12 @@ func (s *SystemOperationLockService) Acquire(ctx context.Context, operationID st
 		operationID: operationID,
 		stopCh:      make(chan struct{}),
 	}
-	go s.renewLoop(lock)
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/system_operation_lock_service.go:135")
+		migrationDetachedFn := s.renewLoop
+		migrationDetachedArg0 := lock
+		go func() { defer migrationDetachedDone(); migrationDetachedFn(migrationDetachedArg0) }()
+	}
 
 	return lock, nil
 }

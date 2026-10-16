@@ -32,20 +32,23 @@ type AuditLogService struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	droppedCount uint64
-	writeFailed  uint64
-	writtenCount uint64
+	droppedCount    uint64
+	writeFailed     uint64
+	writtenCount    uint64
+	migrationWriter migrationBufferedWriter
 }
 
 func NewAuditLogService(repo AuditLogRepository, settingService *SettingService) *AuditLogService {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &AuditLogService{
+	s := &AuditLogService{
 		repo:           repo,
 		settingService: settingService,
 		queue:          make(chan *AuditLog, auditLogQueueCapacity),
 		ctx:            ctx,
 		cancel:         cancel,
 	}
+	s.migrationWriter.init()
+	return s
 }
 
 // Start 启动异步写入与保留期清理协程。
@@ -53,9 +56,12 @@ func (s *AuditLogService) Start() {
 	if s == nil || s.repo == nil {
 		return
 	}
-	s.wg.Add(2)
+	s.wg.Add(1)
 	go s.runWriter()
-	go s.runRetentionLoop()
+	startMigrationBackgroundWorker("AuditLogRetention", func() {
+		s.wg.Add(1)
+		go s.runRetentionLoop()
+	})
 }
 
 // Stop 停止服务并尽量落盘队列中剩余记录。
@@ -80,11 +86,34 @@ func (s *AuditLogService) Record(entry *AuditLog) {
 		return
 	default:
 	}
-	select {
-	case s.queue <- entry:
-	default:
+	if !s.migrationWriter.enqueue(cap(s.queue), func() {
+		s.migrationWriter.accept()
+		select {
+		case s.queue <- entry:
+		default:
+			s.migrationWriter.discard(1)
+			atomic.AddUint64(&s.droppedCount, 1)
+		}
+	}) {
 		atomic.AddUint64(&s.droppedCount, 1)
 	}
+}
+
+func (s *AuditLogService) MigrationTaskStats() MigrationTaskStats {
+	if s == nil {
+		return MigrationTaskStats{}
+	}
+	stats := s.migrationWriter.snapshot()
+	stats.Dropped = atomic.LoadUint64(&s.droppedCount)
+	stats.Deferred = s.migrationWriter.heldCount()
+	return stats
+}
+
+func (s *AuditLogService) PauseAndFlush(ctx context.Context) (func(), error) {
+	if s == nil || s.repo == nil {
+		return nil, fmt.Errorf("audit writer unavailable")
+	}
+	return s.migrationWriter.pauseAndFlush(ctx, s.ctx.Done())
 }
 
 // List 分页查询审计日志。
@@ -134,13 +163,15 @@ func (s *AuditLogService) runWriter() {
 	defer ticker.Stop()
 
 	batch := make([]*AuditLog, 0, auditLogBatchSize)
-	flush := func() {
+	flush := func(baseCtx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
+		s.migrationWriter.start()
 		inserted, err := s.repo.BatchInsert(ctx, batch)
 		cancel()
+		s.migrationWriter.finish(uint64(len(batch)), err)
 		if err != nil {
 			atomic.AddUint64(&s.writeFailed, uint64(len(batch)))
 			_, _ = fmt.Fprintf(os.Stderr, "time=%s level=WARN msg=\"audit log flush failed\" err=%v batch=%d\n",
@@ -153,6 +184,36 @@ func (s *AuditLogService) runWriter() {
 
 	for {
 		select {
+		case request := <-s.migrationWriter.requests:
+			for {
+				if request.ctx.Err() != nil {
+					goto drained
+				}
+				select {
+				case item := <-s.queue:
+					if item != nil {
+						batch = append(batch, item)
+					}
+					if len(batch) >= auditLogBatchSize {
+						flush(request.ctx)
+					}
+				default:
+					flush(request.ctx)
+					goto drained
+				}
+			}
+		drained:
+			err := request.ctx.Err()
+			if err == nil {
+				err = s.migrationWriter.failure()
+			}
+			request.done <- err
+			if err == nil {
+				select {
+				case <-request.release:
+				case <-s.ctx.Done():
+				}
+			}
 		case <-s.ctx.Done():
 			// 停机前排空队列。
 			for {
@@ -163,10 +224,10 @@ func (s *AuditLogService) runWriter() {
 					}
 					batch = append(batch, item)
 					if len(batch) >= auditLogBatchSize {
-						flush()
+						flush(context.Background())
 					}
 				default:
-					flush()
+					flush(context.Background())
 					return
 				}
 			}
@@ -176,10 +237,10 @@ func (s *AuditLogService) runWriter() {
 			}
 			batch = append(batch, item)
 			if len(batch) >= auditLogBatchSize {
-				flush()
+				flush(context.Background())
 			}
 		case <-ticker.C:
-			flush()
+			flush(context.Background())
 		}
 	}
 }

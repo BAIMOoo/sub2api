@@ -59,6 +59,7 @@ type PluginManager struct {
 	started            bool
 	reconcileCancel    context.CancelFunc
 	reconcileDone      chan struct{}
+	migrationWorkGate  MigrationWorkGate
 	route              atomic.Pointer[pluginRoute]
 }
 
@@ -265,6 +266,11 @@ func (m *PluginManager) reconcileLoop(ctx context.Context, done chan struct{}) {
 
 // reconcileOnce 以数据库中的绑定为权威状态，让每个实例独立恢复并启动同一插件。
 func (m *PluginManager) reconcileOnce(ctx context.Context) error {
+	release, admitted := m.migrationWorkGate.TryEnter()
+	if !admitted {
+		return nil
+	}
+	defer release()
 	m.operationMu.Lock()
 	defer m.operationMu.Unlock()
 

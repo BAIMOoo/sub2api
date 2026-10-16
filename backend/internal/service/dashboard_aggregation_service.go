@@ -141,7 +141,9 @@ func (s *DashboardAggregationService) TriggerBackfill(start, end time.Time) erro
 		}
 	}
 
+	done := BeginMigrationDetachedTask("DashboardAggregation.TriggerBackfill")
 	go func() {
+		defer done()
 		ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)
 		defer cancel()
 		if err := s.backfillRange(ctx, start, end); err != nil {
@@ -166,7 +168,9 @@ func (s *DashboardAggregationService) TriggerRecomputeRange(start, end time.Time
 		return errors.New("重新计算时间范围无效")
 	}
 
+	done := BeginMigrationDetachedTask("DashboardAggregation.TriggerRecomputeRange")
 	go func() {
+		defer done()
 		const maxRetries = 3
 		for i := 0; i < maxRetries; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)

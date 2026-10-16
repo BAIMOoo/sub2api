@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"io"
 	"net"
 	"net/http"
@@ -23,13 +24,14 @@ type PromptService struct {
 	metrics   *AtomicMetrics
 	clock     Clock
 
-	lifecycleMu  sync.Mutex
-	cancel       context.CancelFunc
-	background   context.Context
-	enqueueWG    sync.WaitGroup
-	enqueueSlots chan struct{}
-	probeMu      sync.RWMutex
-	probes       map[string]ProbeResult
+	lifecycleMu          sync.Mutex
+	cancel               context.CancelFunc
+	background           context.Context
+	enqueueWG            sync.WaitGroup
+	enqueueSlots         chan struct{}
+	probeMu              sync.RWMutex
+	probes               map[string]ProbeResult
+	migrationEnqueueGate service.MigrationWorkGate
 }
 
 func NewPromptService(
@@ -111,9 +113,14 @@ func (s *PromptService) Enqueue(_ context.Context, req Request) error {
 	if s == nil || s.enqueuer == nil || s.EffectiveMode() != ModeAsync {
 		return nil
 	}
+	release, admitted := s.migrationEnqueueGate.TryEnter()
+	if !admitted {
+		return errors.New("prompt audit enqueue admission is paused for migration")
+	}
 	select {
 	case s.enqueueSlots <- struct{}{}:
 	default:
+		release()
 		if s.metrics != nil {
 			s.metrics.IncDropped()
 		}
@@ -124,12 +131,14 @@ func (s *PromptService) Enqueue(_ context.Context, req Request) error {
 	background := s.background
 	s.lifecycleMu.Unlock()
 	if background == nil {
+		release()
 		<-s.enqueueSlots
 		return errors.New("prompt audit service not started")
 	}
 	requestCopy := req.Clone()
 	s.enqueueWG.Add(1)
 	go func() {
+		defer release()
 		defer s.enqueueWG.Done()
 		defer func() { <-s.enqueueSlots }()
 		ctx, cancel := context.WithTimeout(background, 2*time.Second)

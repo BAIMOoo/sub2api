@@ -60,6 +60,9 @@ type UserPlatformQuotaUsageFlusher struct {
 	flushTimeout time.Duration
 	metrics      *FlusherMetrics
 	stopped      atomic.Bool
+	// Disabling the migration replica must also prevent Stop's final drain
+	// from consuming dirty keys owned by the authoritative instance.
+	migrationDisabled atomic.Bool
 }
 
 // NewUserPlatformQuotaUsageFlusher 创建 UserPlatformQuotaUsageFlusher。
@@ -249,7 +252,7 @@ func (s *UserPlatformQuotaUsageFlusher) tick() {
 
 // Start 注册定时 tick。flusher_enabled=false 时直接返回，不注册定时器。
 func (s *UserPlatformQuotaUsageFlusher) Start() {
-	if s == nil || !s.enabled {
+	if s == nil || !s.enabled || s.migrationDisabled.Load() || s.stopped.Load() {
 		return
 	}
 	s.timingWheel.ScheduleRecurring("deferred:platform_quota", s.interval, s.tick)
@@ -257,7 +260,7 @@ func (s *UserPlatformQuotaUsageFlusher) Start() {
 
 // Stop 停止 flusher：标记 stopped → Cancel 定时器 → 执行最后一次 flush。
 func (s *UserPlatformQuotaUsageFlusher) Stop() {
-	if s == nil {
+	if s == nil || s.migrationDisabled.Load() {
 		return
 	}
 	s.stopped.Store(true)

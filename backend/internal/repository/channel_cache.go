@@ -26,6 +26,15 @@ func (c *channelCache) NotifyUpdate(ctx context.Context) error {
 
 // SubscribeUpdates subscribes to channel cache invalidation notifications.
 func (c *channelCache) SubscribeUpdates(ctx context.Context, handler func()) {
+	if handled, _, err := service.StartMigrationRedisSubscription(ctx, c.rdb, service.MigrationRedisSubscription{
+		Name: "channel", Channel: channelCachePubSubKey,
+		Handle: func(context.Context, string) { handler() },
+	}); handled {
+		if err != nil {
+			slog.Error("migration channel cache subscription failed", "error", err)
+		}
+		return
+	}
 	go func() {
 		pubsub := c.rdb.Subscribe(ctx, channelCachePubSubKey)
 		defer func() {

@@ -86,9 +86,10 @@ func keyPrefix(key string, n int) string {
 }
 
 type opsErrorLogJob struct {
-	ops         *service.OpsService
-	entry       *service.OpsInsertErrorLogInput
-	queuedBytes int64
+	migrationDone func()
+	ops           *service.OpsService
+	entry         *service.OpsInsertErrorLogInput
+	queuedBytes   int64
 }
 
 var (
@@ -179,6 +180,13 @@ func flushOpsErrorLogBatch(batch []opsErrorLogJob) {
 		return
 	}
 	defer func() {
+		for _, job := range batch {
+			if job.migrationDone != nil {
+				job.migrationDone()
+			}
+		}
+	}()
+	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[OpsErrorLogger] worker panic: %v\n%s", r, debug.Stack())
 		}
@@ -253,10 +261,12 @@ func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLo
 		return
 	}
 
+	migrationDone := service.BeginMigrationDetachedTask("handler.ops_error_log_queue")
 	select {
-	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, entry: entry, queuedBytes: queuedBytes}:
+	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, entry: entry, queuedBytes: queuedBytes, migrationDone: migrationDone}:
 		opsErrorLogEnqueued.Add(1)
 	default:
+		migrationDone()
 		opsErrorLogQueueLen.Add(-1)
 		opsErrorLogQueueBytes.Add(-queuedBytes)
 		// Queue is full; drop to avoid blocking request handling.

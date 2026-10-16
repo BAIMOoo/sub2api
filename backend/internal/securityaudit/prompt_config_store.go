@@ -48,6 +48,8 @@ type ConfigManager struct {
 	// alone must not force ModeBlocking—Prompt Audit is default-off and must
 	// not take the gateway down for every API request (see issue #4560).
 	configUntrusted atomic.Bool
+	loadMu          sync.Mutex // serialize periodic reload with migration snapshot replacement
+	refreshGate     service.MigrationWorkGate
 
 	stateMu       sync.RWMutex
 	lastLoadError string
@@ -106,6 +108,15 @@ func (m *ConfigManager) Shutdown(_ context.Context) error {
 }
 
 func (m *ConfigManager) Reload(ctx context.Context) error {
+	if m == nil {
+		return errors.New("prompt audit config manager unavailable")
+	}
+	m.loadMu.Lock()
+	defer m.loadMu.Unlock()
+	return m.reloadLocked(ctx)
+}
+
+func (m *ConfigManager) reloadLocked(ctx context.Context) error {
 	if m == nil || m.settings == nil {
 		m.markUntrustedIfNoActiveSnapshot()
 		return errors.New("prompt audit setting repository unavailable")
@@ -454,15 +465,50 @@ func (m *ConfigManager) refreshLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := m.Reload(ctx); err != nil {
-				LogWarn(EventConfigReloadDegraded, map[string]any{"status": "degraded", "error_code": "config_ttl_reload_failed"})
+			release, admitted := m.refreshGate.TryEnter()
+			if !admitted {
+				continue
 			}
+			func() {
+				defer release()
+				if err := m.Reload(ctx); err != nil {
+					LogWarn(EventConfigReloadDegraded, map[string]any{"status": "degraded", "error_code": "config_ttl_reload_failed"})
+				}
+			}()
 		}
 	}
 }
 
+// BeginMigrationConfigQuiet stops periodic cache writers and waits for a
+// previously admitted reload. Explicit migration reconstruction stays usable.
+func (m *ConfigManager) BeginMigrationConfigQuiet(ctx context.Context) (func(), error) {
+	if m == nil {
+		return func() {}, nil
+	}
+	return m.refreshGate.Pause(ctx)
+}
+
+func (m *ConfigManager) MigrationConfigTaskStats() service.MigrationTaskStats {
+	if m == nil {
+		return service.MigrationTaskStats{}
+	}
+	return m.refreshGate.Stats()
+}
+
 func (m *ConfigManager) subscribeLoop(ctx context.Context) {
 	defer m.wg.Done()
+	if handled, done, err := service.StartMigrationRedisSubscription(ctx, m.redis, service.MigrationRedisSubscription{
+		Name: "prompt_audit", Channel: ConfigInvalidationChannel,
+		Handle: m.handleInvalidation,
+	}); handled {
+		if err != nil {
+			m.markConfigUntrusted()
+			LogWarn(EventConfigReloadDegraded, map[string]any{"status": "degraded", "error_code": "config_migration_subscribe_failed"})
+			return
+		}
+		<-done
+		return
+	}
 	pubsub := m.redis.Subscribe(ctx, ConfigInvalidationChannel)
 	defer func() { _ = pubsub.Close() }()
 	channel := pubsub.Channel()
@@ -474,23 +520,38 @@ func (m *ConfigManager) subscribeLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			version, err := strconv.ParseInt(strings.TrimSpace(message.Payload), 10, 64)
-			if err != nil || version < 1 {
-				continue
-			}
-			m.expected.Store(version)
-			if err := m.Reload(ctx); err != nil {
-				// A newer published version failed to activate. Until reload
-				// succeeds, do not keep serving a potentially stale weaker mode.
-				if active, ok := m.Active(); !ok || active.ConfigVersion < version {
-					m.markConfigUntrusted()
-				}
-				LogWarn(EventConfigReloadDegraded, map[string]any{
-					"config_version": version, "status": "degraded", "error_code": "config_invalidation_reload_failed",
-				})
-			}
+			m.handleInvalidation(ctx, message.Payload)
 		}
 	}
+}
+
+func (m *ConfigManager) handleInvalidation(ctx context.Context, payload string) {
+	version, err := strconv.ParseInt(strings.TrimSpace(payload), 10, 64)
+	if err != nil || version < 1 {
+		return
+	}
+	m.expected.Store(version)
+	if err := m.Reload(ctx); err != nil {
+		if active, ok := m.Active(); !ok || active.ConfigVersion < version {
+			m.markConfigUntrusted()
+		}
+		LogWarn(EventConfigReloadDegraded, map[string]any{
+			"config_version": version, "status": "degraded", "error_code": "config_invalidation_reload_failed",
+		})
+	}
+}
+
+// RebuildMigrationSnapshot requires the caller's global quiet gate. Discard
+// the old active policy before loading the authoritative database snapshot.
+func (m *ConfigManager) RebuildMigrationSnapshot(ctx context.Context) error {
+	if m == nil {
+		return errors.New("prompt audit config manager unavailable")
+	}
+	m.loadMu.Lock()
+	defer m.loadMu.Unlock()
+	m.snapshot.Store(nil)
+	m.markConfigUntrusted()
+	return m.reloadLocked(ctx)
 }
 
 func (m *ConfigManager) recordLoadError(_ error) {

@@ -1233,14 +1233,19 @@ func (h *AccountHandler) scheduleOpenAIResponsesProbe(account *service.Account) 
 		return
 	}
 	accountID := account.ID
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("openai_responses_probe_panic", "account_id", accountID, "recover", r)
-			}
+	{
+		migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/account_handler.go:1236")
+		go func() {
+			defer migrationDetachedDone()
+
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("openai_responses_probe_panic", "account_id", accountID, "recover", r)
+				}
+			}()
+			h.accountTestService.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), accountID)
 		}()
-		h.accountTestService.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), accountID)
-	}()
+	}
 }
 
 // Delete handles deleting an account
@@ -2175,31 +2180,41 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 		adminSvc := h.adminService
 		if len(antigravityPrivacyAccounts) > 0 {
 			accounts := antigravityPrivacyAccounts
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("batch_create_antigravity_privacy_panic", "recover", r)
+			{
+				migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/account_handler.go:2178")
+				go func() {
+					defer migrationDetachedDone()
+
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("batch_create_antigravity_privacy_panic", "recover", r)
+						}
+					}()
+					bgCtx := context.Background()
+					for _, acc := range accounts {
+						adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
 					}
 				}()
-				bgCtx := context.Background()
-				for _, acc := range accounts {
-					adminSvc.ForceAntigravityPrivacy(bgCtx, acc)
-				}
-			}()
+			}
 		}
 		if len(openaiPrivacyAccounts) > 0 {
 			accounts := openaiPrivacyAccounts
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						slog.Error("batch_create_openai_privacy_panic", "recover", r)
+			{
+				migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/account_handler.go:2192")
+				go func() {
+					defer migrationDetachedDone()
+
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("batch_create_openai_privacy_panic", "recover", r)
+						}
+					}()
+					bgCtx := context.Background()
+					for _, acc := range accounts {
+						adminSvc.ForceOpenAIPrivacy(bgCtx, acc)
 					}
 				}()
-				bgCtx := context.Background()
-				for _, acc := range accounts {
-					adminSvc.ForceOpenAIPrivacy(bgCtx, acc)
-				}
-			}()
+			}
 		}
 
 		return gin.H{

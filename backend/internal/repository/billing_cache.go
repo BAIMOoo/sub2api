@@ -262,6 +262,12 @@ func (c *billingCache) PublishSubscriptionCacheInvalidation(ctx context.Context,
 }
 
 func (c *billingCache) SubscribeSubscriptionCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error {
+	if handled, _, err := service.StartMigrationRedisSubscription(ctx, c.rdb, service.MigrationRedisSubscription{
+		Name: "subscription", Channel: subCacheInvalidateChannel,
+		Handle: func(_ context.Context, payload string) { handler(payload) },
+	}); handled {
+		return err
+	}
 	pubsub := c.rdb.Subscribe(ctx, subCacheInvalidateChannel)
 
 	_, err := pubsub.Receive(ctx)

@@ -66,10 +66,13 @@ func (q *SubscriptionMaintenanceQueue) TryEnqueue(task func()) error {
 		return fmt.Errorf("maintenance queue stopped")
 	}
 
+	done := BeginMigrationDetachedTask("subscription.maintenance_queue")
+	wrapped := func() { defer done(); task() }
 	select {
-	case q.queue <- task:
+	case q.queue <- wrapped:
 		return nil
 	default:
+		done()
 		return fmt.Errorf("maintenance queue full")
 	}
 }

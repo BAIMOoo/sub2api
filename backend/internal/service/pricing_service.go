@@ -290,6 +290,16 @@ func NewPricingService(cfg *config.Config, remoteClient PricingRemoteClient) *Pr
 
 // Initialize 初始化价格服务
 func (s *PricingService) Initialize() error {
+	if !MigrationBackgroundWorkersEnabled() {
+		// A second instance must use the copied authoritative catalogue rather
+		// than silently changing prices from an upstream download or fallback.
+		if err := s.loadPricingData(s.getPricingFilePath()); err != nil {
+			return fmt.Errorf("migration requires the existing pricing catalogue: %w", err)
+		}
+		logger.LegacyPrintf("service.pricing", "Migration mode: using existing pricing catalogue; automatic updates are disabled")
+		startMigrationBackgroundWorker("PricingUpdate", s.startUpdateScheduler)
+		return nil
+	}
 	// 确保数据目录存在
 	if err := os.MkdirAll(s.cfg.Pricing.DataDir, 0755); err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to create data directory: %v", err)
@@ -304,7 +314,7 @@ func (s *PricingService) Initialize() error {
 	}
 
 	// 启动定时更新
-	s.startUpdateScheduler()
+	startMigrationBackgroundWorker("PricingUpdate", s.startUpdateScheduler)
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Service initialized with %d models", len(s.pricingData))
 	return nil

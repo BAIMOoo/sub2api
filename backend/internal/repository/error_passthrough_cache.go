@@ -102,6 +102,18 @@ func (c *errorPassthroughCache) NotifyUpdate(ctx context.Context) error {
 
 // SubscribeUpdates 订阅缓存更新通知
 func (c *errorPassthroughCache) SubscribeUpdates(ctx context.Context, handler func()) {
+	if handled, _, err := service.StartMigrationRedisSubscription(ctx, c.rdb, service.MigrationRedisSubscription{
+		Name: "error_passthrough", Channel: errorPassthroughPubSubKey,
+		Handle: func(context.Context, string) {
+			_ = c.ClearMigrationLocalCache(context.Background())
+			handler()
+		},
+	}); handled {
+		if err != nil {
+			log.Printf("migration error passthrough subscription failed: %v", err)
+		}
+		return
+	}
 	go func() {
 		sub := c.rdb.Subscribe(ctx, errorPassthroughPubSubKey)
 		defer func() { _ = sub.Close() }()
@@ -125,4 +137,11 @@ func (c *errorPassthroughCache) SubscribeUpdates(ctx context.Context, handler fu
 			}
 		}
 	}()
+}
+
+func (c *errorPassthroughCache) ClearMigrationLocalCache(_ context.Context) error {
+	c.localMu.Lock()
+	c.localCache = nil
+	c.localMu.Unlock()
+	return nil
 }

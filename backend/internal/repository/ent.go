@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -115,11 +116,21 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 	// 使用 Ent 的 SQL 驱动打开 PostgreSQL 连接。
 	// dialect.Postgres 指定使用 PostgreSQL 方言进行 SQL 生成。
 	var drv *entsql.Driver
-	if cfg.Server.EnableServerTiming {
-		connector, err := pq.NewConnector(dsn)
-		if err != nil {
-			return nil, nil, err
+	connector, err := pq.NewConnector(dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	migrationControl, err := initMigrationSQL(connector)
+	if err != nil {
+		return nil, nil, err
+	}
+	if migrationControl != nil {
+		var selected driver.Connector = migrationControl.connector
+		if cfg.Server.EnableServerTiming {
+			selected = newServerTimingConnector(selected)
 		}
+		drv = entsql.OpenDB(dialect.Postgres, sql.OpenDB(selected))
+	} else if cfg.Server.EnableServerTiming {
 		drv = entsql.OpenDB(dialect.Postgres, sql.OpenDB(newServerTimingConnector(connector)))
 	} else {
 		var err error
@@ -162,6 +173,9 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 	if err := ensureSimpleModeStartup(seedCtx, client, cfg); err != nil {
 		_ = client.Close()
 		return nil, nil, err
+	}
+	if migrationControl != nil {
+		migrationControl.register(drv.DB(), cfg.Database.MaxIdleConns)
 	}
 
 	return client, drv.DB(), nil

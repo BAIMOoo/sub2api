@@ -223,46 +223,51 @@ func scheduleGrokFreeQuotaStatsRefresh(
 	gateTokens := settings.gateTokens
 	limitTokens := settings.limitTokens
 	cacheTTL := settings.cacheTTL
-	go func() {
-		defer func() {
-			for _, id := range toFetch {
-				inFlight.Delete(id)
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/grok_free_quota_gate.go:226")
+		go func() {
+			defer migrationDetachedDone()
+
+			defer func() {
+				for _, id := range toFetch {
+					inFlight.Delete(id)
+				}
+			}()
+			now := time.Now().UTC()
+			statsByID, err := queryGrokFreeQuotaWindowStats(context.Background(), usageLogRepo, toFetch, now.Add(-window))
+			if err != nil {
+				grokFreeQuotaGateQueryFailureTotal.Add(1)
+				// Store a negative entry so subsequent hot-path calls do not thrash.
+				// known=false → still fail open until a successful refresh lands.
+				for _, accountID := range toFetch {
+					cache.Store(accountID, grokFreeQuotaGateCacheEntry{checkedAt: now})
+				}
+				slog.Warn("grok_free_quota_soft_gate_stats_failed",
+					"account_count", len(toFetch),
+					"window_hours", window.Hours(),
+					"error", err)
+				sweepGrokFreeQuotaGateCache(cache, now, cacheTTL)
+				return
 			}
-		}()
-		now := time.Now().UTC()
-		statsByID, err := queryGrokFreeQuotaWindowStats(context.Background(), usageLogRepo, toFetch, now.Add(-window))
-		if err != nil {
-			grokFreeQuotaGateQueryFailureTotal.Add(1)
-			// Store a negative entry so subsequent hot-path calls do not thrash.
-			// known=false → still fail open until a successful refresh lands.
 			for _, accountID := range toFetch {
-				cache.Store(accountID, grokFreeQuotaGateCacheEntry{checkedAt: now})
+				tokens := int64(0)
+				if stats := statsByID[accountID]; stats != nil && stats.Tokens > 0 {
+					tokens = stats.Tokens
+				}
+				cache.Store(accountID, grokFreeQuotaGateCacheEntry{tokens: tokens, checkedAt: now, known: true})
+				if tokens >= gateTokens {
+					grokFreeQuotaGateBlockedTotal.Add(1)
+					slog.Info("grok_free_quota_soft_gate_blocked",
+						"account_id", accountID,
+						"tokens", tokens,
+						"gate_tokens", gateTokens,
+						"limit_tokens", limitTokens,
+						"window_hours", window.Hours())
+				}
 			}
-			slog.Warn("grok_free_quota_soft_gate_stats_failed",
-				"account_count", len(toFetch),
-				"window_hours", window.Hours(),
-				"error", err)
 			sweepGrokFreeQuotaGateCache(cache, now, cacheTTL)
-			return
-		}
-		for _, accountID := range toFetch {
-			tokens := int64(0)
-			if stats := statsByID[accountID]; stats != nil && stats.Tokens > 0 {
-				tokens = stats.Tokens
-			}
-			cache.Store(accountID, grokFreeQuotaGateCacheEntry{tokens: tokens, checkedAt: now, known: true})
-			if tokens >= gateTokens {
-				grokFreeQuotaGateBlockedTotal.Add(1)
-				slog.Info("grok_free_quota_soft_gate_blocked",
-					"account_id", accountID,
-					"tokens", tokens,
-					"gate_tokens", gateTokens,
-					"limit_tokens", limitTokens,
-					"window_hours", window.Hours())
-			}
-		}
-		sweepGrokFreeQuotaGateCache(cache, now, cacheTTL)
-	}()
+		}()
+	}
 }
 
 // grokFreeQuotaGateCacheMinSweepAge floors the eviction age so a tiny cacheTTL

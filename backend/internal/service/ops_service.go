@@ -43,9 +43,10 @@ type OpsRuntimeSettingsRefreshHealth struct {
 
 // OpsService provides ingestion and query APIs for the Ops monitoring module.
 type OpsService struct {
-	opsRepo     OpsRepository
-	settingRepo SettingRepository
-	cfg         *config.Config
+	migrationRuntimeGate MigrationWorkGate
+	opsRepo              OpsRepository
+	settingRepo          SettingRepository
+	cfg                  *config.Config
 
 	accountRepo AccountRepository
 	userRepo    UserRepository
@@ -84,6 +85,14 @@ type OpsService struct {
 	runtimeRefreshSuccess        atomic.Uint64
 	runtimeRefreshFailure        atomic.Uint64
 	runtimeRefreshLastFailureLog atomic.Int64
+}
+
+// CleanupReloader 由 OpsCleanupService 实现。
+func (s *OpsService) BeginMigrationRuntimeQuiet(ctx context.Context) (func(), error) {
+	return s.migrationRuntimeGate.Pause(ctx)
+}
+func (s *OpsService) MigrationRuntimeTaskStats() MigrationTaskStats {
+	return s.migrationRuntimeGate.Stats()
 }
 
 // CleanupReloader 由 OpsCleanupService 实现。
@@ -288,9 +297,14 @@ func (s *OpsService) startRuntimeSettingsRefresh(ctx context.Context, interval t
 			case <-timer.C:
 			}
 
+			release, ok := s.migrationRuntimeGate.TryEnter()
+			if !ok {
+				continue
+			}
 			attemptCtx, attemptCancel := context.WithTimeout(refreshCtx, timeout)
 			err := s.RefreshRuntimeSettings(attemptCtx)
 			attemptCancel()
+			release()
 			if err != nil {
 				s.runtimeRefreshFailure.Add(1)
 				s.logRuntimeSettingsRefreshFailure(err)

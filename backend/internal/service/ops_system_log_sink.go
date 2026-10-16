@@ -48,7 +48,8 @@ type OpsSystemLogSink struct {
 	totalDelayNs      uint64
 	persistAccessLogs atomic.Bool
 
-	lastError atomic.Value
+	lastError       atomic.Value
+	migrationWriter migrationBufferedWriter
 }
 
 const maxSystemLogHostLength = 255
@@ -75,6 +76,7 @@ func NewOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 		cancel:          cancel,
 	}
 	s.lastError.Store("")
+	s.migrationWriter.init()
 	return s
 }
 
@@ -141,11 +143,34 @@ func (s *OpsSystemLogSink) WriteLogEvent(event *logger.LogEvent) {
 		}
 	}
 
-	select {
-	case s.queue <- event:
-	default:
+	if !s.migrationWriter.enqueue(cap(s.queue), func() {
+		s.migrationWriter.accept()
+		select {
+		case s.queue <- event:
+		default:
+			s.migrationWriter.discard(1)
+			atomic.AddUint64(&s.droppedCount, 1)
+		}
+	}) {
 		atomic.AddUint64(&s.droppedCount, 1)
 	}
+}
+
+func (s *OpsSystemLogSink) MigrationTaskStats() MigrationTaskStats {
+	if s == nil {
+		return MigrationTaskStats{}
+	}
+	stats := s.migrationWriter.snapshot()
+	stats.Dropped = atomic.LoadUint64(&s.droppedCount)
+	stats.Deferred = s.migrationWriter.heldCount()
+	return stats
+}
+
+func (s *OpsSystemLogSink) PauseAndFlush(ctx context.Context) (func(), error) {
+	if s == nil || s.opsRepo == nil {
+		return nil, fmt.Errorf("system log writer unavailable")
+	}
+	return s.migrationWriter.pauseAndFlush(ctx, s.ctx.Done())
 }
 
 // SetPersistAccessLogs controls whether high-volume request access logs are
@@ -204,11 +229,14 @@ func (s *OpsSystemLogSink) run() {
 			// 退避窗口内直接丢弃本批：日志是尽力而为的观测数据，继续攒批只会把
 			// 压力转移到内存，而每次重试都会再占用并取消一条池内连接。
 			atomic.AddUint64(&s.droppedCount, uint64(len(batch)))
+			s.migrationWriter.discard(uint64(len(batch)))
 			batch = batch[:0]
 			return
 		}
 		started := time.Now()
+		s.migrationWriter.start()
 		inserted, err := s.flushBatch(baseCtx, batch)
+		s.migrationWriter.finish(uint64(len(batch)), err)
 		delay := time.Since(started)
 		if err != nil {
 			failures++
@@ -249,6 +277,36 @@ func (s *OpsSystemLogSink) run() {
 
 	for {
 		select {
+		case request := <-s.migrationWriter.requests:
+			for {
+				if request.ctx.Err() != nil {
+					goto drained
+				}
+				select {
+				case item := <-s.queue:
+					if item != nil {
+						batch = append(batch, item)
+					}
+					if len(batch) >= s.batchSize {
+						flush(request.ctx)
+					}
+				default:
+					flush(request.ctx)
+					goto drained
+				}
+			}
+		drained:
+			err := request.ctx.Err()
+			if err == nil {
+				err = s.migrationWriter.failure()
+			}
+			request.done <- err
+			if err == nil {
+				select {
+				case <-request.release:
+				case <-s.ctx.Done():
+				}
+			}
 		case <-s.ctx.Done():
 			drainAndFlush()
 			return

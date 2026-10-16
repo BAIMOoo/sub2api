@@ -343,13 +343,18 @@ func (s *BackupService) Stop() {
 
 	// 等待活跃备份/恢复完成（最多 5 分钟）
 	done := make(chan struct{})
-	go func() {
-		if cronStopped != nil {
-			<-cronStopped.Done()
-		}
-		s.wg.Wait()
-		close(done)
-	}()
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/backup_service.go:346")
+		go func() {
+			defer migrationDetachedDone()
+
+			if cronStopped != nil {
+				<-cronStopped.Done()
+			}
+			s.wg.Wait()
+			close(done)
+		}()
+	}
 	select {
 	case <-done:
 		logger.LegacyPrintf("service.backup", "[Backup] all active operations finished")
@@ -751,25 +756,30 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	result := *record
 
 	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		defer func() {
-			s.opMu.Lock()
-			s.backingUp = false
-			s.opMu.Unlock()
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/backup_service.go:754")
+		go func() {
+			defer migrationDetachedDone()
+
+			defer s.wg.Done()
+			defer func() {
+				s.opMu.Lock()
+				s.backingUp = false
+				s.opMu.Unlock()
+			}()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.LegacyPrintf("service.backup", "[Backup] panic recovered: %v", r)
+					record.Status = "failed"
+					record.ErrorMsg = fmt.Sprintf("internal panic: %v", r)
+					record.Progress = ""
+					record.FinishedAt = time.Now().Format(time.RFC3339)
+					_ = s.saveRecord(context.Background(), record)
+				}
+			}()
+			s.executeBackup(record, objectStore, s3Cfg)
 		}()
-		defer func() {
-			if r := recover(); r != nil {
-				logger.LegacyPrintf("service.backup", "[Backup] panic recovered: %v", r)
-				record.Status = "failed"
-				record.ErrorMsg = fmt.Sprintf("internal panic: %v", r)
-				record.Progress = ""
-				record.FinishedAt = time.Now().Format(time.RFC3339)
-				_ = s.saveRecord(context.Background(), record)
-			}
-		}()
-		s.executeBackup(record, objectStore, s3Cfg)
-	}()
+	}
 
 	return &result, nil
 }
@@ -1032,23 +1042,28 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 	result := *record
 
 	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		defer func() {
-			s.opMu.Lock()
-			s.restoring = false
-			s.opMu.Unlock()
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/backup_service.go:1035")
+		go func() {
+			defer migrationDetachedDone()
+
+			defer s.wg.Done()
+			defer func() {
+				s.opMu.Lock()
+				s.restoring = false
+				s.opMu.Unlock()
+			}()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.LegacyPrintf("service.backup", "[Backup] restore panic recovered: %v", r)
+					record.RestoreStatus = "failed"
+					record.RestoreError = fmt.Sprintf("internal panic: %v", r)
+					_ = s.saveRestoreRecord(context.Background(), record)
+				}
+			}()
+			s.executeRestore(record, objectStore)
 		}()
-		defer func() {
-			if r := recover(); r != nil {
-				logger.LegacyPrintf("service.backup", "[Backup] restore panic recovered: %v", r)
-				record.RestoreStatus = "failed"
-				record.RestoreError = fmt.Sprintf("internal panic: %v", r)
-				_ = s.saveRestoreRecord(context.Background(), record)
-			}
-		}()
-		s.executeRestore(record, objectStore)
-	}()
+	}
 
 	return &result, nil
 }

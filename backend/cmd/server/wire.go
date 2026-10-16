@@ -25,10 +25,12 @@ import (
 )
 
 type Application struct {
-	Server        *http.Server
-	PromptAudit   *securityaudit.PromptService
-	PluginManager *service.PluginManager
-	Cleanup       func()
+	Server           *http.Server
+	PromptAudit      *securityaudit.PromptService
+	PluginManager    *service.PluginManager
+	MigrationWriters *migrationWriterControls
+	MigrationData    *migrationDataControls
+	Cleanup          func()
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -56,9 +58,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 
 		// Cleanup function provider
 		provideCleanup,
+		provideMigrationWriterControls,
+		provideMigrationDataControls,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "MigrationWriters", "MigrationData", "Cleanup"),
 	)
 	return nil, nil
 }
@@ -130,6 +134,8 @@ func provideCleanup(
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
 	pluginManager *service.PluginManager,
+	deferred *service.DeferredService,
+	timingWheel *service.TimingWheelService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -438,6 +444,15 @@ func provideCleanup(
 		}
 
 		runParallel(parallelSteps)
+		// The remaining timing callbacks and deferred last_used writes must end
+		// before Redis/Ent close. Stopping the wheel itself does not await its
+		// callbacks in go-zero; the service's Stop explicitly waits for them.
+		if timingWheel != nil {
+			timingWheel.Stop()
+		}
+		if deferred != nil {
+			deferred.Stop()
+		}
 		runSequential(infraSteps)
 
 		// Check if context timed out

@@ -82,6 +82,7 @@ const (
 
 // cacheWriteTask 缓存写入任务
 type cacheWriteTask struct {
+	migrationTicket  *migrationWorkTicket
 	kind             cacheWriteKind
 	userID           int64
 	groupID          int64
@@ -117,6 +118,7 @@ type BillingCacheService struct {
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
 	cacheWriteStopOnce sync.Once
+	migrationWork      migrationWorkCounter
 	cacheWriteMu       sync.RWMutex
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
@@ -176,7 +178,26 @@ func (s *BillingCacheService) Stop() {
 			s.cacheWriteChan = nil
 		}
 		s.cacheWriteMu.Unlock()
+		_ = s.WaitForIdle(context.Background())
 	})
+}
+
+// WaitForIdle includes dequeued work and rate-limit reset goroutines. Callers
+// must independently fence HTTP, usage tasks and background producers first.
+func (s *BillingCacheService) WaitForIdle(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	return s.migrationWork.wait(ctx)
+}
+
+func (s *BillingCacheService) MigrationTaskStats() MigrationTaskStats {
+	if s == nil {
+		return MigrationTaskStats{}
+	}
+	stats := s.migrationWork.snapshot()
+	stats.Dropped = atomic.LoadUint64(&s.cacheWriteDropFullCount) + atomic.LoadUint64(&s.cacheWriteDropClosedCount)
+	return stats
 }
 
 func (s *BillingCacheService) startCacheWriteWorkers() {
@@ -202,11 +223,13 @@ func (s *BillingCacheService) enqueueCacheWrite(task cacheWriteTask) (enqueued b
 		s.logCacheWriteDrop(task, "closed")
 		return false
 	}
+	task.migrationTicket = s.migrationWork.accept()
 
 	select {
 	case s.cacheWriteChan <- task:
 		return true
 	default:
+		task.migrationTicket.finish(false)
 		// 队列满时不阻塞主流程，交由调用方决定是否同步回退。
 		s.logCacheWriteDrop(task, "full")
 		return false
@@ -216,32 +239,36 @@ func (s *BillingCacheService) enqueueCacheWrite(task cacheWriteTask) (enqueued b
 func (s *BillingCacheService) cacheWriteWorker(ch <-chan cacheWriteTask) {
 	defer s.cacheWriteWg.Done()
 	for task := range ch {
-		ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
-		switch task.kind {
-		case cacheWriteSetBalance:
-			s.setBalanceCache(ctx, task.userID, task.balance)
-		case cacheWriteSetSubscription:
-			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
-		case cacheWriteUpdateSubscriptionUsage:
-			if s.cache != nil {
-				if err := s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount); err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: update subscription cache failed for user %d group %d: %v", task.userID, task.groupID, err)
+		task.migrationTicket.start()
+		func() {
+			defer task.migrationTicket.finish(false)
+			ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
+			defer cancel()
+			switch task.kind {
+			case cacheWriteSetBalance:
+				s.setBalanceCache(ctx, task.userID, task.balance)
+			case cacheWriteSetSubscription:
+				s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
+			case cacheWriteUpdateSubscriptionUsage:
+				if s.cache != nil {
+					if err := s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount); err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: update subscription cache failed for user %d group %d: %v", task.userID, task.groupID, err)
+					}
+				}
+			case cacheWriteDeductBalance:
+				if s.cache != nil {
+					if err := s.cache.DeductUserBalance(ctx, task.userID, task.amount); err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: deduct balance cache failed for user %d: %v", task.userID, err)
+					}
+				}
+			case cacheWriteUpdateRateLimitUsage:
+				if s.cache != nil {
+					if err := s.cache.UpdateAPIKeyRateLimitUsage(ctx, task.apiKeyID, task.amount); err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: update rate limit usage cache failed for api key %d: %v", task.apiKeyID, err)
+					}
 				}
 			}
-		case cacheWriteDeductBalance:
-			if s.cache != nil {
-				if err := s.cache.DeductUserBalance(ctx, task.userID, task.amount); err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: deduct balance cache failed for user %d: %v", task.userID, err)
-				}
-			}
-		case cacheWriteUpdateRateLimitUsage:
-			if s.cache != nil {
-				if err := s.cache.UpdateAPIKeyRateLimitUsage(ctx, task.apiKeyID, task.amount); err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: update rate limit usage cache failed for api key %d: %v", task.apiKeyID, err)
-				}
-			}
-		}
-		cancel()
+		}()
 	}
 }
 
@@ -652,7 +679,10 @@ func (s *BillingCacheService) evaluateRateLimits(ctx context.Context, apiKey *AP
 	// Trigger async DB reset if any window expired
 	if needsReset {
 		keyID := apiKey.ID
+		ticket := s.migrationWork.accept()
 		go func() {
+			ticket.start()
+			defer ticket.finish(false)
 			resetCtx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
 			defer cancel()
 			if s.apiKeyRateLimitLoader != nil {
@@ -1214,7 +1244,7 @@ func (s *BillingCacheService) checkUserPlatformQuotaEligibility(
 	// 使用 DoChan 而非 Do：avoid sharing the first caller's ctx among all dedupe followers.
 	// 若第一个 caller 的 ctx 被取消（客户端断连），后续 caller 不受影响，仍由各自 ctx 控制超时。
 	sfKey := strconv.FormatInt(userID, 10) + ":" + platform
-	ch := s.quotaLoadSF.DoChan(sfKey, func() (any, error) {
+	ch := MigrationSingleflightDoChan("billing.quota_singleflight", &s.quotaLoadSF, sfKey, func() (any, error) {
 		// 子查询用 detached context + 短超时，独立于任何 caller 的请求 ctx，
 		// 防止"第一个 caller ctx 取消"使所有 follower 一起 fail。
 		bgCtx, bgCancel := context.WithTimeout(context.Background(), 3*time.Second)

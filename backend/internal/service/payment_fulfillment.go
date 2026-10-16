@@ -433,22 +433,27 @@ func (s *PaymentService) dispatchPaymentFulfillmentNotification(o *dbent.Payment
 	if s == nil || s.notificationEmailService == nil || o == nil {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
-		defer cancel()
-		var err error
-		switch auditAction {
-		case "RECHARGE_SUCCESS":
-			err = s.sendBalanceRechargeSuccessNotification(ctx, o)
-		case "SUBSCRIPTION_SUCCESS":
-			err = s.sendSubscriptionPurchaseSuccessNotification(ctx, o)
-		default:
-			return
-		}
-		if err != nil {
-			slog.Warn("payment fulfillment notification email failed", "order_id", o.ID, "action", auditAction, "err", err.Error())
-		}
-	}()
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/payment_fulfillment.go:436")
+		go func() {
+			defer migrationDetachedDone()
+
+			ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
+			defer cancel()
+			var err error
+			switch auditAction {
+			case "RECHARGE_SUCCESS":
+				err = s.sendBalanceRechargeSuccessNotification(ctx, o)
+			case "SUBSCRIPTION_SUCCESS":
+				err = s.sendSubscriptionPurchaseSuccessNotification(ctx, o)
+			default:
+				return
+			}
+			if err != nil {
+				slog.Warn("payment fulfillment notification email failed", "order_id", o.ID, "action", auditAction, "err", err.Error())
+			}
+		}()
+	}
 }
 
 func (s *PaymentService) sendBalanceRechargeSuccessNotification(ctx context.Context, o *dbent.PaymentOrder) error {

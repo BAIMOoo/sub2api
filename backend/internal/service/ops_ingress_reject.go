@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -106,17 +107,20 @@ type OpsIngressRejectAggregator struct {
 	accepting atomic.Bool
 	stopOnce  sync.Once
 
-	overflowed    atomic.Uint64
-	dropped       atomic.Uint64
-	flushed       atomic.Uint64
-	flushFailures atomic.Uint64
-	lastError     atomic.Value
+	overflowed        atomic.Uint64
+	dropped           atomic.Uint64
+	flushed           atomic.Uint64
+	flushFailures     atomic.Uint64
+	lastError         atomic.Value
+	migrationRequests chan migrationFlushRequest
+	migrationActive   atomic.Uint64
 }
 
 func NewOpsIngressRejectAggregator(repo OpsIngressRejectRepository) *OpsIngressRejectAggregator {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &OpsIngressRejectAggregator{
 		repo: repo, ctx: ctx, cancel: cancel, flushCh: make(chan struct{}, 1),
+		migrationRequests: make(chan migrationFlushRequest),
 	}
 	for i := range a.shards {
 		a.shards[i].items = make(map[ingressRejectKey]*OpsIngressRejectAggregate)
@@ -137,6 +141,19 @@ func (a *OpsIngressRejectAggregator) Start() {
 		defer ticker.Stop()
 		for {
 			select {
+			case request := <-a.migrationRequests:
+				a.snapshotAndEnqueue(false)
+				err := a.flushPendingContext(request.ctx)
+				if err == nil {
+					err = request.ctx.Err()
+				}
+				request.done <- err
+				if err == nil {
+					select {
+					case <-request.release:
+					case <-a.ctx.Done():
+					}
+				}
 			case <-a.ctx.Done():
 				return
 			case <-ticker.C:
@@ -149,13 +166,84 @@ func (a *OpsIngressRejectAggregator) Start() {
 	}()
 }
 
+func (a *OpsIngressRejectAggregator) PauseAndFlush(ctx context.Context) (func(), error) {
+	if a == nil || !a.started.Load() {
+		return nil, fmt.Errorf("ingress reject writer unavailable")
+	}
+	a.recordMu.Lock()
+	wasAccepting := a.accepting.Swap(false)
+	a.recordMu.Unlock()
+	var once sync.Once
+	release := make(chan struct{})
+	resume := func() {
+		once.Do(func() {
+			close(release)
+		a.recordMu.Lock()
+		if wasAccepting && a.ctx.Err() == nil { a.accepting.Store(true) }
+		a.recordMu.Unlock()
+		})
+	}
+	req := migrationFlushRequest{ctx: ctx, release: release, done: make(chan error, 1)}
+	select {
+	case a.migrationRequests <- req:
+	case <-ctx.Done():
+		resume()
+		return nil, ctx.Err()
+	case <-a.ctx.Done():
+		resume()
+		return nil, fmt.Errorf("ingress reject writer stopped")
+	}
+	select {
+	case err := <-req.done:
+		if err != nil {
+			resume()
+			return nil, err
+		}
+		return resume, nil
+	case <-ctx.Done():
+		resume()
+		return nil, ctx.Err()
+	case <-a.ctx.Done():
+		resume()
+		return nil, fmt.Errorf("ingress reject writer stopped")
+	}
+}
+
+func (a *OpsIngressRejectAggregator) MigrationTaskStats() MigrationTaskStats {
+	if a == nil {
+		return MigrationTaskStats{}
+	}
+	stats := MigrationTaskStats{Active: a.migrationActive.Load(), Failed: a.flushFailures.Load(), Dropped: a.dropped.Load()}
+	a.pendingMu.Lock()
+	for _, batch := range a.pending {
+		stats.Pending += uint64(len(batch))
+	}
+	a.pendingMu.Unlock()
+	for i := range a.shards {
+		shard := &a.shards[i]
+		shard.mu.Lock()
+		for _, item := range shard.items {
+			if item.RequestCount > 0 {
+				stats.Pending++
+			}
+		}
+		shard.mu.Unlock()
+	}
+	a.overflowMu.Lock()
+	if a.overflow != nil && a.overflow.RequestCount > 0 {
+		stats.Pending++
+	}
+	a.overflowMu.Unlock()
+	return stats
+}
+
 func (a *OpsIngressRejectAggregator) Stop() {
 	if a == nil {
 		return
 	}
 	a.stopOnce.Do(func() {
-		a.accepting.Store(false)
 		a.recordMu.Lock()
+		a.accepting.Store(false)
 		a.cancel()
 		a.recordMu.Unlock()
 		a.wg.Wait()
@@ -313,23 +401,32 @@ func (a *OpsIngressRejectAggregator) enqueue(items []*OpsIngressRejectAggregate)
 }
 
 func (a *OpsIngressRejectAggregator) flushPending() {
+	_ = a.flushPendingContext(context.Background())
+}
+
+func (a *OpsIngressRejectAggregator) flushPendingContext(baseCtx context.Context) error {
 	for {
+		if err := baseCtx.Err(); err != nil {
+			return err
+		}
 		a.pendingMu.Lock()
 		if len(a.pending) == 0 {
 			a.pendingMu.Unlock()
-			return
+			return nil
 		}
 		batch := a.pending[0]
 		a.pendingMu.Unlock()
 
-		ctx, cancel := context.WithTimeout(context.Background(), ingressRejectFlushTimeout)
+		ctx, cancel := context.WithTimeout(baseCtx, ingressRejectFlushTimeout)
+		a.migrationActive.Add(1)
 		err := a.repo.BatchUpsertIngressRejects(ctx, batch)
+		a.migrationActive.Add(^uint64(0))
 		cancel()
 		if err != nil {
 			a.flushFailures.Add(1)
 			a.lastError.Store(err.Error())
 			log.Printf("[IngressRejectAggregator] flush failed: %v", err)
-			return
+			return err
 		}
 		a.pendingMu.Lock()
 		if len(a.pending) > 0 {

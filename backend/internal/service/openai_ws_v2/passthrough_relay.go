@@ -85,8 +85,12 @@ type RelayOptions struct {
 	AfterClientWrite                func(msgType coderws.MessageType, payload []byte, writeErr error)
 	BeforeRelayCancel               func(exit RelayExit)
 	ReadClientFrame                 func(ctx context.Context, clientConn FrameConn) (coderws.MessageType, []byte, error)
-	OnTrace                         func(event RelayTraceEvent)
-	Now                             func() time.Time
+	// BeginClientReader runs synchronously before launching the client reader.
+	// Its completion runs only after that reader and any policy callbacks return;
+	// the reader can outlive Relay's bounded second-exit wait.
+	BeginClientReader func() (complete func())
+	OnTrace           func(event RelayTraceEvent)
+	Now               func() time.Time
 }
 
 type RelayTraceEvent struct {
@@ -286,7 +290,16 @@ func Relay(
 		if !clientReaderStarted.CompareAndSwap(false, true) {
 			return
 		}
-		go runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeClientFrameUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		var complete func()
+		if options.BeginClientReader != nil {
+			complete = options.BeginClientReader()
+		}
+		go func() {
+			if complete != nil {
+				defer complete()
+			}
+			runClientToUpstream(relayCtx, clientConn, options.ReadClientFrame, writeClientFrameUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+		}()
 	}
 	if !options.StartClientAfterFirstDownstream {
 		startClientReader()

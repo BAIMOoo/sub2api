@@ -234,17 +234,27 @@ func (s *OpenAIGatewayService) beginOpenAIWSSessionPreemptContext(
 			// 取消会让 coder 立即关掉正在读写的客户端连接，关闭帧必须先于取消发出；
 			// 通知在独立协程里做，不阻塞取代它的新连接。
 			notified := make(chan struct{})
-			go func() {
-				defer close(notified)
-				notifyPreempted()
-			}()
-			go func() {
-				select {
-				case <-notified:
-				case <-time.After(openAIWSSessionPreemptCloseGrace):
-				}
-				cancel(errOpenAIWSSessionPreempted)
-			}()
+			{
+				migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_ws_session_preemption.go:237")
+				go func() {
+					defer migrationDetachedDone()
+
+					defer close(notified)
+					notifyPreempted()
+				}()
+			}
+			{
+				migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_ws_session_preemption.go:241")
+				go func() {
+					defer migrationDetachedDone()
+
+					select {
+					case <-notified:
+					case <-time.After(openAIWSSessionPreemptCloseGrace):
+					}
+					cancel(errOpenAIWSSessionPreempted)
+				}()
+			}
 		})
 	}
 	previousRemoteOwner, remoteClaimed := s.claimOpenAIWSSessionPreemptOwner(ctx, key, ownerToken)
@@ -316,32 +326,37 @@ func (s *OpenAIGatewayService) watchOpenAIWSSessionPreemptOwner(ctx context.Cont
 	}
 	stopCh := make(chan struct{})
 	var once sync.Once
-	go func() {
-		ticker := time.NewTicker(openAIWSSessionPreemptWatchInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopCh:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				cacheCtx, cancel := context.WithTimeout(context.Background(), openAIWSStateStoreRedisTimeout)
-				owned, err := cache.CompareAndRefreshOpenAIResponsesSessionWindow(
-					cacheCtx,
-					key.groupID,
-					openAIWSSessionPreemptCacheHash(key.apiKeyID, key.sessionHash),
-					[]byte(strings.TrimSpace(ownerToken)),
-					openAIWSSessionPreemptOwnerTTL,
-				)
-				cancel()
-				if err == nil && !owned {
-					onLost()
+	{
+		migrationDetachedDone := BeginMigrationDetachedTask("internal/service/openai_ws_session_preemption.go:319")
+		go func() {
+			defer migrationDetachedDone()
+
+			ticker := time.NewTicker(openAIWSSessionPreemptWatchInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopCh:
 					return
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					cacheCtx, cancel := context.WithTimeout(context.Background(), openAIWSStateStoreRedisTimeout)
+					owned, err := cache.CompareAndRefreshOpenAIResponsesSessionWindow(
+						cacheCtx,
+						key.groupID,
+						openAIWSSessionPreemptCacheHash(key.apiKeyID, key.sessionHash),
+						[]byte(strings.TrimSpace(ownerToken)),
+						openAIWSSessionPreemptOwnerTTL,
+					)
+					cancel()
+					if err == nil && !owned {
+						onLost()
+						return
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 	return func() { once.Do(func() { close(stopCh) }) }
 }
 

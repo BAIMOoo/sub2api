@@ -378,12 +378,17 @@ func (h *GrokOAuthHandler) CreateAccountsFromSSO(c *gin.Context) {
 	var wg sync.WaitGroup
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for job := range jobs {
-				items[job.index] = h.safeCreateAccountFromSSOToken(ctx, req, job.token, job.index+1, len(tokens))
-			}
-		}()
+		{
+			migrationDetachedDone := service.BeginMigrationDetachedTask("internal/handler/admin/grok_oauth_handler.go:381")
+			go func() {
+				defer migrationDetachedDone()
+
+				defer wg.Done()
+				for job := range jobs {
+					items[job.index] = h.safeCreateAccountFromSSOToken(ctx, req, job.token, job.index+1, len(tokens))
+				}
+			}()
+		}
 	}
 	for i, token := range tokens {
 		jobs <- grokSSOImportJob{index: i, token: token}

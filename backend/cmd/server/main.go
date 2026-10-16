@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
 
@@ -132,6 +134,10 @@ func runSetupServer() {
 }
 
 func runMainServer() {
+	migrationCfg, err := service.MigrationRuntimeConfigFromEnv()
+	if err != nil {
+		log.Fatalf("Invalid migration configuration: %v", err)
+	}
 	cfg, err := config.LoadForBootstrap()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -153,6 +159,21 @@ func runMainServer() {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
 	defer app.Cleanup()
+	var migrationRuntime *service.MigrationRuntime
+	if migrationCfg.ListenAddress != "" {
+		migrationRuntime = service.NewMigrationRuntime()
+		service.AttachMigrationIngressRuntime(migrationRuntime)
+		for name, probe := range service.MigrationWriterProbes() {
+			migrationRuntime.RegisterTaskProbe(name, probe)
+		}
+		control, err := migrationRuntime.StartControl(migrationCfg)
+		if err != nil {
+			log.Fatalf("Failed to start migration control: %v", err)
+		}
+		defer control.Close()
+		app.Server.Handler = migrationRuntime.WrapHandler(app.Server.Handler)
+		log.Printf("Migration control listening on %s; task coverage is partial/unavailable and request drain alone does not prove write drain", migrationCfg.ListenAddress)
+	}
 	if app.PluginManager != nil {
 		if err := app.PluginManager.Start(context.Background()); err != nil {
 			log.Printf("Plugin manager started in degraded state: %v", err)
@@ -168,9 +189,24 @@ func runMainServer() {
 		}
 	}
 
+	if app.MigrationData != nil {
+		if err := app.MigrationData.Initialize(context.Background(), migrationRuntime); err != nil {
+			log.Fatalf("Failed to initialize migration data controls: %v", err)
+		}
+	}
+
 	// 启动服务器
+	listen := app.Server.ListenAndServe
+	if migrationRuntime != nil {
+		listener, err := net.Listen("tcp", app.Server.Addr)
+		if err != nil {
+			log.Fatalf("Failed to bind migration API listener: %v", err)
+		}
+		listen = func() error { return app.Server.Serve(listener) }
+		migrationRuntime.MarkServing()
+	}
 	go func() {
-		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := listen(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
@@ -183,6 +219,19 @@ func runMainServer() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	if migrationRuntime != nil {
+		migrationRuntime.BeginDrain()
+		log.Println("Migration mode: waiting for HTTP requests and hijacked connections to finish naturally; external stop deadlines must allow this")
+		// A fixed shutdown timeout followed by cleanup would close shared data
+		// clients underneath live streams. In migration mode only, wait until
+		// those requests finish, including transports net/http does not own.
+		if err := app.Server.Shutdown(context.Background()); err != nil {
+			log.Printf("Migration HTTP shutdown failed: %v", err)
+		}
+		_ = migrationRuntime.WaitForRequests(context.Background())
+		log.Println("Migration request drain complete; running application cleanup")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

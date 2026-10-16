@@ -101,10 +101,11 @@ const (
 )
 
 type usageLogCreateRequest struct {
-	log      *service.UsageLog
-	prepared usageLogInsertPrepared
-	shared   *usageLogCreateShared
-	resultCh chan usageLogCreateResult
+	migrationDone func()
+	log           *service.UsageLog
+	prepared      usageLogInsertPrepared
+	shared        *usageLogCreateShared
+	resultCh      chan usageLogCreateResult
 }
 
 type usageLogCreateResult struct {
@@ -113,9 +114,10 @@ type usageLogCreateResult struct {
 }
 
 type usageLogBestEffortRequest struct {
-	prepared usageLogInsertPrepared
-	apiKeyID int64
-	resultCh chan error
+	migrationDone func()
+	prepared      usageLogInsertPrepared
+	apiKeyID      int64
+	resultCh      chan error
 }
 
 type usageLogInsertPrepared struct {
@@ -200,9 +202,11 @@ func (r *usageLogRepository) CreateBestEffort(ctx context.Context, log *service.
 	// 队列满时阻塞等待而非立即丢弃：批处理器持续排空队列，短暂等待即可入队。
 	// 立即丢弃会造成“已扣费但无 usage_log”的永久数据缺口（issue #3656）；
 	// 阻塞上限由调用方 ctx 期限约束，超时后由上层同步兜底。
+	req.migrationDone = service.BeginMigrationDetachedTask("repository.usage_log_best_effort_queue")
 	select {
 	case r.bestEffortBatchCh <- req:
 	case <-ctx.Done():
+		req.migrationDone()
 		return service.MarkUsageLogCreateDropped(ctx.Err())
 	}
 
@@ -333,9 +337,11 @@ func (r *usageLogRepository) createBatched(ctx context.Context, log *service.Usa
 
 	// 队列满时阻塞等待而非立即报错：本路径是 best-effort 丢弃后的最后兜底，
 	// 立即失败会让日志永久丢失；阻塞上限由调用方 ctx 期限约束。
+	req.migrationDone = service.BeginMigrationDetachedTask("repository.usage_log_create_queue")
 	select {
 	case r.createBatchCh <- req:
 	case <-ctx.Done():
+		req.migrationDone()
 		return false, service.MarkUsageLogCreateNotPersisted(ctx.Err())
 	}
 
@@ -560,6 +566,13 @@ func (r *usageLogRepository) flushCreateBatch(db *sql.DB, batch []usageLogCreate
 }
 
 func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBestEffortRequest) {
+	defer func() {
+		for _, req := range batch {
+			if req.migrationDone != nil {
+				req.migrationDone()
+			}
+		}
+	}()
 	if len(batch) == 0 {
 		return
 	}
@@ -642,6 +655,9 @@ func sendUsageLogBestEffortResult(ch chan error, err error) {
 }
 
 func completeUsageLogCreateRequest(req usageLogCreateRequest, res usageLogCreateResult) {
+	if req.migrationDone != nil {
+		defer req.migrationDone()
+	}
 	if req.shared != nil {
 		req.shared.state.Store(usageLogCreateStateCompleted)
 	}
