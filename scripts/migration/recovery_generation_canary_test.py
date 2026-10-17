@@ -174,6 +174,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(report["network_access"])
         self.assertFalse(report["billable_request_sent"])
         self.assertNotIn("/model-canary/", report["durable_no_repeat_journal"])
+        self.assertEqual(M.SCOPE, M.ROOT / "recovery-generation-canary-v2-20261017")
+        self.assertNotEqual(M.SCOPE, M.ROOT / "recovery-generation-canary-20261017")
 
     def test_unmodified_sse_tls_and_source_sql_implementation_is_hash_bound(self):
         base = M.load_base()

@@ -60,7 +60,7 @@ def controls():
 
 class CanaryTests(unittest.TestCase):
     def test_current_recovery_generation_and_wrapper_image_are_pinned(self):
-        self.assertEqual(M.RPC_SHA256, "8180879f75169f130b726536ee16957832a9d2bf9e193f93ad380ebd8264f6ec")
+        self.assertEqual(M.RPC_SHA256, "85d980acff46125de0db0a2734d33b632f1cfb919577be871f8c56faff2db75a")
         self.assertEqual(M.APP_ID, "17e3bfacbd442beff52427e003e58f4970e613203356b8bb8bde0e98b9229bce")
         self.assertEqual(M.PG_IMAGE, "sha256:9a5296338b4957a7082ad925c9f31346f6f1cb6b7cbe7bd2971430432488a395")
 
@@ -74,6 +74,7 @@ class CanaryTests(unittest.TestCase):
 
     def test_original_canary_is_hash_bound_and_reused_without_copying_logic(self):
         base = M.load_base()
+        self.assertEqual(M.BASE_SHA256, M.hashlib.sha256(PATH.with_name("model_canary.py").read_bytes()).hexdigest())
         self.assertEqual(base.MODEL, "gpt-6.1-sol")
         self.assertEqual(base.request_body()["max_output_tokens"], 128)
         self.assertEqual(base.TargetTLSConnection.__module__, "postcutover_reused_model_canary")

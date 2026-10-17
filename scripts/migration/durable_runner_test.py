@@ -420,6 +420,65 @@ class DurableRunnerTests(unittest.TestCase):
         operations = [event[0] for event in backend.events if event[1] == "before"]
         self.assertLess(operations.index(before), operations.index(after), (before, after))
 
+    def make_with_real_attestation(self):
+        """Exercise the real source freshness/quiet validator on timed macros."""
+        adapter = load("runner_backend")
+        clock, backend, _ = self.make(rpc_wire=True, source_wire=True)
+        owner, attestations = "ab" * 16, []
+        attester = types.SimpleNamespace(config={"owner": owner}, now=clock.now, boot_id=backend.boot_id,
+            rpc=backend.rpc, store=types.SimpleNamespace(attest=lambda value: attestations.append(copy.deepcopy(value))))
+        def attest(state, runtime, snapshot=None, sampled_started=None):
+            backend.hit("attest", "before")
+            result = adapter.RunnerBackend.attest(attester, state, runtime, snapshot, sampled_started)
+            backend.hit("attest", "after")
+            return result
+        backend.attest = attest
+        return clock, backend, backend.engine(initial(owner=owner)), adapter, attestations
+
+    def test_slow_quiesce_does_not_age_the_later_precommit_attestation(self):
+        clock, backend, engine, _, attestations = self.make_with_real_attestation()
+        # Pause/drain may take over two seconds; the target obtains its quiet
+        # snapshot after those barriers, and pg.arm-quiet obtains a newer one.
+        backend.delays["rpc.app.quiesce"] = 2.1
+        engine.handover_all()
+        self.assertEqual((engine.state["pg"], engine.state["redis"]), ("TENCENT", "TENCENT"))
+        self.assertEqual(len(self.calls(backend, "attest")), 2)
+        self.assert_order(backend, "source.pg_final_evidence", "attest")
+        self.assert_order(backend, "rpc.pg.arm-quiet", "attest")
+        self.assert_order(backend, "attest", "source.pg_stop")
+        self.assertEqual(attestations[0]["postgres"]["final_lsn"], "10/2")
+        self.assertEqual(attestations[0]["postgres"]["arm_id"], backend.arm["arm_id"])
+        self.assertTrue(attestations[0]["postgres"]["writers_quiet"])
+        self.assertEqual(backend.stop_commands, 1)
+        self.assertEqual(backend.promotions, 1)
+        self.assertLess(engine.state["pause_seconds"], M.TOTAL_PAUSE_BUDGET)
+
+    def test_post_arm_sample_over_two_seconds_still_cannot_stop_source(self):
+        clock, backend, engine, adapter, attestations = self.make_with_real_attestation()
+        backend.delays["rpc.pg.arm-quiet"] = 2.01
+        with self.assertRaisesRegex(adapter.Refusal, "ATTESTATION_SAMPLE_STALE"):
+            engine.handover_all()
+        self.assertEqual(attestations, [])
+        self.assertEqual(backend.stop_commands, 0)
+        self.assertEqual(backend.promotions, 0)
+        self.assertEqual(backend.failover_commands, 0)
+        self.assertEqual(backend.arm["status"], "CANCELLED")
+        self.assertTrue(backend.runtime()["ready"])
+
+    def test_slow_quiesce_still_requires_five_seconds_for_irreversible_forward_work(self):
+        clock, backend, engine, _, attestations = self.make_with_real_attestation()
+        backend.delays["rpc.app.quiesce"] = 3.1
+        with self.assertRaisesRegex(M.Refusal, "abort-before-source-stop-budget"):
+            engine.handover_all()
+        self.assertEqual(M.TOTAL_PAUSE_BUDGET, 8)
+        self.assertEqual(M.USER_LIMIT, 10)
+        self.assertEqual(M.COMBINED_FORWARD_RESERVE, 5)
+        self.assertEqual(len(attestations), 1)
+        self.assertEqual(backend.stop_commands, 0)
+        self.assertEqual(backend.promotions, 0)
+        self.assertEqual(backend.arm["status"], "CANCELLED")
+        self.assertTrue(backend.runtime()["ready"])
+
     def test_combined_handover_uses_one_window_and_fixed_macro_route(self):
         clock, backend, engine = self.make(rpc_wire=True, source_wire=True)
         engine.handover_all()

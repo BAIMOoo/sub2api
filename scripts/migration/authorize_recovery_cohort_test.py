@@ -94,7 +94,11 @@ class ProofTests(unittest.TestCase):
                         'rolling_app_recovery.py': core, 'recover_source_guard.py': {'COMMON': COMMON}}
             successful_read = subprocess.CompletedProcess([], 0, stdout=json.dumps(proof()).encode(), stderr=b'')
             run = mock.Mock(side_effect=[successful_read, subprocess.TimeoutExpired('remote-source', 45)])
-            with mock.patch.object(R.runpy, 'run_path', side_effect=lambda path: mappings[pathlib.Path(path).name]), \
+            # This already-executed tool keeps its old production pin. Inject
+            # the local fixture pin only to exercise transport unknown handling.
+            current_pin = R.hashlib.sha256(pathlib.Path(__file__).with_name('target_rpc.py').read_bytes()).hexdigest()
+            with mock.patch.object(R, 'RPC_SHA', current_pin), \
+                    mock.patch.object(R.runpy, 'run_path', side_effect=lambda path: mappings[pathlib.Path(path).name]), \
                     mock.patch.object(R.subprocess, 'run', run):
                 with self.assertRaises(subprocess.TimeoutExpired):
                     R.main(['--apply'])

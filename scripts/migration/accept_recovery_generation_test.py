@@ -331,6 +331,9 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_frozen_canary_bytes_and_both_generated_workers_compile(self):
         self.assertEqual(M.sha((HERE / "recovery_generation_canary.py").read_bytes()), M.CANARY_SHA)
+        self.assertEqual(C.SCOPE.name, "recovery-generation-canary-v2-20261017")
+        self.assertEqual(M.DELTA_FILE, "recovery-generation-delta-tests-v3-20261017.json")
+        self.assertTrue({"model_canary_test.py", "postcutover_canary_test.py"} <= M.TEST_FILES)
         payload = {"canary_program": base64.b64encode(b"reviewed").decode(), "delta": "e30=", "target": self.proof}
         for action in ("source", "target", "inspect"):
             compile(M.remote_source(action, payload), "generated-" + action, "exec")

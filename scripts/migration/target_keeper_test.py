@@ -231,6 +231,106 @@ class KeeperTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(K.Refusal):
                 K.validate_arm(proof, self.cfg, R, "3" * 64)
 
+    def wait_breach_proof(self):
+        proof = arm(self.cfg)
+        proof["complete"].update(phase="COMPLETE_WITH_WAIT_BREACH", wait_budget_breach={
+            "deadline_breached": True, "max_cohort_pause_seconds": 16.3819498513, "user_limit_seconds": 10})
+        return proof
+
+    def test_recorded_wait_breach_adopts_running_services_without_erasing_record(self):
+        self.s.proof = self.wait_breach_proof()
+        before = copy.deepcopy(self.s.proof)
+        self.assertTrue(self.k.step()["ready"])
+        self.assertEqual(self.s.proof, before)
+        self.assertFalse(any(item.startswith("start:") for item in self.b.events))
+        self.assertEqual(self.b.activation_posts, 0)
+
+    def shell_exit_proof(self):
+        proof = self.wait_breach_proof()
+        proof['complete']['source_redis_shell_exit'] = copy.deepcopy(K.SOURCE_REDIS_SHELL_EXIT)
+        proof['complete']['source_resources']['redis'].update(
+            id=K.SOURCE_REDIS_SHELL_EXIT['container_id'], exit_code=127)
+        return proof
+
+    def test_exact_shell_exit_adopts_without_rewriting_source_proof(self):
+        self.s.proof = self.shell_exit_proof()
+        before = copy.deepcopy(self.s.proof)
+        self.assertTrue(self.k.step()['ready'])
+        self.assertEqual(before, self.s.proof)
+        self.assertFalse(any(x.startswith('start:') for x in self.b.events))
+
+    def test_shell_exception_cannot_mask_other_source_failures(self):
+        for kind, field, value in [('redis','running',True), ('redis','restart','always'),
+                ('redis','oom_killed',True), ('redis','exit_code',0), ('redis','exit_code',1),
+                ('redis','id','c'*64), ('app','exit_code',127), ('postgres','exit_code',127)]:
+            proof = self.shell_exit_proof()
+            proof['complete']['source_resources'][kind][field] = value
+            with self.subTest(kind=kind,field=field,value=value), self.assertRaises(K.Refusal):
+                K.validate_arm(proof,self.cfg,R,'3'*64)
+
+    def test_shell_exception_requires_exact_ack_logs_and_pending_operation(self):
+        for field in K.SOURCE_REDIS_SHELL_EXIT:
+            proof = self.shell_exit_proof()
+            del proof['complete']['source_redis_shell_exit'][field]
+            with self.subTest(missing=field), self.assertRaises(K.Refusal):
+                K.validate_arm(proof,self.cfg,R,'3'*64)
+        for field,value in [('prior_op_phase','complete'),('container_exit_code',True),
+                ('shutdown_ack_sha256','a'*64),('wrapper_log_sha256','a'*64)]:
+            proof = self.shell_exit_proof()
+            proof['complete']['source_redis_shell_exit'][field] = value
+            with self.subTest(field=field), self.assertRaises(K.Refusal):
+                K.validate_arm(proof,self.cfg,R,'3'*64)
+        proof = self.shell_exit_proof()
+        proof['complete']['phase'] = 'COMPLETE'
+        del proof['complete']['wait_budget_breach']
+        with self.assertRaises(K.Refusal):K.validate_arm(proof,self.cfg,R,'3'*64)
+
+    def test_wait_breach_requires_exact_truthful_record(self):
+        for field, value in (("deadline_breached", False), ("deadline_breached", 1),
+                             ("max_cohort_pause_seconds", float("nan")),
+                             ("max_cohort_pause_seconds", float("inf")),
+                             ("max_cohort_pause_seconds", 10), ("max_cohort_pause_seconds", 9),
+                             ("max_cohort_pause_seconds", True), ("max_cohort_pause_seconds", "16"),
+                             ("user_limit_seconds", 11), ("user_limit_seconds", True)):
+            with self.subTest(field=field, value=value):
+                self.s.proof = self.wait_breach_proof()
+                self.s.proof["complete"]["wait_budget_breach"][field] = value
+                with self.assertRaisesRegex(K.Refusal, "WAIT_BREACH_INVALID"):
+                    self.k.step()
+        self.assertEqual(self.b.events, [])
+
+    def test_wait_breach_incomplete_unknown_or_mislabeled_record_is_rejected(self):
+        for missing in (None, "deadline_breached", "max_cohort_pause_seconds", "user_limit_seconds"):
+            with self.subTest(missing=missing):
+                proof = self.wait_breach_proof()
+                if missing is None:
+                    del proof["complete"]["wait_budget_breach"]
+                else:
+                    del proof["complete"]["wait_budget_breach"][missing]
+                with self.assertRaises(K.Refusal):
+                    K.validate_arm(proof, self.cfg, R, "3" * 64)
+        for phase in ("COMPLETE", "UNKNOWN"):
+            proof = self.wait_breach_proof()
+            proof["complete"]["phase"] = phase
+            with self.subTest(phase=phase), self.assertRaises(K.Refusal):
+                K.validate_arm(proof, self.cfg, R, "3" * 64)
+        proof = self.wait_breach_proof()
+        proof["complete"]["wait_budget_breach"]["extra"] = True
+        with self.assertRaisesRegex(K.Refusal, "WAIT_BREACH_FIELDS"):
+            K.validate_arm(proof, self.cfg, R, "3" * 64)
+
+    def test_wait_breach_preserves_authority_retirement_and_freshness_gates(self):
+        for field, value in (("pg", "AWS"), ("redis", "AWS"), ("window", {}),
+                             ("verified_at", 900), ("state_sha256", "invalid")):
+            proof = self.wait_breach_proof()
+            proof["complete"][field] = value
+            with self.subTest(field=field), self.assertRaises(K.Refusal):
+                K.validate_arm(proof, self.cfg, R, "3" * 64)
+        proof = self.wait_breach_proof()
+        proof["complete"]["source_resources"]["app"]["running"] = True
+        with self.assertRaisesRegex(K.Refusal, "SOURCE_NOT_CLEANLY_RETIRED"):
+            K.validate_arm(proof, self.cfg, R, "3" * 64)
+
     def test_repeated_source_resource_id_is_not_three_retirement_proofs(self):
         self.s.proof["complete"]["source_resources"]["redis"]["id"] = self.s.proof["complete"]["source_resources"]["app"]["id"]
         with self.assertRaisesRegex(K.Refusal, "NOT_DISTINCT"):

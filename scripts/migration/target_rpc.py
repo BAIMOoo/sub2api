@@ -7,6 +7,7 @@ reviewed root installer, never to an RPC request.
 """
 import contextlib
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
 import http.client
@@ -334,6 +335,7 @@ class FileStore:
     """Short flock-protected, fsync checkpoint + append-only audit ledger."""
     def __init__(self, config, scope=SCOPE, uid=0):
         self.config, self.scope, self.uid = config, pathlib.Path(scope), uid
+        self._cached_raw, self._cached_state = None, None
         trusted_directory(self.scope, uid, private=True)
 
     def _read(self):
@@ -343,8 +345,14 @@ class FileStore:
             return {"v": 1, "run": RUN, "owner": self.config["owner"], "epoch": 0,
                     "operations": {}, "pg": {"authority": "AWS", "arm": None, "promotion_intent": None},
                     "redis": {"authority": "AWS"}}
-        state = strict_json(private_read(path, self.uid), 8 * 1024 * 1024)
+        # Always reopen and validate the complete file while holding ledger.lock.
+        # Only exact trusted bytes can reuse this instance's immutable snapshot.
+        raw = private_read(path, self.uid)
+        state = (marshal.loads(self._cached_state) if raw == self._cached_raw else
+                 strict_json(raw, 8 * 1024 * 1024))
         require(state["run"] == RUN and state["owner"] == self.config["owner"] and integer(state["epoch"]), "LEDGER_IDENTITY")
+        if raw != self._cached_raw:
+            self._cached_raw, self._cached_state = raw, marshal.dumps(state)
         return state
 
     @staticmethod
@@ -367,6 +375,10 @@ class FileStore:
             before = {key: marshal.dumps(value) for key, value in state["operations"].items()}
             result = change(state)
             written = atomic_json(self.scope / "state.json", state, self.uid, return_bytes=True)
+            # A callback can supply JSON-compatible tuples or subclasses. Decode
+            # our own canonical output once to retain ordinary JSON read types;
+            # untrusted file changes still pass strict_json in _read.
+            self._cached_raw, self._cached_state = written + b"\n", marshal.dumps(json.loads(written))
             changed = [{"op_id": key, "action": value["request"]["action"], "phase": value["phase"],
                         "request_sha256": value["request_sha256"],
                         "code": value.get("response", {}).get("code")}
@@ -440,10 +452,17 @@ class LocalBackend:
     def resource(self, kind):
         expected = self.config[kind]
         name = {"pg": PG_CONTAINER, "redis": REDIS_CONTAINER, "app": APP_CONTAINER}[kind]
-        actual = self.docker_json("container", name)
+        volume_name, destination = (PG_VOLUME, PG_DATA) if kind == "pg" else (REDIS_VOLUME, "/data")
+        # These independent inspections use only fixed, configured identities.
+        # All complete before resource validation can permit any caller mutation.
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            container_read = executor.submit(self.docker_json, "container", name)
+            image_read = executor.submit(self.docker_json, "image", expected["image_id"])
+            volume_read = executor.submit(self.docker_json, "volume", volume_name) if kind != "app" else None
+            actual, image = container_read.result(), image_read.result()
+            volume = volume_read.result() if volume_read else None
         require(actual["Id"] == expected["container_id"] and actual["Image"] == expected["image_id"] and
                 sha(actual["Config"]) == expected["config_sha256"], "RESOURCE_IDENTITY_CHANGED")
-        image = self.docker_json("image", expected["image_id"])
         require(image["Id"] == expected["image_id"] and image["RootFS"]["Layers"] == expected["rootfs_diffids"], "IMAGE_CHANGED")
         require(actual["State"]["Running"] is True and actual["HostConfig"]["RestartPolicy"]["Name"] == "no",
                 "RESOURCE_NOT_RUNNING_OR_RESTARTABLE")
@@ -454,8 +473,6 @@ class LocalBackend:
             run = "sub2api-pg-replica-20261016" if kind == "pg" else "sub2api-redis-standby-20261016"
             require(labels.get(OWNER_LABEL) == expected["owner"] and labels.get("io.sub2api.migration.run") == run,
                     "RESOURCE_OWNER_CHANGED")
-            volume_name, destination = (PG_VOLUME, PG_DATA) if kind == "pg" else (REDIS_VOLUME, "/data")
-            volume = self.docker_json("volume", volume_name)
             require(volume["Driver"] == "local" and volume["Mountpoint"] == expected["volume_path"] and
                     volume.get("Labels", {}).get(OWNER_LABEL) == expected["owner"] and
                     volume.get("Labels", {}).get("io.sub2api.migration.run") == run, "VOLUME_CHANGED")

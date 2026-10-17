@@ -1321,6 +1321,76 @@ class FileStoreHistoryTests(RequestAssertions, unittest.TestCase):
         self.assertEqual(raw, rpcmod.canonical(state))
         self.assertEqual(path.read_bytes(), raw + b"\n")
 
+    def test_read_cache_is_detached_and_revalidates_exact_file_bytes(self):
+        self.seed(self.store._read())
+        with mock.patch.object(rpcmod, "strict_json", wraps=rpcmod.strict_json) as decode, \
+             mock.patch.object(rpcmod, "private_read", wraps=rpcmod.private_read) as read:
+            first = self.store.read()
+            first["pg"]["authority"] = "caller-mutated"
+            self.assertEqual(self.store.read()["pg"]["authority"], "AWS")
+            self.assertEqual(decode.call_count, 1)
+            self.assertEqual(read.call_count, 2)
+            path = self.scope / "state.json"
+            raw = path.read_bytes()
+            changed = raw.replace(b'"epoch":0', b'"epoch":1')
+            self.assertEqual(len(changed), len(raw))
+            path.write_bytes(changed)
+            self.assertEqual(self.store.read()["epoch"], 1)
+            self.assertEqual(decode.call_count, 2)
+            path.chmod(0o644)
+            self.refusal(self.store.read, "UNTRUSTED_FILE")
+
+    def test_invalid_external_json_cannot_hit_or_poison_cache(self):
+        self.seed(self.store._read())
+        original = (self.scope / "state.json").read_bytes()
+        self.assertEqual(self.store.read()["epoch"], 0)
+        for raw, code in ((b"{", "INVALID_JSON"),
+                          (original.replace(b'"epoch":0', b'"epoch":0,"epoch":1'), "DUPLICATE_KEY"),
+                          (original.replace(b'"epoch":0', b'"epoch":NaN'), "NONFINITE_NUMBER"),
+                          (original.replace(b'"epoch":0', b'"epoch":1e999'), "INVALID_JSON")):
+            with self.subTest(code=code):
+                (self.scope / "state.json").write_bytes(raw)
+                self.refusal(self.store.read, code)
+                (self.scope / "state.json").write_bytes(original)
+                self.assertEqual(self.store.read()["epoch"], 0)
+
+    def test_update_cache_uses_persisted_json_types_without_strict_reparse(self):
+        class JSONList(list):
+            pass
+        self.seed(self.store._read())
+        self.store.read()
+        with mock.patch.object(rpcmod, "strict_json", side_effect=AssertionError("unchanged trusted bytes")):
+            self.store.update(lambda state: state.update(payload=(JSONList([1, 2]), {"a": True})))
+            result = self.store.read()
+            self.assertEqual(result["payload"], [[1, 2], {"a": True}])
+            self.assertIs(type(result["payload"]), list)
+            result["payload"][0].append(3)
+            self.assertEqual(self.store.read()["payload"][0], [1, 2])
+
+    def test_two_store_caches_refresh_under_concurrent_updates(self):
+        self.seed(self.store._read())
+        other = rpcmod.FileStore(config(), self.scope, self.uid)
+        self.store.read(); other.read()
+        gate = threading.Barrier(2)
+        errors = []
+        def update(store):
+            try:
+                gate.wait(timeout=2)
+                for _ in range(5):
+                    store.update(lambda state: state.update(epoch=state["epoch"] + 1))
+            except Exception as error:
+                errors.append(error)
+        threads = [threading.Thread(target=update, args=(store,)) for store in (self.store, other)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(self.store.read()["epoch"], 10)
+        self.assertEqual(other.read()["epoch"], 10)
+        self.assertEqual(len(self.events()), 10)
+
 
 class AdoptionBackendTests(RequestAssertions, unittest.TestCase):
     def setUp(self):
@@ -1459,6 +1529,83 @@ class AdoptionBackendTests(RequestAssertions, unittest.TestCase):
 
 
 class BackendTests(RequestAssertions, unittest.TestCase):
+    def resource_fixture(self, kind):
+        cfg = config()
+        entry = cfg[kind]
+        volume_name, destination, run = ((rpcmod.PG_VOLUME, rpcmod.PG_DATA, "sub2api-pg-replica-20261016")
+            if kind == "pg" else (rpcmod.REDIS_VOLUME, "/data", "sub2api-redis-standby-20261016"))
+        labels = {rpcmod.OWNER_LABEL: entry["owner"], "io.sub2api.migration.run": run}
+        actual = {"Id": entry["container_id"], "Image": entry["image_id"], "Config": {"Labels": labels},
+                  "State": {"Running": True},
+                  "HostConfig": {"RestartPolicy": {"Name": "no"}, "NetworkMode": "host"},
+                  "Mounts": [{"Destination": destination, "Name": volume_name,
+                              "Source": entry["volume_path"], "Type": "volume", "RW": True}]}
+        entry["config_sha256"] = rpcmod.sha(actual["Config"])
+        image = {"Id": entry["image_id"], "RootFS": {"Layers": entry["rootfs_diffids"]}}
+        volume = {"Driver": "local", "Mountpoint": entry["volume_path"], "Labels": copy.deepcopy(labels)}
+        backend = rpcmod.LocalBackend(cfg)
+        resources = {"container": actual, "image": image, "volume": volume}
+        backend.docker_json = mock.Mock(side_effect=lambda resource, name: resources[resource])
+        return backend, resources
+
+    def test_resource_fixed_inspections_overlap_before_validation(self):
+        backend, resources = self.resource_fixture("pg")
+        barrier = threading.Barrier(3)
+        calls = []
+        def inspect(kind, name):
+            calls.append((kind, name, threading.get_ident()))
+            barrier.wait(timeout=2)
+            return resources[kind]
+        backend.docker_json.side_effect = inspect
+        with mock.patch.object(pathlib.Path, "is_symlink", return_value=False):
+            self.assertIs(backend.resource("pg"), resources["container"])
+        self.assertEqual({(kind, name) for kind, name, _ in calls}, {
+            ("container", rpcmod.PG_CONTAINER), ("image", backend.config["pg"]["image_id"]),
+            ("volume", rpcmod.PG_VOLUME)})
+        self.assertEqual(len({ident for _, _, ident in calls}), 3)
+
+    def test_parallel_inspection_preserves_every_resource_guard_before_sql(self):
+        cases = [
+            ("container", ("Id",), "changed", "RESOURCE_IDENTITY_CHANGED"),
+            ("container", ("Image",), "changed", "RESOURCE_IDENTITY_CHANGED"),
+            ("container", ("Config", "other"), True, "RESOURCE_IDENTITY_CHANGED"),
+            ("image", ("Id",), "changed", "IMAGE_CHANGED"),
+            ("image", ("RootFS", "Layers"), [], "IMAGE_CHANGED"),
+            ("container", ("State", "Running"), False, "RESOURCE_NOT_RUNNING_OR_RESTARTABLE"),
+            ("container", ("HostConfig", "RestartPolicy", "Name"), "always", "RESOURCE_NOT_RUNNING_OR_RESTARTABLE"),
+            ("container", ("HostConfig", "NetworkMode"), "bridge", "RESOURCE_NETWORK_CHANGED"),
+            ("container", ("HostConfig", "PortBindings"), {"1/tcp": []}, "RESOURCE_NETWORK_CHANGED"),
+            ("container", ("Config", "Labels", rpcmod.OWNER_LABEL), "changed", "RESOURCE_OWNER_CHANGED"),
+            ("container", ("Config", "Labels", "io.sub2api.migration.run"), "changed", "RESOURCE_OWNER_CHANGED"),
+            ("volume", ("Driver",), "changed", "VOLUME_CHANGED"),
+            ("volume", ("Mountpoint",), "/elsewhere", "VOLUME_CHANGED"),
+            ("volume", ("Labels", rpcmod.OWNER_LABEL), "changed", "VOLUME_CHANGED"),
+            ("volume", ("Labels", "io.sub2api.migration.run"), "changed", "VOLUME_CHANGED"),
+            ("container", ("Mounts",), [], "VOLUME_MOUNT_CHANGED"),
+        ]
+        cases += [("container", ("Mounts", 0, key), value, "VOLUME_MOUNT_CHANGED")
+                  for key, value in (("Name", "other"), ("Source", "/elsewhere"), ("Type", "bind"), ("RW", False))]
+        for resource, keys, value, code in cases:
+            with self.subTest(resource=resource, keys=keys):
+                backend, resources = self.resource_fixture("pg")
+                target = resources[resource]
+                for key in keys[:-1]:
+                    target = target[key]
+                target[keys[-1]] = value
+                if code == "RESOURCE_OWNER_CHANGED":
+                    backend.config["pg"]["config_sha256"] = rpcmod.sha(resources["container"]["Config"])
+                backend.command = mock.Mock(side_effect=AssertionError("guard must precede SQL"))
+                self.refusal(backend.pg_sample, code)
+                backend.command.assert_not_called()
+        backend, _ = self.resource_fixture("pg")
+        backend.command = mock.Mock(side_effect=AssertionError("guard must precede SQL"))
+        with mock.patch.object(pathlib.Path, "is_symlink", return_value=True):
+            self.refusal(backend.pg_sample, "VOLUME_SYMLINK")
+        backend.command.assert_not_called()
+        backend, resources = self.resource_fixture("redis")
+        with mock.patch.object(pathlib.Path, "is_symlink", return_value=False):
+            self.assertIs(backend.resource("redis"), resources["container"])
+
     def test_quiet_snapshot_checks_app_once_reuses_one_private_token_and_fixed_gets(self):
         backend = rpcmod.LocalBackend(config())
         backend.resource = mock.Mock()

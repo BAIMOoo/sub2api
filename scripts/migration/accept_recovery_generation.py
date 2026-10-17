@@ -27,9 +27,9 @@ LIB = pathlib.Path("/usr/local/libexec/sub2api-migration-20261016")
 SCOPE = ROOT / "runner"
 SAVED = SCOPE / "generation-acceptance-20261017"
 FOLDER = pathlib.Path.home() / ".codex/backups/sub2api-source-controller-20261016"
-DELTA_FILE = "recovery-generation-delta-tests-v2-20261017.json"
-DELTA_SHA = "cbc5893a888f79d61cd9da0d545572bd876076ef089674771a8ad74f101ed3bf"
-CANARY_SHA = "bf6c195f2410cedb5c86681aef6d93723a7ad1936573afec3053d20515261e47"
+DELTA_FILE = "recovery-generation-delta-tests-v3-20261017.json"
+DELTA_SHA = "0f37b302405bdd8c053bff82c42b2411b34529fc326fcc108b91d8fdf50a05f1"
+CANARY_SHA = "2acb804b7353fd1f8a38d113744e5732a9498ffcc4444c9bc4f477171bfeba36"
 RPC_SHA = "8180879f75169f130b726536ee16957832a9d2bf9e193f93ad380ebd8264f6ec"
 GUARD_SHA = "72cb81b27bcf8c4f316511ca0460f44af453ab51276d53cda82ba55e2cee8d05"
 LEDGER_SHA = "abd784df64eaf0fb3d5d622f8025a221657078b731cf97d9859cee3ba8991ce3"
@@ -42,7 +42,8 @@ FROZEN = ("state.json", "transport-state.json", "source-operations.json", "runne
           "guard-config.json", "source-manifest.json")
 TEST_FILES = {"target_rpc_test.py", "adopt_recovery_app_test.py", "authorize_recovery_cohort_test.py",
               "runner_guard_test.py", "runner_service_test.py", "durable_runner_test.py", "rolling_app_host_test.py",
-              "rolling_app_route_test.py", "target_keeper_test.py", "recovery_generation_canary_test.py"}
+              "rolling_app_route_test.py", "target_keeper_test.py", "recovery_generation_canary_test.py",
+              "model_canary_test.py", "postcutover_canary_test.py"}
 
 
 class Refusal(RuntimeError):

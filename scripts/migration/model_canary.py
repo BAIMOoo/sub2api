@@ -193,10 +193,14 @@ def model_request(lane, token, request_id, supplied_client_id, stats):
         response = connection.getresponse()
         stats["transport"] = connection.evidence if lane == "target" else {"loopback_http_port": PORTS[lane]}
         stats["http_status"] = response.status
+        # Gateway responses may replace or append the upstream request ID.
+        # Billing correlation uses the effective client UUID, not this header.
+        stats["server_request_ids"] = [value for name, value in response.getheaders() if name.lower() == "x-request-id"]
+        stats["server_request_id"] = response.getheader("X-Request-ID")
+        stats["server_request_id_matches_supplied"] = stats["server_request_id"] == request_id
         effective = response.getheader("X-Client-Request-ID")
         need(valid_uuid(effective), "server-client-request-id-missing-or-invalid")
         stats["effective_client_request_id"] = effective
-        need(response.getheader("X-Request-ID") == request_id, "server-request-id-not-echoed")
         need(response.status == 200 and response.getheader("Content-Type", "").split(";")[0].strip() == "text/event-stream",
              "model-http-status-or-content-type")
         consume_sse(response, stats, started)

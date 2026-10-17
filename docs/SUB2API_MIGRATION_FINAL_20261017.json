@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-17T05:20:09.620137+00:00",
+  "runtime_completed": true,
+  "phase": "COMPLETE_WITH_WAIT_BREACH",
+  "all_original_migration_objectives_passed": false,
+  "wait_objective": {
+    "passed": false,
+    "limit_seconds": 10,
+    "measured_pause_seconds": 16.38194985128939,
+    "deadline_breached": true,
+    "cumulative_pause_history_seconds": 46.66268306039274
+  },
+  "current_host": "43.165.177.136",
+  "domain": "api.b4im.com",
+  "authorities": {
+    "postgres": "TENCENT",
+    "redis": "TENCENT"
+  },
+  "persistent_endpoints": {
+    "postgres": "target",
+    "redis": "target"
+  },
+  "keeper": {
+    "active": true,
+    "enabled": true,
+    "adoption_preserved_business_pids": true,
+    "production_cold_boot_tested": false
+  },
+  "confirmed_canary": {
+    "ok": true,
+    "canonical_report_sha256": "4d37dd8e5108825b77a3851411b58839359ae2357cda695d6dea06c2a9726d2b",
+    "tls_verified": true,
+    "http_status": 200,
+    "first_text_seconds": 1.5960302179883001,
+    "eof_seconds": 1.6255663689953508,
+    "terminal": "response.completed",
+    "clean_eof": true,
+    "usage_count": 1,
+    "dedup_count": 1,
+    "charge_usd": "0.00002560"
+  },
+  "backups": {
+    "postgres_bytes": 133059288,
+    "postgres_plaintext_sha256": "4b031ca85136588f08d70ae45ef6bc889bc04ebe9e36387f5dd48c9f406c76e7",
+    "postgres_toc_checked": true,
+    "runtime_archive_decrypt_verified": true,
+    "redis_bytes": 254654,
+    "redis_plaintext_sha256": "5cca54e8b3e395bc64a1b001b626ec1019524b94ea99135277e7e4548417803a",
+    "redis_crc_checked": true,
+    "all_decrypt_verified": true,
+    "cross_service_atomic": false,
+    "final_dump_full_restore_tested": false,
+    "bootstrap": {
+      "status": "complete",
+      "directory": "/Users/mima0000/.codex/backups/sub2api-tencent-bootstrap-20261017",
+      "fixed_file_count": 50,
+      "archive_bytes": 15058104,
+      "plaintext_sha256": "b0aa60b43bdc047da6e9f9a6d2d2222fba6ddbacf0d78d2af20cadb9d38707cf",
+      "manifest_sha256": "4c5fde25097385da70ad08d086e84acc814a18f743b31715e05965c0e06807f8",
+      "independent_decrypt_and_archive_verified": true,
+      "remote_mutations": false,
+      "container_images_exported": false
+    }
+  },
+  "source_retirement": {
+    "old_business_containers_stopped": true,
+    "restart_policy": "no",
+    "app_exit": 0,
+    "postgres_exit": 0,
+    "redis_shell_exit": 127,
+    "redis_child_shutdown_saved": true,
+    "redis_signal_operation_phase": "pending",
+    "aws_relay_caddy_instance_ip_retained": true,
+    "old_data_minimum_retention_days": 7,
+    "automatic_deletion_scheduled": false,
+    "minimum_retention_not_before_utc": "2026-10-24T05:20:09.620137+00:00"
+  },
+  "rollback_requires_data_sync": true,
+  "current_program_sha256": {
+    "durable_runner.py": "5419ce229ed41bd98b9b4143d15f89817236c29b94071f7c8fb54dfefa86fb14",
+    "target_rpc.py": "85d980acff46125de0db0a2734d33b632f1cfb919577be871f8c56faff2db75a",
+    "target_keeper.py": "05c5f2e681713d8a890c022577406ce92993a0d86ca91ffb15898956fe278352",
+    "rolling_app_route.py": "e958f4a975db00b7b5a55facaa43f99e9511949aa29727a7d6523682c798c8f1"
+  },
+  "final_public_health": {
+    "http_status": 200,
+    "tls_verify_result": 0,
+    "via_independent_local_proxy": true
+  },
+  "migration_python_tests": {
+    "run": 1113,
+    "passed": 1111,
+    "skipped": 2,
+    "failed": 0
+  },
+  "local_backup_program_sha256": {
+    "backup_tencent_final.py": "3028771b67a61e21c222fc4dba9973a85219436c8193de2e7ea8d798043d461d",
+    "backup_tencent_redis.py": "862aca17db8e5c90887b1e5694663ff8dcdcb2700d96eedb45cdef690a0ff7b7",
+    "backup_runtime_bootstrap.py": "618c903f2f1ebcb769e340b140a24b610d9c9d3a0bb49a0d4f89d983c0c37fbb"
+  }
+}

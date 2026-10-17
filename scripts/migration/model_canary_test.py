@@ -118,6 +118,7 @@ class CanaryTests(unittest.TestCase):
         response = mock.Mock(); response.status = 200
         response.getheader.side_effect = lambda k, default=None: {
             "X-Client-Request-ID": CLIENT, "X-Request-ID": "canary", "Content-Type": "text/event-stream"}.get(k, default)
+        response.getheaders.return_value = [("X-Request-ID", "canary")]
         for lane, port in M.PORTS.items():
             target = mock.patch.object(M, "TargetTLSConnection") if lane == "target" else mock.patch.object(M.http.client, "HTTPConnection")
             with target as ctor, mock.patch.object(M, "consume_sse"):
@@ -135,7 +136,48 @@ class CanaryTests(unittest.TestCase):
                 self.assertEqual(kwargs["headers"]["Authorization"], "Bearer " + TOKEN)
                 self.assertEqual(json.loads(kwargs["body"])["max_output_tokens"], 128)
                 self.assertEqual(stats["effective_client_request_id"], CLIENT)
+                self.assertEqual(stats["server_request_ids"], ["canary"])
                 connection.close.assert_called_once()
+
+    def test_upstream_replaced_appended_or_absent_request_id_never_aborts_valid_sse(self):
+        effective = "5e79af24-cdcb-45a3-914e-3c8c8e3481e5"
+        for values in (["upstream-request"], ["supplied-request", "upstream-request"], []):
+            with self.subTest(server_ids=values):
+                response = mock.Mock(); response.status = 200
+                response.getheaders.return_value = [("x-request-id", value) for value in values]
+                response.getheader.side_effect = lambda key, default=None: {
+                    "X-Request-ID": ", ".join(values) if values else None,
+                    "X-Client-Request-ID": effective, "Content-Type": "text/event-stream"}.get(key, default)
+                response.readline.side_effect = io.BytesIO(complete_stream()).readline
+                with mock.patch.object(M, "TargetTLSConnection") as ctor:
+                    connection = ctor.return_value; connection.getresponse.return_value = response
+                    connection.evidence = {"certificate_chain_and_hostname_verified": True}
+                    stats = {}; M.model_request("target", TOKEN, "supplied-request", CLIENT, stats)
+                self.assertEqual(stats["server_request_ids"], values)
+                self.assertFalse(stats["server_request_id_matches_supplied"])
+                self.assertEqual(stats["effective_client_request_id"], effective)
+                self.assertEqual(stats["terminal_event"], "response.completed")
+                self.assertTrue(stats["eof_after_terminal"])
+                key = {**preflight(), "effective_client_request_id": effective}
+                charged = M.validate_billing(billing_value(), stats["usage"], key)
+                self.assertEqual(charged["request_id"], "client:"+effective)
+                connection.request.assert_called_once(); connection.close.assert_called_once()
+
+    def test_request_id_diagnostics_do_not_relax_effective_client_uuid_or_stream_validation(self):
+        for effective, stream, error in [("not-a-uuid", complete_stream(), "server-client-request-id"),
+                                        (CLIENT, event("response.output_text.delta", delta="partial"), "stream-ended-without")]:
+            with self.subTest(effective=effective):
+                response = mock.Mock(); response.status = 200
+                response.getheaders.return_value = [("X-Request-ID", "upstream-request")]
+                response.getheader.side_effect = lambda key, default=None: {
+                    "X-Request-ID": "upstream-request", "X-Client-Request-ID": effective,
+                    "Content-Type": "text/event-stream"}.get(key, default)
+                response.readline.side_effect = io.BytesIO(stream).readline
+                with mock.patch.object(M, "TargetTLSConnection") as ctor:
+                    connection = ctor.return_value; connection.getresponse.return_value = response
+                    with self.assertRaisesRegex(M.Refusal, error):
+                        M.model_request("target", TOKEN, "supplied-request", CLIENT, {})
+                connection.request.assert_called_once(); connection.close.assert_called_once()
 
     def test_target_tls_connects_fixed_ip_but_verifies_real_domain_and_chain(self):
         with mock.patch.object(M.ssl, "create_default_context") as context, mock.patch.object(M.socket, "create_connection") as dial, \

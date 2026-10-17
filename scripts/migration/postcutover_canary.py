@@ -18,8 +18,8 @@ import uuid
 
 RUN = "20261016"
 OWNER = "30bda011defad8149621c2630a2bd89c"
-BASE_SHA256 = "b8d6096172abd798865aaf0263267bd66e4ebf74cfae6227caa648da4e17ed1f"
-RPC_SHA256 = "8180879f75169f130b726536ee16957832a9d2bf9e193f93ad380ebd8264f6ec"
+BASE_SHA256 = "a8458fb80ca426e9ad203584578be6df3d1d16a36c1bd3b7a71e5bdd99d1e20f"
+RPC_SHA256 = "85d980acff46125de0db0a2734d33b632f1cfb919577be871f8c56faff2db75a"
 RPC_PROGRAM = pathlib.Path("/usr/local/libexec/sub2api-migration-20261016/target_rpc.py")
 PREFIX = pathlib.Path("/var/lib/sub2api-migration-20261016")
 SCOPE = PREFIX / "postcutover-canary"

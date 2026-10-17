@@ -4,6 +4,25 @@
 
 ## 当前状态
 
+- **业务及数据已迁至腾讯 `43.165.177.136`**：Cloudflare A 记录和实际 DNS 均指向腾讯，TLS 域名/证书链及公网 `/health` 返回 200。应用、PostgreSQL 主库、Redis 主节点和必要文件均在腾讯；持久与运行端点均为 target/target，32 项后台任务已启用。
+- **10 秒新增等待目标未达标**：attempt7 的实际交接窗口为 **16.38194985128939 秒**，超出约定。运行收尾状态明确为 `COMPLETE_WITH_WAIT_BREACH`，`deadline_breached=true`；累计保守暂停历史 46.66268306039274 秒、当前及最大请求群 16.38194985128939 秒全部保留。不能把运行接管完成写成全部迁移验收通过。
+- 新的真实 TLS 模型 canary 已通过：HTTP 200，首个文本约 1.596 秒、完整 EOF 约 1.626 秒，13 个 SSE 事件及 `response.completed`；腾讯主库对应请求的 usage 与 billing_dedup 各 1 条，24 输入/8 输出，费用 USD 0.00002560。原 canary 在模型 POST 前的预检阶段退出，报告仅保留通用异常，不能断定该次具体异常类型，原失败 lane 保留。新独立 lane 实际观察到一次只读 `OPERATION_BUSY`，仅对这类纯读错误有界重读；模型 POST 没有自动重试。
+- 腾讯 `sub2api-tencent-keeper-20261016.service` 已 active/enabled。接管前后应用 PID 534792、PG PID 509035、Redis PID 133623 均不变；未以生产重启验证冷启动。原配置收据、RPC 优化前后配置和完整账本通过只追加证据链校验。
+- AWS 旧应用和 PostgreSQL 均 exit 0/restart=no；旧 Redis 已执行 `SHUTDOWN SAVE`、完成最终 RDB 保存并正常退出，但其旧 shell 包装脚本随后执行无效命令而返回 **127**。保留真实 Docker exit code、原 signal 操作 pending 状态、独立关机确认及日志摘要；仅精确匹配该固定容器的异常证据允许运行收尾，没有伪造 clean exit 0 或将 pending 改写成成功。
+- AWS 实例、IP、Codex Relay、共享 Caddy 保留。旧业务容器、卷、备份和迁移证据至少保留至 **2026-10-24 最终收尾同一时间之后**，届时也不自动删除。腾讯已有新写入，禁止直接切 DNS 回旧 AWS 或启动旧主库。
+- 最终腾讯新主 PG/Redis 加密备份及独立运行核验已通过，结果见下方追加记录；没有进行最终备份的完整恢复演练或生产冷启动验收。
+
+## 历史检查点
+
+以下内容按发生时记录，包含已经被后续进展取代的“尚未切换”等状态；当前运行位置和未达标项以上方“当前状态”为准。原失败证据不删除。
+
+- 最新 attempt5 已安全恢复：源 SOURCE_DATA/attempt5/windowNone、目标账本 epoch20，PG/Redis 权威 AWS/AWS。该次 `app.quiesce` 完成全部四个暂停子步及完整静默快照，随后源端将“整次宏操作的耗时”误作“最终快照年龄”，在 `ATTESTATION_SAMPLE_STALE` 处拒绝；未执行 pg_final_evidence、停止源数据库或提升目标。此窗口保守计时 5.522576123 秒，累计历史 23.854798038 秒、历史最大请求群 7.082038552 秒不变。正在核对这份初始 attestation 的消费者，以最小修改修正重复检查，所有实际停源前的新鲜度及等待预算门保留。
+- 最新恢复边界：真实新实例 canary 已完整通过 TLS、13 个 SSE 事件、`response.completed`、EOF 及精确 usage/dedup 各 1 条核验；费用 USD 0.00002560。新代验收已完成一次，原始回执和 v3 测试声明保留。随后 attempt4 的 `app.quiesce` 在初始 idle 校验处因出现活动请求而拒绝，未进入任何 pause 子步；主控已取消 arm 并恢复入口，未提升任何数据库。目标账本 epoch17、所有操作 COMPLETE，PG/Redis 权威仍 AWS/AWS。
+- attempt4 后源状态为 SOURCE_DATA/windowNone/attempt4；保守累计等待历史 18.332221914 秒、当前已结束请求群 3.675374994 秒、历史最大请求群 7.082038552 秒，全部历史保留。不能将不同已排空请求群的累计值当作单请求额外等待，也不能为重试清零历史。正在为同一健康新实例建立严格排空、只追加记录及单次启动的专用恢复路径。
+- 2026-10-17 11:51:05 +08:00：旧腾讯应用已自然排空并clean exit0；独立continuation单次TERM结果returncode0，退出后/proc与Docker观察短暂不同步仅只读核实，原core已协调rolling COMPLETE且保留原UNKNOWN到completed_intents。新应用controller adoption与精确路由检查成功。新cohort9f3d68ecaf85192bd9e9456c387f3b1e current0/max7.082秒。真实canary返回200/TLS正常、usage/dedup各1，但探针错误要求X-Request-ID回显，在读流前自停；原POST_RESULT/error及rawSHA808c4e19b9d9dfd8aa7a074e28e80f3bf65e5720430b31ca4be589c8016e38e0封存。已据业务基线确认上游可覆盖该header，正在仅修验收工具并准备新独立lane与v3测试声明。数据仍AWS/AWS/windowNone，guard healthy，无数据promotion。
+- AWS旧应用最终配置/日志已加密归档到本机私密sub2api-retired-source-final-20261017，AEAD解密与SHA校验通过；腾讯新实例四个必要文件与源原件逐字节一致。
+- 2026-10-17 11:35:14 +08:00：独立旧应用退出恢复预检在第3个quiet样本发现短暂非零工作，发送signal.intent前拒绝；没有发送本次TERM。失败私有目录13文件已核SHA且原字节保留，原rolling state/target ledger未变；后续只读4次全工作归零。正准备严格绑定该preflight-abort证据的固定continuation，未重跑原helper。公网health200/TLS正常，源guard fresh healthy，PG/Redis权威仍AWS/AWS。
+- 2026-10-17 北京时间11:22后：用户已关闭网页，旧腾讯应用HTTP/WS/TCP及写队列已自然归零。rolling现TERM_INTENT、原退出intent `6d4713c17a33b7a5f3a4d1ee95ac461f` 为UNKNOWN；旧进程仍ready/serving、draining=false，近期Docker kill事件及Shutdown标记均未观察到。原意图未重发，准备独立root退出恢复记录。新应用仍ready、failed/dropped均0；AWS guard fresh healthy，源state仍SOURCE_DATA/windowNone/AWS-AWS。
 - 客户入口与应用已在腾讯；PostgreSQL、Redis 权威仍在 AWS，数据交接尚未完成。
 - 源应用：0.2.14，提交 `c69fdbeb0fa26543cc5bf115d2e5048426041e84`；原镜像 config `sha256:7f83a7aa3937e47473df037a341e48104318f6ad7fa6c5de00504a12cbe87742`。
 - 兼容补丁在隔离工作树 `/Users/mima0000/.codex/worktrees/sub2api-live-migration/sub2api` 编写；腾讯兼容应用已承载客户请求，旧 AWS 应用已自然退出。
@@ -197,3 +216,28 @@ rolling原start UNKNOWN未重发；独立inert-start-resolution在证明容器�
 - 受限只读观测仅输出请求方法和路径摘要，确认该连接每分钟调用GET /api/v1/auth/me；与frontend/src/stores/auth.ts的60秒自动刷新一致。没有输出或存储Authorization、Cookie或请求正文。
 - 已请求用户暂时关闭各设备上的sub2api网页标签页，保留当前Codex会话。网页停止轮询后，旧upstream keepalive可按既有超时自然关闭；仍须连续3次、静稳至少2秒证明所有TCP/HTTP/WS/写任务均归零，才单次TERM。
 - 本机独立路径：DNS A解析43.165.177.136，公网HTTPS /health返回200、status ok、TLS校验0。923项migration Python测试通过，2项跳过。PG/Redis权威仍为AWS，main未重启；等待连接结束不计入请求暂停窗口。
+
+
+## 2026-10-17 最终数据交接、超时与运行收尾
+
+- attempt6 在 `abort-before-source-stop-budget` 提交门之前安全拒绝，恢复为 AWS/AWS，目标 epoch24。其余量判断与历次窗口全部保留。
+- 两端 CAS 安装 RPC 只读优化：RPC SHA `85d980acff46125de0db0a2734d33b632f1cfb919577be871f8c56faff2db75a`，腾讯 config rawSHA `8f47473b2a430b4f0b2f9b993cc75eed6c4e405abe8beb678a11e25636a2d40d`。唯一配置变化为 RPC 程序摘要；旧配置、旧程序和完整原始账本保存在 `rpc/read-optimization-20261017`，没有清空账本或更换业务进程。
+- attempt7 于北京时间 **12:40:15** 开始，cohort `2fef68a5e196224f15058f1ca6751760`。提交门已耗时约 2.586 秒，PG 正常停源、腾讯提升为 timeline2，随后 Redis 正向交接。8 秒监督保护接管主控并完成恢复；串行跨云检查、交接和监督接管合计使实际窗口达到 **16.38194985128939 秒**。这是本次迁移明确的服务目标失败，不能用后续成功请求或收尾步骤抵销。
+- AWS 原 PostgreSQL 最终 LSN `8/D5A7E808`；腾讯 sysid `7626048206782038050`、timeline2、非 recovery 主库。腾讯 Redis 固定 runID `39d29826637d6bcf89b9630612f7fd0107260394` 为 master，源副本在保存最终 RDB 后停止。
+- 首次源 Redis 退休 signal 已被 Docker 接受，容器 PID1 为 shell，未随 SIGTERM 退出。独立 continuation 仅执行了一次 Redis `SHUTDOWN SAVE`；Redis 记录最终快照成功和正常退出，shell 随后返回 127。原 `redis_role_persist` 操作 `1cbf783b8b944a2814839cfa9c51946f` 保持 pending；固定关机 ACK 和两份日志 SHA 进入 arm/proof。没有再发 signal，没有把异常退出或未完成操作改写成成功。
+- 第一次后台激活原 RPC 操作 `0235e60404de4ea5932903852fcc1b29` 在 effect_started 之前遇到 `OPERATION_BUSY`。新 continuation 仅重放同一 immutable request；TargetRPC 保证 effect_started 后只观察，未新建重复激活操作。之后 32 项后台均已启用，源运行状态成为 `COMPLETE_WITH_WAIT_BREACH`。
+- keeper 初次安装后，旧 route 对 adoption 原配置的校验拒绝 RPC 只读优化后的配置。新 route 通过完整原配置/账本和固定升级收据验证唯一程序摘要变化，原 adoption receipt 不改。升级旧程序和 arm 已归档；当时没有 boot route intent，无需修改或删除路由历史。
+- 守护接管对只读 `pg_locks` 的 `OPERATION_BUSY` 使用有界重读，采用流程禁止容器/入口 start、非 status 控制及路由变更。最终 keeper active/enabled，三业务 PID 和入口 PID 均不变，采用 journal 的 starts 为空。生产冷启动没有实测。
+- 真实 postcutover-confirmed canary 报告 canonicalSHA `4d37dd8e5108825b77a3851411b58839359ae2357cda695d6dea06c2a9726d2b`；本机私有报告位于 `~/.codex/backups/sub2api-postcutover-confirmed-canary-667d5e22e3ed4c39/report.json`。精确请求账目证明各一条 usage/dedup 及费用 USD 0.00002560，不用共享余额变化归因该次扣费。
+- 13:06 后独立源端核验：三旧业务容器均 exited/restart=no；AWS Caddy PID1284574、Codex Relay PID1307343、channel PID2288434 仍存活，guard fresh healthy/recovering=false/tripped=false。本次收尾没有重载或重启共享 Caddy 与 Relay。
+
+
+## 2026-10-17 最终核验与备份
+
+- 腾讯最终只读核验：PG 与 Redis 权威 TENCENT/TENCENT，应用 target/target，PG timeline2；后台 32 项启用，应用 writer failed/dropped 均为 0。keeper active/enabled、MainPID1198987，entry active/MainPID259990，其独立启动禁用以保留 keeper 排序。采用 journal starts 为空，三业务 PID 与接管前完全相同。
+- AWS 最终只读核验：旧三业务容器停止且 restart=no，app/PG exit0、Redis shell exit127 的原始事实保留。共享 Caddy、Relay、channel 原 PID 仍存在；guard healthy，无当前恢复或 trip。DNS 解析 `43.165.177.136`；从独立本机代理路径访问域名 HTTPS health200，证书校验通过。
+- PostgreSQL 最终备份 `133059288` bytes，明文 SHA256 `4b031ca85136588f08d70ae45ef6bc889bc04ebe9e36387f5dd48c9f406c76e7`；`pg_restore -l` 目录校验及落盘 AES-256-GCM 解密摘要验证通过。应用文件、持久端点和 keeper/RPC 运行证据另有 `1119068` bytes 加密归档。目录：`~/.codex/backups/sub2api-tencent-final-20261017`。
+- Redis 在确认固定 master/runID、内存余量及无并发 fork 后，只执行一次 diskless 复制快照，没有暂停或重启服务。原始复制流已加密保留；剥离严格校验的 40 字节协议尾标后，标准 RDB `254654` bytes、明文 SHA256 `5cca54e8b3e395bc64a1b001b626ec1019524b94ea99135277e7e4548417803a`，`redis-check-rdb /dev/stdin` 校验和及结构通过，落盘密文解密摘要一致。目录：`~/.codex/backups/sub2api-tencent-redis-final-20261017`。
+- 独立补充运行恢复资料归档成功：50 个固定路径文件，涵盖 LIB 程序、PG/Redis 配置、rolling 采用和原账本证明、入口/TLS/systemd；另含三份容器 inspect、unit 状态和两个显式 `/dev/null` mask 证明。不扫描数据库数据树、不导出镜像、不写入或重启远端服务。压缩归档 `15058104` bytes、明文 SHA256 `b0aa60b43bdc047da6e9f9a6d2d2222fba6ddbacf0d78d2af20cadb9d38707cf`，逐文件摘要和独立落盘解密/归档校验通过。目录：`~/.codex/backups/sub2api-tencent-bootstrap-20261017`；原 PG/Redis 备份及已执行脚本字节保持。
+- PG、Redis 和文件在不同时间取样，**不是跨服务原子一致性快照**。PG 的归档目录检查和 Redis 结构/CRC 检查不等于完整恢复演练；最终备份没有通过覆盖现有生产库做恢复验证。旧 AWS 与原始冷备份/演练证据继续保留。
+- 完整迁移 Python 故障测试截至本次核验为 1113 项：1111 通过、2 跳过。测试只证明各自覆盖的控制行为，不能覆盖或否定实际 16.382 秒等待目标失败。

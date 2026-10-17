@@ -19,7 +19,7 @@ RUN = "20261016"
 PROGRAM = pathlib.Path("/usr/local/libexec/sub2api-migration-20261016/target_keeper.py")
 RPC_PROGRAM = PROGRAM.with_name("target_rpc.py")
 ROUTE_PROGRAM = PROGRAM.with_name("rolling_app_route.py")
-ROUTE_SHA = "c3d2b62bf07472f071a1c586c600a133b79a6b36464aa6e1edf77a306b0dc284"
+ROUTE_SHA = "e958f4a975db00b7b5a55facaa43f99e9511949aa29727a7d6523682c798c8f1"
 SCOPE = pathlib.Path("/var/lib/sub2api-migration-20261016/keeper")
 ENTRY = pathlib.Path("/home/ubuntu/sub2api-migration-20261016/entry")
 ENTRY_UNIT = "sub2api-tencent-entry.service"
@@ -63,6 +63,20 @@ def normalized_redis(raw, sha):
     return sha(b"\n".join(lines) + b"\n")
 
 
+# Exact evidence for the retired legacy shell wrapper. Redis saved and exited;
+# the wrapper subsequently returned 127. Keep the original pending operation and
+# actual Docker exit code rather than rewriting either as a successful signal.
+SOURCE_REDIS_SHELL_EXIT = {
+    "container_id": "e2f41a97ee0a36a9a5bd3e36b8f65874411419b3dae3867097323b3e730c6835",
+    "container_exit_code": 127,
+    "shutdown_ack_sha256": "d3d04d6c1629590847db0c77200e1795b3b3d27a7a4fc37183d77e97ba5b7b18",
+    "shutdown_log_sha256": "739b00e22555c6a01e4af138dcd1e3b0cf0b021eede6bff2d98f6cb1a5d41e74",
+    "wrapper_log_sha256": "9383ce5789fec964a23935052fa1a9f06850125a518043ef4d4a4b4d096bf510",
+    "prior_op_id": "1cbf783b8b944a2814839cfa9c51946f",
+    "prior_op_phase": "pending",
+}
+
+
 def validate_arm(arm, cfg, rpc, program_sha):
     exact(arm, "v run owner machine_id_sha256 rpc_config_sha256 program_sha256 armed_at complete "
           "pg_intent_sha256 redis_persist_op_id redis_normalized_config_sha256", "ARM_FIELDS")
@@ -74,10 +88,28 @@ def validate_arm(arm, cfg, rpc, program_sha):
         need(rpc.matches(arm[field], HEX64), "ARM_DIGEST_INVALID")
     need(rpc.matches(arm["redis_persist_op_id"], rpc.HEX32), "ARM_REDIS_OP_INVALID")
     complete = arm["complete"]
+    need(type(complete) is dict, "COMPLETE_FIELDS")
+    wait_breach = complete.get("phase") == "COMPLETE_WITH_WAIT_BREACH"
+    shell_exit = "source_redis_shell_exit" in complete
     exact(complete, "phase pg redis window verified_at state_sha256 verification_sha256 "
-          "source_machine_id_sha256 source_inspect_sha256 source_tombstones_sha256 source_resources", "COMPLETE_FIELDS")
-    need(complete["phase"] == "COMPLETE" and complete["pg"] == complete["redis"] == "TENCENT" and
+          "source_machine_id_sha256 source_inspect_sha256 source_tombstones_sha256 source_resources" +
+          (" wait_budget_breach" if wait_breach else "") +
+          (" source_redis_shell_exit" if shell_exit else ""), "COMPLETE_FIELDS")
+    if shell_exit:
+        need(wait_breach and type(complete["source_redis_shell_exit"]) is dict and
+             rpc.canonical(complete["source_redis_shell_exit"]) == rpc.canonical(SOURCE_REDIS_SHELL_EXIT),
+             "SOURCE_SHELL_EXIT_EVIDENCE_INVALID")
+    need(complete["phase"] in ("COMPLETE", "COMPLETE_WITH_WAIT_BREACH") and
+         complete["pg"] == complete["redis"] == "TENCENT" and
          complete["window"] is None, "COMPLETE_REQUIRED")
+    if wait_breach:
+        breach = complete["wait_budget_breach"]
+        exact(breach, "deadline_breached max_cohort_pause_seconds user_limit_seconds", "WAIT_BREACH_FIELDS")
+        need(breach["deadline_breached"] is True and
+             type(breach["user_limit_seconds"]) in (int, float) and breach["user_limit_seconds"] == 10 and
+             type(breach["max_cohort_pause_seconds"]) in (int, float) and
+             math.isfinite(breach["max_cohort_pause_seconds"]) and breach["max_cohort_pause_seconds"] > 10,
+             "WAIT_BREACH_INVALID")
     for field in ("state_sha256", "verification_sha256", "source_machine_id_sha256",
                   "source_inspect_sha256", "source_tombstones_sha256"):
         need(rpc.matches(complete[field], HEX64), "COMPLETE_DIGEST_INVALID")
@@ -88,10 +120,14 @@ def validate_arm(arm, cfg, rpc, program_sha):
     exact(complete["source_resources"], "app postgres redis", "SOURCE_RESOURCE_FIELDS")
     need(len({row.get("id") for row in complete["source_resources"].values() if type(row) is dict}) == 3,
          "SOURCE_RESOURCE_IDS_NOT_DISTINCT")
-    for row in complete["source_resources"].values():
+    for kind, row in complete["source_resources"].items():
         exact(row, "id running status restart exit_code oom_killed", "SOURCE_RETIREMENT_FIELDS")
+        expected_exit = 0
+        if shell_exit and kind == "redis":
+            need(row["id"] == SOURCE_REDIS_SHELL_EXIT["container_id"], "SOURCE_SHELL_EXIT_CONTAINER_CHANGED")
+            expected_exit = 127
         need(rpc.matches(row["id"], HEX64) and row["running"] is False and row["status"] == "exited" and
-             row["restart"] == "no" and type(row["exit_code"]) is int and row["exit_code"] == 0 and
+             row["restart"] == "no" and type(row["exit_code"]) is int and row["exit_code"] == expected_exit and
              row["oom_killed"] is False, "SOURCE_NOT_CLEANLY_RETIRED")
     return arm
 

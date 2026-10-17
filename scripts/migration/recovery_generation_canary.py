@@ -25,11 +25,11 @@ import types
 import uuid
 
 RUN, OWNER = "20261016", "30bda011defad8149621c2630a2bd89c"
-BASE_SHA256 = "b8d6096172abd798865aaf0263267bd66e4ebf74cfae6227caa648da4e17ed1f"
+BASE_SHA256 = "a8458fb80ca426e9ad203584578be6df3d1d16a36c1bd3b7a71e5bdd99d1e20f"
 RPC_SHA256 = "8180879f75169f130b726536ee16957832a9d2bf9e193f93ad380ebd8264f6ec"
 ROOT = pathlib.Path("/var/lib/sub2api-migration-20261016")
 LIB = pathlib.Path("/usr/local/libexec/sub2api-migration-20261016")
-SCOPE = ROOT / "recovery-generation-canary-20261017"
+SCOPE = ROOT / "recovery-generation-canary-v2-20261017"
 JOURNAL = "target.json"
 APP_ID = "17e3bfacbd442beff52427e003e58f4970e613203356b8bb8bde0e98b9229bce"
 OLD_APP_ID = "cd5c29cf86b2595fffc41fc068e024d3f790f69bb8bdaaacc63eaba1ac9bcd82"

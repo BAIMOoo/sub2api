@@ -109,6 +109,27 @@ def adoption():
                 source_raw=b"source", ledger_raw=b"ledger", token_sha="c" * 64, mounts=M.MOUNTS, core=M)
 
 
+def upgraded_adoption():
+    values = adoption()
+    previous = {**values["config"], "program_sha256": R.RPC_READ_UPGRADE["old_program_sha256"]}
+    current = {**previous, "program_sha256": R.RPC_READ_UPGRADE["new_program_sha256"]}
+    previous_raw, current_raw = M.canonical(previous) + b"\n", M.canonical(current) + b"\n"
+    ledger = {"v": 1, "run": "20261016", "owner": OWNER, "epoch": 24,
+              "pg": {"authority": "AWS", "arm": {"status": "CANCELLED"}, "promotion_intent": None},
+              "redis": {"authority": "AWS"},
+              "operations": {str(index): {"phase": "COMPLETE"} for index in range(24)}}
+    ledger_raw = M.canonical(ledger)
+    pins = {**R.RPC_READ_UPGRADE, "old_config_sha256": R.sha(previous_raw),
+            "new_config_sha256": R.sha(current_raw), "ledger_sha256": R.sha(ledger_raw)}
+    verification = {"v": 1, "run": "20261016", "owner": OWNER, **pins, "business_processes_unchanged": True}
+    scope = R.ROOT / "rpc/read-optimization-20261017"
+    files = {scope / "verification.json": M.canonical(verification), scope / "previous-config.json": previous_raw,
+             scope / "previous-ledger.json": ledger_raw}
+    values["config"], values["controller_raw"] = current, current_raw
+    values["receipt"]["controller_config_raw_sha256"] = R.sha(previous_raw)
+    return values, pins, files
+
+
 class RouteTests(unittest.TestCase):
     def test_backend_reads_original_rolling_token_as_root(self):
         values = adoption()
@@ -135,10 +156,89 @@ class RouteTests(unittest.TestCase):
         for order in (mounts, list(reversed(mounts))):
             backend.local = types.SimpleNamespace(_app_token=lambda: token,
                 docker_json=lambda kind, identity: {"Mounts": order})
-            with mock.patch.object(R, "validate_adoption") as validated:
+            with mock.patch.object(R, "adoption_controller_raw", return_value=b"historical-config") as historical, \
+                 mock.patch.object(R, "validate_adoption") as validated:
                 backend.verify()
                 self.assertEqual(validated.call_args.kwargs["mounts"], M.MOUNTS)
+                self.assertEqual(validated.call_args.kwargs["controller_raw"], b"historical-config")
+                self.assertIs(validated.call_args.args[2], backend.config)
+                historical.assert_called_once_with({}, backend.config, backend.controller_raw, private_read)
         self.assertEqual(reads, [0, 0])
+
+    def test_unchanged_controller_uses_original_path_without_upgrade_reads(self):
+        values = adoption()
+        read = mock.Mock(side_effect=AssertionError("unexpected upgrade read"))
+        result = R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], read)
+        self.assertEqual(result, values["controller_raw"])
+        read.assert_not_called()
+        R.validate_adoption(**values)
+
+    def test_reviewed_upgrade_keeps_original_receipt_and_current_resource_checks(self):
+        values, pins, files = upgraded_adoption()
+        before = {key: value if key == "core" else copy.deepcopy(value) for key, value in values.items()}
+        with mock.patch.object(R, "RPC_READ_UPGRADE", pins):
+            historical = R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], files.__getitem__)
+        self.assertEqual(values, before)
+        self.assertEqual(historical, files[R.ROOT / "rpc/read-optimization-20261017/previous-config.json"])
+        values["controller_raw"] = historical
+        R.validate_adoption(**values)
+        values["new"]["Config"] = {"Env": ["changed-resource"]}
+        with self.assertRaisesRegex(R.Refusal, "ADOPTED_APPLICATION_CHANGED"):
+            R.validate_adoption(**values)
+
+    def test_upgrade_requires_all_private_evidence_and_exact_original_hashes(self):
+        for filename in ("verification.json", "previous-config.json", "previous-ledger.json"):
+            values, pins, files = upgraded_adoption()
+            del files[R.ROOT / "rpc/read-optimization-20261017" / filename]
+            with self.subTest(missing=filename), mock.patch.object(R, "RPC_READ_UPGRADE", pins), self.assertRaises(KeyError):
+                R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], files.__getitem__)
+        for changed in ("previous-config.json", "previous-ledger.json", "current", "receipt"):
+            values, pins, files = upgraded_adoption()
+            if changed == "current":
+                values["controller_raw"] += b" "
+            elif changed == "receipt":
+                values["receipt"]["controller_config_raw_sha256"] = "f" * 64
+            else:
+                files[R.ROOT / "rpc/read-optimization-20261017" / changed] += b" "
+            with self.subTest(changed=changed), mock.patch.object(R, "RPC_READ_UPGRADE", pins), \
+                 self.assertRaisesRegex(R.Refusal, "RPC_UPGRADE_EVIDENCE_CHANGED"):
+                R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], files.__getitem__)
+
+    def test_upgrade_receipt_does_not_allow_other_owner_program_extra_or_untyped_evidence(self):
+        for field, value in (("owner", "f" * 32), ("new_program_sha256", "f" * 64), ("v", True),
+                             ("business_processes_unchanged", 1), ("extra", True), ("ledger_sha256", "f" * 64)):
+            values, pins, files = upgraded_adoption()
+            path = R.ROOT / "rpc/read-optimization-20261017/verification.json"
+            receipt = json.loads(files[path]);receipt[field] = value;files[path] = M.canonical(receipt)
+            with self.subTest(field=field), mock.patch.object(R, "RPC_READ_UPGRADE", pins), \
+                 self.assertRaisesRegex(R.Refusal, "RPC_UPGRADE_RECEIPT_CHANGED"):
+                R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], files.__getitem__)
+
+    def test_upgrade_config_delta_cannot_change_resources_owner_or_other_settings(self):
+        for field, value in (("app", {}), ("owner", "f" * 32), ("extra", True), ("program_sha256", "f" * 64)):
+            values, pins, files = upgraded_adoption()
+            values["config"][field] = value
+            values["controller_raw"] = M.canonical(values["config"])
+            pins["new_config_sha256"] = R.sha(values["controller_raw"])
+            receipt = {"v": 1, "run": "20261016", "owner": values["config"]["owner"], **pins,
+                       "business_processes_unchanged": True}
+            files[R.ROOT / "rpc/read-optimization-20261017/verification.json"] = M.canonical(receipt)
+            with self.subTest(field=field), mock.patch.object(R, "RPC_READ_UPGRADE", pins), \
+                 self.assertRaisesRegex(R.Refusal, "RPC_UPGRADE_CONFIG_DELTA_CHANGED"):
+                R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], files.__getitem__)
+
+    def test_upgrade_ledger_must_be_original_closed_owner_epoch_and_authorities(self):
+        for field, value in (("owner", "f" * 32), ("epoch", 25), ("v", True), ("pg", {"authority": "TENCENT"}),
+                             ("redis", {"authority": "TENCENT"}), ("operations", {"pending": {"phase": "INTENT"}})):
+            values, pins, files = upgraded_adoption()
+            path = R.ROOT / "rpc/read-optimization-20261017/previous-ledger.json"
+            ledger = json.loads(files[path]);ledger[field] = value;files[path] = M.canonical(ledger)
+            pins["ledger_sha256"] = R.sha(files[path])
+            receipt = {"v": 1, "run": "20261016", "owner": OWNER, **pins, "business_processes_unchanged": True}
+            files[R.ROOT / "rpc/read-optimization-20261017/verification.json"] = M.canonical(receipt)
+            with self.subTest(field=field), mock.patch.object(R, "RPC_READ_UPGRADE", pins), \
+                 self.assertRaisesRegex(R.Refusal, "RPC_UPGRADE_LEDGER_CHANGED"):
+                R.adoption_controller_raw(values["receipt"], values["config"], values["controller_raw"], files.__getitem__)
 
     def test_default_offline_never_loads_host(self):
         with mock.patch.object(R, "load_route", side_effect=AssertionError("offline")), contextlib.redirect_stdout(io.StringIO()) as out:

@@ -283,13 +283,13 @@ class DataHandover:
                   window={"kind": "combined", "started_at": self.now(),
                           "started_monotonic": self.monotonic(), "boot_id": self.io.boot_id(),
                           "elapsed_floor": 0.0, "deadline": self.now() + remaining, "irreversible": False})
-        started = self.now()
         snapshot = self.rpc("app.quiesce")
         fresh = snapshot.get("app", {}).get("body", {})
         need(fresh.get("instance_id") == runtime.get("instance_id"), "app-instance-changed")
         self.save(quiet_instance_id=fresh["instance_id"])
-        self.io.attest(self.state, {"instance_id": self.state["quiet_instance_id"]},
-                       snapshot=snapshot, sampled_started=started)
+        # No source mutation consumes an attestation before pg.arm-quiet.
+        # Its newer snapshot below binds the final LSN and arm before stop;
+        # pause/drain duration must not age that independent two-second proof.
 
     def quiet_runtime(self):
         # attest() obtains all counters afresh; only instance identity is cached.

@@ -25,6 +25,13 @@ SCOPE = ROOT / "rolling-recovery"
 STATE = SCOPE / "route-keeper"
 LIB = pathlib.Path("/usr/local/libexec/sub2api-migration-20261016")
 PROGRAM = LIB / "rolling_app_route.py"
+RPC_READ_UPGRADE = {
+    "old_program_sha256": "8180879f75169f130b726536ee16957832a9d2bf9e193f93ad380ebd8264f6ec",
+    "new_program_sha256": "85d980acff46125de0db0a2734d33b632f1cfb919577be871f8c56faff2db75a",
+    "old_config_sha256": "ca7d126ee925221fce6bf88d42eccd11641116330a1cedfb1cb7323c50c3b032",
+    "new_config_sha256": "8f47473b2a430b4f0b2f9b993cc75eed6c4e405abe8beb678a11e25636a2d40d",
+    "ledger_sha256": "5c0e2528b2d135bc61d248ef9fde41f9c064e5dbdfc768ef79c8df8f254b53a8",
+}
 
 
 class Refusal(RuntimeError):
@@ -126,6 +133,47 @@ def touches_app_destination(row):
         elif token == "--uid-owner" and not negated and value.isdigit() and int(value) != 1000:
             return False
     return True
+
+
+def adoption_controller_raw(receipt, config, controller_raw, private_read):
+    """Keep the original receipt binding across the one reviewed RPC upgrade.
+
+    The receipt and its original files stay immutable. Only the pinned upgrade
+    checkpoint can explain a different controller config; resource validation
+    still receives the current config, whose sole delta is the program digest.
+    """
+    if receipt.get("controller_config_raw_sha256") == sha(controller_raw):
+        return controller_raw
+    scope = ROOT / "rpc/read-optimization-20261017"
+    verification = strict_json(private_read(scope / "verification.json"))
+    previous_raw = private_read(scope / "previous-config.json")
+    ledger_raw = private_read(scope / "previous-ledger.json")
+    expected = {"v": 1, "run": "20261016", "owner": config["owner"], **RPC_READ_UPGRADE,
+                "business_processes_unchanged": True}
+    # Canonical JSON comparison distinguishes booleans from integer evidence.
+    need(type(verification) is dict and
+         json.dumps(verification, sort_keys=True, separators=(",", ":")) ==
+         json.dumps(expected, sort_keys=True, separators=(",", ":")), "RPC_UPGRADE_RECEIPT_CHANGED")
+    need(receipt.get("controller_config_raw_sha256") == RPC_READ_UPGRADE["old_config_sha256"] and
+         sha(previous_raw) == RPC_READ_UPGRADE["old_config_sha256"] and
+         sha(controller_raw) == RPC_READ_UPGRADE["new_config_sha256"] and
+         sha(ledger_raw) == RPC_READ_UPGRADE["ledger_sha256"], "RPC_UPGRADE_EVIDENCE_CHANGED")
+    previous, current, ledger = map(strict_json, (previous_raw, controller_raw, ledger_raw))
+    need(type(previous) is dict and type(current) is dict and current == config and
+         previous.get("owner") == config["owner"] and
+         previous.get("program_sha256") == RPC_READ_UPGRADE["old_program_sha256"] and
+         current == {**previous, "program_sha256": RPC_READ_UPGRADE["new_program_sha256"]},
+         "RPC_UPGRADE_CONFIG_DELTA_CHANGED")
+    need(type(ledger) is dict and type(ledger.get("v")) is int and ledger["v"] == 1 and
+         ledger.get("run") == "20261016" and ledger.get("owner") == config["owner"] and
+         type(ledger.get("epoch")) is int and ledger["epoch"] == 24 and
+         ledger.get("pg", {}).get("authority") == ledger.get("redis", {}).get("authority") == "AWS" and
+         ledger.get("pg", {}).get("arm", {}).get("status") == "CANCELLED" and
+         not ledger.get("pg", {}).get("promotion_intent") and
+         type(ledger.get("operations")) is dict and len(ledger["operations"]) >= 14 and
+         all(type(row) is dict and row.get("phase") == "COMPLETE" for row in ledger["operations"].values()),
+         "RPC_UPGRADE_LEDGER_CHANGED")
+    return previous_raw
 
 
 def validate_adoption(receipt, rolling, config, old, new, image, *, controller_raw, rolling_raw, source_raw, ledger_raw,
@@ -269,7 +317,8 @@ class Backend:
                          for x in new["Mounts"]], key=lambda item: item["destination"])
         token_sha = sha(self.local._app_token())
         need(token_sha == sha(self.h.private_read(self.m.TOKEN_FILE, uid=0).strip()), "CONTROL_TOKEN_CHANGED")
-        validate_adoption(receipt, rolling, self.config, old, new, image, controller_raw=self.controller_raw, rolling_raw=rolling_raw,
+        historical_raw = adoption_controller_raw(receipt, self.config, self.controller_raw, self.r.private_read)
+        validate_adoption(receipt, rolling, self.config, old, new, image, controller_raw=historical_raw, rolling_raw=rolling_raw,
                           source_raw=self.h.private_read(SCOPE / "source-controller-closed.json"),
                           ledger_raw=self.h.private_read(SCOPE / "controller-ledger-before.json"), token_sha=token_sha,
                           mounts=mounts, core=self.m)
