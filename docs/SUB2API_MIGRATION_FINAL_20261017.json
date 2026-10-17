@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated_at": "2026-10-17T05:20:09.620137+00:00",
+  "generated_at": "2026-10-17T05:38:42.943354+00:00",
   "runtime_completed": true,
   "phase": "COMPLETE_WITH_WAIT_BREACH",
   "all_original_migration_objectives_passed": false,
@@ -86,11 +86,13 @@
   "final_public_health": {
     "http_status": 200,
     "tls_verify_result": 0,
-    "via_independent_local_proxy": true
+    "direct_without_proxy": true,
+    "address_pinned_for_local_router_cache": true,
+    "address": "13.231.143.136"
   },
   "migration_python_tests": {
-    "run": 1113,
-    "passed": 1111,
+    "run": 1126,
+    "passed": 1124,
     "skipped": 2,
     "failed": 0
   },
@@ -98,5 +100,32 @@
     "backup_tencent_final.py": "3028771b67a61e21c222fc4dba9973a85219436c8193de2e7ea8d798043d461d",
     "backup_tencent_redis.py": "862aca17db8e5c90887b1e5694663ff8dcdcb2700d96eedb45cdef690a0ff7b7",
     "backup_runtime_bootstrap.py": "618c903f2f1ebcb769e340b140a24b610d9c9d3a0bb49a0d4f89d983c0c37fbb"
+  },
+  "business_data_migration_completed": true,
+  "aws_independent_public_entry_completed": false,
+  "public_entry": {
+    "address": "13.231.143.136",
+    "type": "existing_aws_https_bridge_to_tencent",
+    "application_host": "43.165.177.136",
+    "temporary": true,
+    "requires_aws": true,
+    "dns_ttl": 60,
+    "cloudflare_http_proxy_enabled": false,
+    "mobile_without_proxy_user_confirmed": true,
+    "direct_tencent_ip_from_china_issue_resolved": false
+  },
+  "entry_recovery": {
+    "ok": true,
+    "data_rollback": false,
+    "patch_count": 1,
+    "report_sha256": "3d990bf98078fc669d2af82536d7a64683db359e6298d1b84a6af78b7f8bf23f",
+    "public_resolvers_confirmed": [
+      "Cloudflare",
+      "Google",
+      "AliDNS"
+    ],
+    "local_router_stale_dns_observed": true,
+    "old_business_containers_remain_stopped": true,
+    "source_caddy_relay_channel_pids_unchanged": true
   }
 }

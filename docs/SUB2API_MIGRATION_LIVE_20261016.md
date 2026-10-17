@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-- **业务及数据已迁至腾讯 `43.165.177.136`**：Cloudflare A 记录和实际 DNS 均指向腾讯，TLS 域名/证书链及公网 `/health` 返回 200。应用、PostgreSQL 主库、Redis 主节点和必要文件均在腾讯；持久与运行端点均为 target/target，32 项后台任务已启用。
+- **业务及数据已迁至腾讯 `43.165.177.136`，公网入口临时经 AWS 转发**：国内电脑和用户手机流量直连腾讯 IP 失败后，Cloudflare A 记录仅将入口恢复至 `13.231.143.136` 的既有 AWS→腾讯桥。应用、PostgreSQL 主库、Redis 主节点和必要文件仍在腾讯，持久与运行端点均为 target/target，32 项后台任务启用。用户已确认手机流量重新访问成功。当前不能声称 sub2api 完全不依赖 AWS；独立公网入口仍待解决，详见 `SUB2API_WEB_ENTRY_RECOVERY_20261017.md`。
 - **10 秒新增等待目标未达标**：attempt7 的实际交接窗口为 **16.38194985128939 秒**，超出约定。运行收尾状态明确为 `COMPLETE_WITH_WAIT_BREACH`，`deadline_breached=true`；累计保守暂停历史 46.66268306039274 秒、当前及最大请求群 16.38194985128939 秒全部保留。不能把运行接管完成写成全部迁移验收通过。
 - 新的真实 TLS 模型 canary 已通过：HTTP 200，首个文本约 1.596 秒、完整 EOF 约 1.626 秒，13 个 SSE 事件及 `response.completed`；腾讯主库对应请求的 usage 与 billing_dedup 各 1 条，24 输入/8 输出，费用 USD 0.00002560。原 canary 在模型 POST 前的预检阶段退出，报告仅保留通用异常，不能断定该次具体异常类型，原失败 lane 保留。新独立 lane 实际观察到一次只读 `OPERATION_BUSY`，仅对这类纯读错误有界重读；模型 POST 没有自动重试。
 - 腾讯 `sub2api-tencent-keeper-20261016.service` 已 active/enabled。接管前后应用 PID 534792、PG PID 509035、Redis PID 133623 均不变；未以生产重启验证冷启动。原配置收据、RPC 优化前后配置和完整账本通过只追加证据链校验。
 - AWS 旧应用和 PostgreSQL 均 exit 0/restart=no；旧 Redis 已执行 `SHUTDOWN SAVE`、完成最终 RDB 保存并正常退出，但其旧 shell 包装脚本随后执行无效命令而返回 **127**。保留真实 Docker exit code、原 signal 操作 pending 状态、独立关机确认及日志摘要；仅精确匹配该固定容器的异常证据允许运行收尾，没有伪造 clean exit 0 或将 pending 改写成成功。
-- AWS 实例、IP、Codex Relay、共享 Caddy 保留。旧业务容器、卷、备份和迁移证据至少保留至 **2026-10-24 最终收尾同一时间之后**，届时也不自动删除。腾讯已有新写入，禁止直接切 DNS 回旧 AWS 或启动旧主库。
+- AWS 实例、IP、Codex Relay、共享 Caddy 保留；Caddy 和跨云桥目前还承担临时公网入口。旧业务容器、卷、备份和迁移证据至少保留至 **2026-10-24 最终收尾同一时间之后**，届时也不自动删除。腾讯已有新写入，禁止将请求送回使用旧数据的 AWS 应用，或启动旧主库；本次入口恢复只转发腾讯，不回退数据。
 - 最终腾讯新主 PG/Redis 加密备份及独立运行核验已通过，结果见下方追加记录；没有进行最终备份的完整恢复演练或生产冷启动验收。
 
 ## 历史检查点
@@ -241,3 +241,12 @@ rolling原start UNKNOWN未重发；独立inert-start-resolution在证明容器�
 - 独立补充运行恢复资料归档成功：50 个固定路径文件，涵盖 LIB 程序、PG/Redis 配置、rolling 采用和原账本证明、入口/TLS/systemd；另含三份容器 inspect、unit 状态和两个显式 `/dev/null` mask 证明。不扫描数据库数据树、不导出镜像、不写入或重启远端服务。压缩归档 `15058104` bytes、明文 SHA256 `b0aa60b43bdc047da6e9f9a6d2d2222fba6ddbacf0d78d2af20cadb9d38707cf`，逐文件摘要和独立落盘解密/归档校验通过。目录：`~/.codex/backups/sub2api-tencent-bootstrap-20261017`；原 PG/Redis 备份及已执行脚本字节保持。
 - PG、Redis 和文件在不同时间取样，**不是跨服务原子一致性快照**。PG 的归档目录检查和 Redis 结构/CRC 检查不等于完整恢复演练；最终备份没有通过覆盖现有生产库做恢复验证。旧 AWS 与原始冷备份/演练证据继续保留。
 - 完整迁移 Python 故障测试截至本次核验为 1113 项：1111 通过、2 跳过。测试只证明各自覆盖的控制行为，不能覆盖或否定实际 16.382 秒等待目标失败。
+
+## 2026-10-17 国内直连异常与临时入口恢复
+
+- 原代理路径的 health、模型 canary 通过没有覆盖国内普通直连。用户报告电脑和手机流量均无法打开网页；本机真实 Chrome 禁用代理后超时，经代理则完整加载首页、脚本和初始化接口。
+- 系统 DNS 正确解析腾讯 IP，无 hosts 覆盖；固定 IP 直连同样 TCP connect timeout。腾讯入口监听、TLS、本机 HTTP、主机防火墙检查正常。限定来源的短时握手统计为收到 9 个 SYN、发出 16 个 SYNACK、无 ACK，支持公网回程或中间路径异常，不能据此认定某一运营商或防火墙的具体责任。
+- 既有 AWS HTTPS 入口固定 IP 无代理真实浏览器测试通过：首页、登录页、脚本和公共配置均 200。恢复前再次核实旧 AWS 三业务容器 stopped/restart=no/退出码 0、0、127；原 Caddy、Relay、channel PID 不变，首条唯一桥规则和 channel 目标精确匹配腾讯；腾讯主库/Redis 主角色、target/target 端点和应用 ready 均通过。
+- 新独立 one-shot 只执行一次 Cloudflare A content PATCH：`43.165.177.136` → `13.231.143.136`。TTL60、proxied=false 及其他记录属性保持；未重启服务、重发原迁移操作或修改数据库权威。报告 SHA256 `3d990bf98078fc669d2af82536d7a64683db359e6298d1b84a6af78b7f8bf23f`，私密证据 `~/.codex/backups/sub2api-reachable-entry-20261017`；实时 SSH 前置证据另存同名 `-preflight` 目录。
+- Cloudflare、Google、阿里公共 DNS 均读到 AWS 临时入口；该 IP 无代理 HTTPS health200/TLSverify0。本地路由器仍缓存腾讯旧地址，未擅自改动系统 DNS、重启路由器或结束既有连接。用户随后关闭旧手机标签并重开，明确回复“已经可以打开”。
+- 修复后完整迁移 Python 测试 1126 项：1124 通过、2 跳过。原 16.382 秒等待超标和全部失败证据保持；当前服务恢复可用，但独立于 AWS 的公网入口目标尚未完成。
