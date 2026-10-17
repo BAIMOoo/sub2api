@@ -126,6 +126,16 @@
     ],
     "local_router_stale_dns_observed": true,
     "old_business_containers_remain_stopped": true,
-    "source_caddy_relay_channel_pids_unchanged": true
+    "source_caddy_relay_channel_pids_unchanged": true,
+    "desktop_ordinary_dns_chrome_verified": {
+      "ok": true,
+      "observed_at": "2026-10-17T05:57:01.427Z",
+      "proxy": false,
+      "host_override": false,
+      "home_and_login_loaded": true,
+      "initialization_interfaces_http_200": true
+    },
+    "local_router_cache_refreshed": true,
+    "native_macos_resolver_stale_at_last_check": true
   }
 }
