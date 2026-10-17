@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated_at": "2026-10-17T05:38:42.943354+00:00",
+  "generated_at": "2026-10-17T14:03:57.623162+00:00",
   "runtime_completed": true,
   "phase": "COMPLETE_WITH_WAIT_BREACH",
   "all_original_migration_objectives_passed": false,
@@ -11,7 +11,7 @@
     "deadline_breached": true,
     "cumulative_pause_history_seconds": 46.66268306039274
   },
-  "current_host": "43.165.177.136",
+  "current_host": "43.165.182.52",
   "domain": "api.b4im.com",
   "authorities": {
     "postgres": "TENCENT",
@@ -74,7 +74,15 @@
     "aws_relay_caddy_instance_ip_retained": true,
     "old_data_minimum_retention_days": 7,
     "automatic_deletion_scheduled": false,
-    "minimum_retention_not_before_utc": "2026-10-24T05:20:09.620137+00:00"
+    "minimum_retention_not_before_utc": "2026-10-24T13:57:57.472365+00:00",
+    "migration_channel_stopped_disabled": true,
+    "migration_recovery_stopped_disabled": true,
+    "migration_runner_stopped_disabled": true,
+    "owned_forwarding_firewall_rules_removed": true,
+    "old_entry_drained_without_forced_disconnect": true,
+    "unrelated_aws_caddy_relay_pids_unchanged": true,
+    "retired_at_utc": "2026-10-17T13:57:57.472365+00:00",
+    "previous_minimum_retention_not_before_utc": "2026-10-24T05:20:09.620137+00:00"
   },
   "rollback_requires_data_sync": true,
   "current_program_sha256": {
@@ -87,12 +95,13 @@
     "http_status": 200,
     "tls_verify_result": 0,
     "direct_without_proxy": true,
-    "address_pinned_for_local_router_cache": true,
-    "address": "13.231.143.136"
+    "ordinary_dns": true,
+    "address_pinned_for_local_router_cache": false,
+    "address": "43.165.182.52"
   },
   "migration_python_tests": {
-    "run": 1126,
-    "passed": 1124,
+    "run": 1178,
+    "passed": 1176,
     "skipped": 2,
     "failed": 0
   },
@@ -102,17 +111,18 @@
     "backup_runtime_bootstrap.py": "618c903f2f1ebcb769e340b140a24b610d9c9d3a0bb49a0d4f89d983c0c37fbb"
   },
   "business_data_migration_completed": true,
-  "aws_independent_public_entry_completed": false,
+  "aws_independent_public_entry_completed": true,
   "public_entry": {
-    "address": "13.231.143.136",
-    "type": "existing_aws_https_bridge_to_tencent",
-    "application_host": "43.165.177.136",
-    "temporary": true,
-    "requires_aws": true,
+    "address": "43.165.182.52",
+    "type": "direct_tencent_https",
+    "application_host": "43.165.182.52",
+    "temporary": false,
+    "requires_aws": false,
     "dns_ttl": 60,
     "cloudflare_http_proxy_enabled": false,
-    "mobile_without_proxy_user_confirmed": true,
-    "direct_tencent_ip_from_china_issue_resolved": false
+    "direct_tencent_ip_from_china_issue_resolved": true,
+    "ordinary_dns_no_proxy_chrome_verified": true,
+    "bootstrap_interfaces_http_200": true
   },
   "entry_recovery": {
     "ok": true,
@@ -136,6 +146,84 @@
       "initialization_interfaces_http_200": true
     },
     "local_router_cache_refreshed": true,
-    "native_macos_resolver_stale_at_last_check": true
+    "native_macos_resolver_stale_at_last_check": true,
+    "historical_temporary_aws_entry_snapshot": true
+  },
+  "historical_aws_bridge_public_health": {
+    "http_status": 200,
+    "tls_verify_result": 0,
+    "direct_without_proxy": true,
+    "address_pinned_for_local_router_cache": true,
+    "address": "13.231.143.136"
+  },
+  "historical_temporary_public_entry": {
+    "address": "13.231.143.136",
+    "type": "existing_aws_https_bridge_to_tencent",
+    "application_host": "43.165.177.136",
+    "temporary": true,
+    "requires_aws": true,
+    "dns_ttl": 60,
+    "cloudflare_http_proxy_enabled": false,
+    "mobile_without_proxy_user_confirmed": true,
+    "direct_tencent_ip_from_china_issue_resolved": false
+  },
+  "aws_independence_verification": {
+    "ok": true,
+    "report": "SUB2API_AWS_INDEPENDENCE_20261017.md",
+    "all_aws_migration_units_off_during_canary": true,
+    "ordinary_dns_web_peer": "43.165.182.52",
+    "target_aws_tcp_connections": 0,
+    "target_obsolete_reverse_listeners": 0,
+    "recharge_notification_url_updated": true,
+    "account_credentials_unchanged": true,
+    "local_proxy_and_hosts_unchanged": true,
+    "target_business_pids_preserved": true,
+    "target_preflight": {
+      "pg_container_id": "ac9f494b2fd0ec87257a9a7308a6ad7b270051d1dc4da33b33fea9af2885418c",
+      "pg_image_id": "sha256:9a5296338b4957a7082ad925c9f31346f6f1cb6b7cbe7bd2971430432488a395",
+      "system_identifier": "7626048206782038050",
+      "postgres_port": 25432,
+      "primary": true,
+      "pg_authority": "TENCENT",
+      "redis_authority": "TENCENT",
+      "persistent_endpoints": {
+        "v": 1,
+        "postgres": "target",
+        "redis": "target"
+      },
+      "pg_wal_timeline": 2,
+      "app_container_id": "17e3bfacbd442beff52427e003e58f4970e613203356b8bb8bde0e98b9229bce",
+      "app_image_id": "sha256:73945bb5447cceaa5a301e0ddbf6fd026ef7cd27a9ad0596a542de691e29ce6a",
+      "app_pid": 534792,
+      "instance_id": "r32ufr8h00vvbf",
+      "app_ready": true,
+      "background_ready": true,
+      "background_started_count": 32
+    },
+    "canary": {
+      "ok": true,
+      "http_status": 200,
+      "first_text_seconds": 1.613239332989906,
+      "eof_seconds": 1.6648659579950618,
+      "event_count": 13,
+      "terminal": "response.completed",
+      "clean_eof": true,
+      "usage_count": 1,
+      "dedup_count": 1,
+      "charge_usd": "0.00002560",
+      "per_request_balance_ledger_proven": false,
+      "report_sha256": "c27f7d307d7002fd3249ec464a6c47a23ca73a74396ad055e8b444c980ec66e0"
+    },
+    "evidence_directory": "/Users/mima0000/.codex/backups/sub2api-aws-independent-entry-20261017"
+  },
+  "network_ip_replacement_incident": {
+    "old_ip": "43.165.177.136",
+    "new_ip": "43.165.182.52",
+    "same_instance": true,
+    "observed_first_failure_utc": "2026-10-17T12:54:48Z",
+    "restored_utc": "2026-10-17T13:14:20Z",
+    "observed_outage_seconds": 1172,
+    "exact_drop_device_or_policy_proven": false,
+    "evidence_directory": "/Users/mima0000/.codex/backups/sub2api-tencent-direct-network-20261017/ip-change-result-20261017T1314Z"
   }
 }
