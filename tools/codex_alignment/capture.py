@@ -214,6 +214,7 @@ class Capture:
         self.websocket_refusals = 0
         self.auth_tunnels = 0
         self.refusals = []
+        self.connection_closures = []
         self.decode_failures = []
         self.sockets = set()
 
@@ -373,6 +374,29 @@ class Capture:
                         atomic_json(self.output / ('native-%03d-response.json' % number), entry['response'])
                         response.close()
         except Exception as exc:
+            # Codex can close a warmup connection or stop reading immediately
+            # after the SSE terminal event, before TLS/chunked close framing.
+            # This never excuses a missing/failed model completion.
+            closure = isinstance(exc, (ssl.SSLEOFError, BrokenPipeError, ConnectionResetError))
+            if closure and 'entry' in locals():
+                if entry['method'] == 'GET':
+                    with self.lock:
+                        self.connection_closures.append('metadata_connection_closed')
+                    return
+                if 'response_body' in locals():
+                    finished = completion(entry['status'], response.getheader('Content-Type', ''),
+                                          bytes(response_body), clean_path,
+                                          response.getheader('Content-Encoding', ''))
+                    if finished['complete']:
+                        entry['response'] = finished
+                        atomic_json(self.output / ('native-%03d-response.json' % number), finished)
+                        with self.lock:
+                            self.connection_closures.append('closed_after_terminal_event')
+                        return
+            elif closure and locals().get('method') == 'CONNECT' and locals().get('target') == 'chatgpt.com:443':
+                with self.lock:
+                    self.connection_closures.append('closed_before_http_request')
+                return
             # Do not log exception strings: TLS/HTTP libraries may embed inputs.
             with self.lock:
                 safe_codes = {'destination_not_allowed', 'request_not_allowed', 'unsupported_request_framing',

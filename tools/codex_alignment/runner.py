@@ -253,6 +253,7 @@ class Runner:
                         row = {'name': name, 'binary': provenance, 'model': model, 'expected_mode': expected_mode,
                                'cli_exit': code, 'answer_verified': cap.answer_verified, 'code_mode_host': host_provenance, 'native_attempts': cap.count, 'capture_errors': cap.errors,
                                'opaque_oauth_refresh_tunnels': cap.auth_tunnels,
+                               'connection_closures': cap.connection_closures,
                                'local_websocket_refusals': cap.websocket_refusals,
                                'replays': [], 'status': 'unverified'}
                         requests = [r for r in cap.requests if r['method'] == 'POST']

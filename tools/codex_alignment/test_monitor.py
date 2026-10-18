@@ -159,6 +159,54 @@ class QueueTests(unittest.TestCase):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_transport_close_is_recovered_only_after_model_terminal_event(self):
+        class Connection:
+            def __init__(self, raw=b''):
+                self.raw = raw
+            def makefile(self, *args, **kwargs):
+                return io.BytesIO(self.raw)
+            def settimeout(self, _):
+                pass
+            def sendall(self, _):
+                pass
+            def close(self):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+        for event, expected in [('response.completed', True), ('response.created', False)]:
+            with self.subTest(event=event), tempfile.TemporaryDirectory() as tmp:
+                cap = Capture('socks5h://127.0.0.1:1', SECRET, Path(tmp) / 'out', Path(tmp) / 'ca')
+                client = Connection(b'POST /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\nContent-Length: 2\r\n\r\n{}')
+                class Context:
+                    def wrap_socket(self, *args, **kwargs):
+                        return client
+                    def set_alpn_protocols(self, _):
+                        pass
+                class Response:
+                    status = 200
+                    def __init__(self, _):
+                        self.sent = False
+                    def begin(self):
+                        pass
+                    def getheader(self, name, default=''):
+                        return 'text/event-stream' if name == 'Content-Type' else default
+                    def getheaders(self):
+                        return [('Content-Type', 'text/event-stream')]
+                    def read1(self, _):
+                        if self.sent:
+                            raise ssl.SSLEOFError()
+                        self.sent = True
+                        return ('data: {"type":"' + event + '"}\n\n').encode()
+                cap.tls = Context()
+                with patch('tools.codex_alignment.capture.socks_connect', return_value=Connection()), \
+                     patch('tools.codex_alignment.capture.ssl.create_default_context', return_value=Context()), \
+                     patch('tools.codex_alignment.capture.http.client.HTTPResponse', Response):
+                    cap.handle(Connection(b'CONNECT chatgpt.com:443 HTTP/1.1\r\n\r\n'))
+                self.assertEqual(cap.requests[0].get('response', {}).get('complete', False), expected)
+                self.assertEqual(bool(cap.errors), not expected)
+
     def test_tool_success_requires_reading_the_random_file_sentinel(self):
         def output(text):
             return json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': text}}).encode()
