@@ -88,7 +88,9 @@ func Authenticate(req *http.Request, keyID int64) (*http.Request, error) {
 	if path == "" {
 		return nil, ErrProbe
 	}
-	raw, err := os.ReadFile(path)
+	// Only the operator's process environment selects this configuration file;
+	// request headers cannot supply or modify its path.
+	raw, err := os.ReadFile(path) // #nosec G703 -- trusted deployment configuration path
 	if err != nil {
 		return nil, ErrProbe
 	}
@@ -243,7 +245,7 @@ func (p *Probe) Emit(kind string, data any) error {
 		return ErrProbe
 	}
 	tmp := f.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	// A setgid evidence root can grant a separate monitor group read access.
 	// Only sanitized records are shared; tickets/config remain private.
 	if err := f.Chmod(0640); err != nil {
