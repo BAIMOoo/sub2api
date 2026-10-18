@@ -92,6 +92,7 @@ type codexOAuthTransformOptions struct {
 	IsCompact                           bool
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
+	NativeCodexHTTP                     bool
 	OmitPromotedSystemMessagesFromInput bool
 	// KeepSystemMessagesInInput 把 role:"system" 就地归一化为 role:"developer"，
 	// 不提升/镜像到顶层 instructions。官方 Responses Lite 把基础指令放在 input，
@@ -341,6 +342,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		input = filterCodexInputWithOptions(input, codexInputFilterOptions{
 			PreserveReferences: needsToolContinuation,
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
+			NativeCodexHTTP:    opts.NativeCodexHTTP,
 		})
 		reqBody["input"] = input
 		result.Modified = true
@@ -1689,6 +1691,7 @@ func isInstructionsEmpty(reqBody map[string]any) bool {
 type codexInputFilterOptions struct {
 	PreserveReferences bool
 	PreserveCallIDs    bool
+	NativeCodexHTTP    bool
 }
 
 // filterCodexInput 按需过滤 item_reference 与 id。
@@ -1735,7 +1738,7 @@ func codexItemReferenceIDMappings(input []any, preserveCallIDs bool) map[string]
 	return mappings
 }
 
-func codexInputItemIDs(input []any) map[string]struct{} {
+func codexInputItemIDs(input []any, opts openAIResponsesInputIDOptions) map[string]struct{} {
 	itemIDs := make(map[string]struct{})
 	for _, rawItem := range input {
 		item, ok := rawItem.(map[string]any)
@@ -1744,7 +1747,7 @@ func codexInputItemIDs(input []any) map[string]struct{} {
 		}
 		itemType := strings.TrimSpace(firstNonEmptyString(item["type"]))
 		id := strings.TrimSpace(firstNonEmptyString(item["id"]))
-		if id != "" && !shouldStripOpenAIResponsesInputItemID(itemType, id) {
+		if id != "" && !shouldStripOpenAIResponsesInputItemIDWithOptions(itemType, id, opts) {
 			itemIDs[id] = struct{}{}
 		}
 	}
@@ -1768,7 +1771,8 @@ func codexInputCallIDs(input []any) map[string]struct{} {
 func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []any {
 	filtered := make([]any, 0, len(input))
 	referenceIDMappings := codexItemReferenceIDMappings(input, opts.PreserveCallIDs)
-	inputItemIDs := codexInputItemIDs(input)
+	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.NativeCodexHTTP}
+	inputItemIDs := codexInputItemIDs(input, idOptions)
 	inputCallIDs := codexInputCallIDs(input)
 	for _, item := range input {
 		m, ok := item.(map[string]any)
@@ -1836,7 +1840,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 				if !referencesExistingItem {
 					if normalizedID, mapped := referenceIDMappings[trimmedID]; mapped {
 						newItem["id"] = normalizedID
-					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall {
+					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.NativeCodexHTTP {
 						// A bare call_* reference is a legacy function-call identifier.
 						// Normalize it even when its call item lives in an earlier turn.
 						newItem["id"] = normalizeCodexCallID(trimmedID)
@@ -1904,7 +1908,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		if !opts.PreserveReferences {
 			ensureCopy()
 			delete(newItem, "id")
-		} else if id, ok := m["id"].(string); ok && shouldStripOpenAIResponsesInputItemID(typ, id) {
+		} else if id, ok := m["id"].(string); ok && shouldStripOpenAIResponsesInputItemIDWithOptions(typ, id, idOptions) {
 			ensureCopy()
 			delete(newItem, "id")
 		}

@@ -46,6 +46,19 @@ func openAIResponsesToolCallIDPrefix(itemType string) string {
 // Invalid replayed IDs are removed rather than rewritten because a fabricated
 // ID may point at a different upstream object.
 func shouldStripOpenAIResponsesInputItemID(itemType, id string) bool {
+	return shouldStripOpenAIResponsesInputItemIDWithOptions(itemType, id, openAIResponsesInputIDOptions{})
+}
+
+type openAIResponsesInputIDOptions struct {
+	// Native Codex HTTP outputs carry opaque IDs outside the legacy fc namespace.
+	// Keep this opt-in so API-key, bridge and WS callers retain their contracts.
+	NativeCodexHTTP bool
+}
+
+func shouldStripOpenAIResponsesInputItemIDWithOptions(itemType, id string, opts openAIResponsesInputIDOptions) bool {
+	if opts.NativeCodexHTTP && strings.TrimSpace(itemType) == "custom_tool_call_output" {
+		return strings.TrimSpace(id) == "" || len(id) > 64
+	}
 	prefix, constrained := openAIResponsesInputItemIDPrefix(itemType)
 	if !constrained {
 		return false
@@ -63,6 +76,10 @@ func shouldStripOpenAIResponsesNonPairCallID(itemType string) bool {
 }
 
 func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
+	return sanitizeOpenAIResponsesInputItemIDsWithOptions(body, openAIResponsesInputIDOptions{})
+}
+
+func sanitizeOpenAIResponsesInputItemIDsWithOptions(body []byte, opts openAIResponsesInputIDOptions) ([]byte, bool, error) {
 	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return body, false, nil
@@ -83,7 +100,7 @@ func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
 			trimmedItemType := strings.TrimSpace(itemType.String())
 			parsed.stripCallID = item.Get("call_id").Exists() && shouldStripOpenAIResponsesNonPairCallID(trimmedItemType)
 			if id.Type == gjson.String {
-				parsed.stripID = shouldStripOpenAIResponsesInputItemID(trimmedItemType, id.String())
+				parsed.stripID = shouldStripOpenAIResponsesInputItemIDWithOptions(trimmedItemType, id.String(), opts)
 			}
 		}
 		items = append(items, parsed)

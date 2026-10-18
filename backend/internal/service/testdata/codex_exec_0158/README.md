@@ -23,8 +23,13 @@ Fixture SHA256:
 
 These API-key/local HTTP captures establish body layouts, not ChatGPT OAuth TLS,
 Cookie, compression, or byte-for-byte network equivalence. The HTTP forwarding
-test pins the separately configured canonical Ubuntu/x86_64 identity; the capture
-itself ran on Alpine/aarch64. WebSocket parity is outside this work's scope.
+test uses a separately specified Ubuntu/x86_64 identity; the capture itself ran
+on Alpine/aarch64. WebSocket parity is outside this work's scope.
+
+The HTTP forwarding test now deliberately configures a different canonical
+identity (0.163.0 / xterm-256color) from the incoming native identity
+(0.158.0 / unknown), and requires the incoming identity to survive. These header
+test values are separate from the captured body provenance above.
 
 The gateway scopes session identities. Native `codex exec` HTTP preserves
 input-item `internal_chat_message_metadata_passthrough`; live alignment run

@@ -205,10 +205,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	if account != nil && account.IsOpenAI() {
 		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
+		_, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
 		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesCompatibilityBodyWithOptions(body, account, openAIResponsesCompatibilityOptions{
-			Config:        s.cfg,
-			ResponsesLite: responsesLite,
-			Compact:       isOpenAIResponsesCompactPath(c),
+			Config:          s.cfg,
+			ResponsesLite:   responsesLite,
+			Compact:         isOpenAIResponsesCompactPath(c),
+			NativeCodexHTTP: preserveNativeHTTP,
 		})
 		if normalizeErr != nil {
 			return nil, fmt.Errorf("normalize passthrough Responses compatibility: %w", normalizeErr)
@@ -695,10 +697,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// 会话隔离之后、终态身份收口之前）。HTTP 出站只写官方头名
 	// （不发 x-codex-installation-id / 下划线 session_id）。
 	applyStagedCodexFingerprintHeadersHTTP(c, account, req.Header)
-	// 终态收口：透传路径的 OAuth 与非透传完全一致，同样强制统一出站身份
-	// （User-Agent / originator / version 同源自洽），客户端自报身份不会到达上游。
+	// 与转换路径共用 HTTP 身份策略，原生身份与管理员覆盖有明确优先级。
 	if account.UsesOpenAICodexProtocol() {
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+		s.applyCodexHTTPIdentityHeaders(c, account, req.Header)
 	}
 
 	if req.Header.Get("content-type") == "" {

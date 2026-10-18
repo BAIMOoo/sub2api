@@ -1439,8 +1439,9 @@ func normalizeOpenAIResponsesWebSocketCompatibilityBodyWithConfig(cfg *config.Co
 }
 
 type openAIResponsesCompatibilityOptions struct {
-	Config        *config.Config
-	ResponsesLite bool
+	Config          *config.Config
+	ResponsesLite   bool
+	NativeCodexHTTP bool
 	// Compact marks the /responses/compact wire shape, which is left as-is
 	// by request-shape compatibility rewrites such as web_search history.
 	Compact bool
@@ -1480,7 +1481,9 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = true
 		}
 	}
-	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDs(normalized); err != nil {
+	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDsWithOptions(normalized, openAIResponsesInputIDOptions{
+		NativeCodexHTTP: opts.NativeCodexHTTP,
+	}); err != nil {
 		return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
 	} else if idsChanged {
 		normalized = sanitized

@@ -27,11 +27,13 @@ import (
 // Do not parallelize: the test temporarily pins the process-wide identity resolver.
 func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	const userAgent = "codex_exec/0.158.0 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_exec; 0.158.0)"
+	const userAgent = "codex_exec/0.158.0 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.158.0)"
 	codexCanonicalUAMu.RLock()
 	previousResolver := codexCanonicalUAResolver
 	codexCanonicalUAMu.RUnlock()
-	SetCodexCanonicalUserAgentResolver(func() string { return userAgent })
+	SetCodexCanonicalUserAgentResolver(func() string {
+		return "codex_exec/0.163.0 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_exec; 0.163.0)"
+	})
 	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(previousResolver) })
 
 	for _, lite := range []bool{false, true} {
@@ -49,6 +51,8 @@ func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 				c.Request.Header.Set("Content-Type", "application/json")
 				c.Request.Header.Set("User-Agent", userAgent)
+				c.Request.Header.Set("originator", "codex_exec")
+				c.Request.Header.Set("version", "0.158.0")
 				sessionID, ok := request["prompt_cache_key"].(string)
 				require.True(t, ok)
 				c.Request.Header.Set("session-id", sessionID)

@@ -1022,7 +1022,7 @@ type GatewayConfig struct {
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
 	// DisableCodexIdentityEnforcement: 关闭「强制统一 Codex 出站身份」。上游 /backend-api/codex
 	// 在容量紧张时按客户端身份分优先级降载，被降载的请求会拿到 HTTP 200 + 流内
-	// server_is_overloaded，该次请求失败。默认强制统一出口：所有 OAuth 出站的
+	// server_is_overloaded，该次请求失败。有效原生 Codex HTTP 单独保留自身身份；其他 OAuth 出站默认统一，
 	// User-Agent / originator / version 都改写为网关规范身份，确保没有请求带着第三方或陈旧身份
 	// 出站。置 true 后退回「仅按最终 User-Agent 配对 originator」的收口语义，供上游策略变动时回滚。
 	//

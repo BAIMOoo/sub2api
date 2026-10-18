@@ -21,6 +21,7 @@
 
 - 普通模式保留原生顶层工具和基础指令；只对 Lite 执行已有的第三方函数工具搬迁。
 - 已有的 Lite `additional_tools`、命名空间、基础提示和有效 item ID 应保留，不重复插入。
+- 原生 Codex HTTP 请求的有效 `call_id`、跨轮次调用引用及 `custom_tool_call_output.id` 保留；结果条目 ID 不套用兼容入口的 `fc` 前缀限制，空值和超过 64 字节的 ID 仍清理。第三方、API-key 和 WebSocket 路径继续使用原有兼容规则。
 - 搜索历史兼容仍按模式补充声明：普通模式使用顶层 `tools`，Lite 使用 `additional_tools`。无工具时补充 cached-only 搜索并设置 `tool_choice=none` 是网关兼容修复，会有意区别于原生请求，防止引入新的搜索调用。
 - compact 有独立协议约定，不能套用主 Responses 的工具搬迁与头序规则。
 - 账号与 API Key 作用域化继续处理会话标识；比较时核对格式和跨字段关联关系，鉴权值、会话值和随机材料不能作为固定字节基准。
@@ -31,7 +32,9 @@
 
 已有的 Linux ClientHello 摘录在 `backend/internal/pkg/tlsfingerprint/profiles.go`，HTTP/1.1 主 Responses 的头顺序摘录在 `httporder.go`。后者只覆盖 `chatgpt.com/backend-api/codex/responses`，不覆盖 compact 与 WebSocket 握手。
 
-版本字段由后台客户端版本配置及自动同步决定；选用 0.158.0 结构基准不等于运行中的版本已固定为 0.158.0。需要固定版本对照时，应配置客户端版本并关闭自动同步。TLS 指纹需启用并选择对应的 Codex Linux profile；自定义 profile、关闭身份统一及插件传输都会影响实际线上报文。
+原生 Codex HTTP 的 User-Agent、originator 和 version 经一致性校验后保留；缺失 originator/version 时从有效 UA 补齐。身份冲突、非法版本或低于上游最低版本的请求按现有兼容身份规则回退。账号级自定义 UA 与 ForceCodexCLI 的显式覆盖仍有优先级。原生识别只用于报文兼容，不替代鉴权或访问控制。
+
+后台客户端版本配置及自动同步继续决定兼容请求、凭据请求等路径的规范身份，不再覆盖有效原生 HTTP 的版本。0.158.0 与 0.163.0 可以同时保持各自身份，无需降低网关全局版本。WebSocket 身份策略不在本次修改范围。TLS 指纹需启用并选择对应的 Codex Linux profile；自定义 profile、关闭身份统一及插件传输都会影响实际线上报文。
 
 zstd 测试验证编码、解压后的 JSON、压缩后长度与重放一致性，不证明不同压缩库产出相同字节。
 
@@ -50,3 +53,5 @@ go test -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
 ```
 
 这些测试锁定 HTTP 的已知结构与传输约定。完整验收还需要固定版本、模型、平台和配置，以相同输入采集官方 exec 与网关实际发送的 OAuth HTTP 请求，比较解压后的正文、有序请求头、TLS 握手及续轮状态。WebSocket 不属于本次验收范围。
+
+`openai_codex_native_http_test.go` 使用合成工具记录，覆盖两版客户端、标准/Lite、转换/透传和 compact，核对身份、工具配对及引用。规范身份故意与入站身份不同，避免测试通过固定相同 UA 隐藏覆盖问题。合成 ID 不代表从生产 HMAC 恢复的原文。

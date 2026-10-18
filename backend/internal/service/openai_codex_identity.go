@@ -45,7 +45,8 @@ func buildCodexCLIUserAgent(version string) string {
 
 // codexIdentityEnforcement 控制 enforceCodexIdentityHeaders 是否强制统一出站身份，
 // 由 gateway.disable_codex_identity_enforcement 在服务构造时取反发布。
-// 默认开启：上游在容量紧张时按客户端身份分优先级降载，被降载的请求会拿到
+// 原生 HTTP 在 applyCodexHTTPIdentityHeaders 中单独校验并保留身份；本开关仍控制
+// 兼容请求、WS 与其他共用路径。默认开启：上游在容量紧张时按客户端身份分优先级降载，被降载的请求会拿到
 // HTTP 200 + 流内 server_is_overloaded，本次请求即失败；强制统一出口可确保没有
 // 请求带着第三方或陈旧身份出站。关闭后退回「仅按最终 UA 配对 originator」的收口语义。
 var codexIdentityEnforcement = func() *atomic.Bool {
