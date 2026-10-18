@@ -1,0 +1,17 @@
+[Unit]
+Description=Read-only production receipt for Codex alignment probes
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/sub2api-alignment
+ExecStart=/opt/sub2api-alignment/venv/bin/python -m tools.codex_alignment.production --config /etc/sub2api-alignment/production.json
+TimeoutStartSec=45s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sub2api-alignment
+MemoryMax=128M

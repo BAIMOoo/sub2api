@@ -23,6 +23,9 @@ const codexAccountIdentitySourceContextKey = "openai_codex_account_identity_sour
 // attempt. The handler reuses gin.Context across failover attempts, so every entry
 // point overwrites the staged source before projecting outbound identity.
 func (s *OpenAIGatewayService) prepareCodexAccountIdentitySource(ctx context.Context, c *gin.Context, account *Account) (*Account, error) {
+	if err := checkAlignmentProbeAccount(ctx, account); err != nil {
+		return nil, err
+	}
 	source := account
 	if account != nil && account.IsShadow() {
 		resolved, err := resolveCredentialAccount(ctx, s.accountRepo, account)
