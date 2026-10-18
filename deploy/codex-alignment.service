@@ -1,0 +1,33 @@
+[Unit]
+Description=Sub2API Codex HTTP alignment monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sub2api-alignment
+Group=sub2api-alignment
+WorkingDirectory=/opt/sub2api-alignment
+ExecStart=/opt/sub2api-alignment/venv/bin/python -m tools.codex_alignment --config /etc/sub2api-alignment/config.json tick
+TimeoutStartSec=65min
+TimeoutStopSec=15s
+KillMode=control-group
+UMask=0077
+CPUQuota=50%
+MemoryHigh=384M
+MemoryMax=512M
+TasksMax=128
+Nice=10
+IOWeight=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sub2api-alignment
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+# Installer must add the selected SOCKS proxy IP in a private drop-in. Without
+# that explicit allow entry all provider and notification traffic fails closed.
+StandardOutput=journal
+StandardError=journal
