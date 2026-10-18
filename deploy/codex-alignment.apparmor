@@ -1,0 +1,8 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Selected explicitly by the monitor's systemd unit. Permit bubblewrap to
+# create its read-only sandbox without changing the host-wide userns policy.
+profile codex-alignment flags=(unconfined) {
+  userns,
+}

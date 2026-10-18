@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from tools.codex_alignment.capture import Budget, Capture, parse_hello, read_head, socks_connect
 from tools.codex_alignment.protocol import completion
-from tools.codex_alignment.runner import compaction_observed, gateway
+from tools.codex_alignment.runner import compaction_observed, gateway, native_answer_matches
 from tools.codex_alignment.evidence import (atomic_json, compare_replay, decode_body, differences,
                                             http_evidence, retain, sanitize, ticket)
 from tools.codex_alignment.notifications import Outbox, read_env
@@ -159,6 +159,14 @@ class QueueTests(unittest.TestCase):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_tool_success_requires_reading_the_random_file_sentinel(self):
+        def output(text):
+            return json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': text}}).encode()
+        expected = 'ALIGNMENT_random_fixture_value'
+        self.assertTrue(native_answer_matches(output(expected + '\n'), expected))
+        self.assertFalse(native_answer_matches(output('OK'), expected))
+        self.assertFalse(native_answer_matches(output('The tool failed'), expected))
+
     def test_native_replay_does_not_duplicate_content_type_case_variants(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer
         received = []

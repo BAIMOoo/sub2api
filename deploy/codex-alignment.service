@@ -20,6 +20,7 @@ TasksMax=128
 Nice=10
 IOWeight=10
 NoNewPrivileges=true
+AppArmorProfile=codex-alignment
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true

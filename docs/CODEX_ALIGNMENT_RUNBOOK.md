@@ -26,11 +26,13 @@ sudo -u sub2api-alignment /opt/sub2api-alignment/venv/bin/python \
 
 1. Acquires a process lock and verifies fresh production health, account identity and proxy binding.
 2. Reads the exact `main` SHA and its matching Actions conclusion. Missing/failed CI remains separate from production findings.
-3. Discovers official stable Codex, verifies the published asset digest, and retains the approved 0.158.0 binary separately. Existing 0.158.0 fixtures approve body structure only.
+3. Discovers official stable Codex, verifies published digests for both the CLI and its code-mode host, and retains the approved 0.158.0 binary separately. Existing 0.158.0 fixtures approve body structure only.
 4. Captures a separate local default ClientHello offer, then ordinary CLI requests through a local inspection CA and the selected SOCKS exit. Local WebSocket upgrades are rejected so the CLI falls back to HTTP. Apps, plugins and analytics are disabled in the synthetic CLI workspace.
 5. Replays native HTTP payloads through the dedicated loopback gateway key and captures the actual gateway HTTP and ClientHello. Ordinary requests run every day; tools and compaction rotate. Acceptance and official version changes run both. Compaction V2 is observed through `compaction_trigger`, provider compaction output and subsequent replay.
 6. Exercises Responses, Chat Completions and Messages independently. These bridge tests check successful completion and converted request semantics, not equality with the CLI workspace prompt.
 7. Saves differences, incomplete checks, versions, hashes, timings and resource measurements; sends changed failures, recoveries and daily reminders of persistent inability through QQ SMTP and WeChat.
+
+Install the distribution `bubblewrap` package so official shell tools can keep their read-only sandbox. On Ubuntu 24.04, install `deploy/codex-alignment.apparmor` as `/etc/apparmor.d/codex-alignment` and load it with `apparmor_parser -r`; the systemd unit explicitly selects this profile to permit user namespaces. Host-wide AppArmor settings stay unchanged. Tool/compact probes must read a random sentinel from `probe.txt` and return it exactly; a successful CLI exit after a tool failure is insufficient.
 
 The initial watchdog is 60 minutes; systemd permits 65 minutes for setup/cleanup. Probes are serial. The CLI request budget is shared across scenarios, and the signed gateway budget counts every observed upstream HTTP attempt, including retries. Neither is a strict money limit. OAuth refresh uses separately bounded encrypted tunnels through the same exit; credentials are never inspected. The systemd network policy denies external addresses except the configured proxy IP.
 

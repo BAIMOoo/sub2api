@@ -44,11 +44,13 @@ def release(version=None):
     return info
 
 
-def install(directory, info, target='x86_64-unknown-linux-musl'):
+def install(directory, info, target='x86_64-unknown-linux-musl', component='codex'):
+    if component not in {'codex', 'codex-code-mode-host'}:
+        raise ValueError('unexpected_official_component')
     version = info['tag_name'].removeprefix('rust-v')
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('invalid_release_version')
-    asset_name = 'codex-' + target + '.tar.gz'
+    asset_name = component + '-' + target + '.tar.gz'
     assets = [a for a in info['assets'] if a['name'] == asset_name]
     if len(assets) != 1:
         raise ValueError('official_binary_missing')
@@ -61,14 +63,15 @@ def install(directory, info, target='x86_64-unknown-linux-musl'):
         raise ValueError('unexpected_release_url')
     root = Path(directory) / version
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    binary, manifest = root / 'codex', root / 'provenance.json'
+    binary = root / component
+    manifest = root / ('provenance.json' if component == 'codex' else component + '.provenance.json')
     if binary.exists() and manifest.exists():
         saved = json.loads(manifest.read_text())
         if saved.get('asset_sha256') == expected[7:] and saved.get('binary_sha256') == file_sha(binary):
             return binary, saved
         raise ValueError('installed_binary_digest_changed')
     fd, archive = tempfile.mkstemp(prefix='.download-', dir=root)
-    tmp_binary = root / '.codex-pending'
+    tmp_binary = root / ('.' + component + '-pending')
     try:
         sha, total = hashlib.sha256(), 0
         with os.fdopen(fd, 'wb') as f, urlopen(Request(url, headers={'User-Agent': 'sub2api-alignment'}), timeout=60) as r:
@@ -85,7 +88,7 @@ def install(directory, info, target='x86_64-unknown-linux-musl'):
             raise ValueError('release_asset_digest_mismatch')
         with tarfile.open(archive, 'r:gz') as tar:
             members = tar.getmembers()
-            candidates = [m for m in members if m.isfile() and Path(m.name).name == 'codex-' + target]
+            candidates = [m for m in members if m.isfile() and Path(m.name).name == component + '-' + target]
             if len(candidates) != 1 or candidates[0].size > 400 << 20:
                 raise ValueError('unexpected_binary_archive')
             with tar.extractfile(candidates[0]) as source, tmp_binary.open('wb') as out:

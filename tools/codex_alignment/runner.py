@@ -25,8 +25,9 @@ from urllib.error import HTTPError
 
 def native(binary, home, model, capture, timeout, scenario='basic'):
     with tempfile.TemporaryDirectory(prefix='alignment-work-') as work, capture.serve() as proxy:
-        Path(work, 'probe.txt').write_text('OK\n')
-        env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(home), 'CODEX_HOME': str(home),
+        expected = 'OK' if scenario == 'basic' else 'ALIGNMENT_' + uuid.uuid4().hex
+        Path(work, 'probe.txt').write_text(expected + '\n')
+        env = {'PATH': str(Path(binary).parent) + ':/usr/local/bin:/usr/bin:/bin', 'HOME': str(home), 'CODEX_HOME': str(home),
                'LANG': 'C.UTF-8', 'HTTPS_PROXY': proxy, 'HTTP_PROXY': proxy, 'ALL_PROXY': proxy,
                'https_proxy': proxy, 'http_proxy': proxy, 'all_proxy': proxy, 'NO_PROXY': '', 'no_proxy': ''}
         if not capture.hello_only:
@@ -81,7 +82,21 @@ def native(binary, home, model, capture, timeout, scenario='basic'):
             # Callers persist only explicit error categories.
             capture.cli_output = bytes(buffers[0])
             capture.cli_stderr = bytes(buffers[1])
+            capture.answer_verified = native_answer_matches(capture.cli_output, expected)
         return proc.returncode
+
+
+def native_answer_matches(output, expected):
+    answer = None
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        item = event.get('item', {})
+        if event.get('type') == 'item.completed' and item.get('type') == 'agent_message':
+            answer = item.get('text', '').strip()
+    return answer == expected
 
 
 def gateway(cfg, run, sample, expires, path, body, pairs=()):
@@ -216,6 +231,7 @@ class Runner:
             report['findings'].extend('coverage:' + mode + ':' + why for mode, why in report['coverage_gaps'].items())
             for info in versions:
                 binary, provenance = install(self.root / 'binaries', info)
+                _, host_provenance = install(self.root / 'binaries', info, component='codex-code-mode-host')
                 version = provenance['version']
                 hello = Capture(self.cfg['proxy_url'], self.cfg['secret'], directory / version / 'tls',
                                 self.root / 'ca', hello_only=True)
@@ -235,7 +251,7 @@ class Runner:
                         phase = time.monotonic()
                         code = native(binary, home, model, cap, min(240, expires - time.time()), scenario)
                         row = {'name': name, 'binary': provenance, 'model': model, 'expected_mode': expected_mode,
-                               'cli_exit': code, 'native_attempts': cap.count, 'capture_errors': cap.errors,
+                               'cli_exit': code, 'answer_verified': cap.answer_verified, 'code_mode_host': host_provenance, 'native_attempts': cap.count, 'capture_errors': cap.errors,
                                'opaque_oauth_refresh_tunnels': cap.auth_tunnels,
                                'local_websocket_refusals': cap.websocket_refusals,
                                'replays': [], 'status': 'unverified'}
@@ -244,6 +260,8 @@ class Runner:
                             row['reason'] = 'native_tool_continuation_not_observed'
                         elif scenario == 'compact' and not compaction_observed(requests):
                             row['reason'] = 'native_compact_not_observed'
+                        elif not cap.answer_verified:
+                            row['reason'] = 'native_expected_answer_not_observed'
                         elif code != 0 or not requests or cap.errors or any(r['status'] is None or r['status'] // 100 != 2 or not r.get('response', {}).get('complete') for r in requests):
                             row['reason'] = 'native_capture_or_provider_incomplete'
                         else:
