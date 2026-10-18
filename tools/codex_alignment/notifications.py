@@ -37,6 +37,7 @@ def email_send(cfg, text, event_id, proxy_url=None):
     msg['Subject'] = 'Sub2API Codex 请求对齐检测'
     msg['Message-ID'] = '<alignment-' + event_id + '@sub2api.local>'
     msg.set_content(text)
+    msg.add_attachment(text, subtype='markdown', charset='utf-8', filename='Sub2API-检测报告.md')
     # Credentials can only go to the explicitly configured QQ implicit-TLS server.
     if cfg['SMTP_HOST'] != 'smtp.qq.com' or str(cfg['SMTP_PORT']) != '465':
         raise ValueError('qq_smtp_tls_required')
@@ -83,6 +84,26 @@ def wechat_send(cfg, text, event_id):
         raise ValueError('wechat_delivery_refused')
 
 
+def wechat_parts(text, max_bytes=3000):
+    """Preserve the entire document within a conservative UTF-8 message size."""
+    if len(text.encode('utf-8')) <= max_bytes:
+        return [text]
+    capacity = max_bytes - 80  # Room for the numbered part heading.
+    if capacity < 4:
+        raise ValueError('wechat_part_budget_too_small')
+    chunks = []
+    while text:
+        candidate = text.encode('utf-8')[:capacity].decode('utf-8', errors='ignore')
+        if len(candidate) < len(text):
+            boundary = candidate.rfind('\n')
+            if boundary > len(candidate) // 2:
+                candidate = candidate[:boundary + 1]
+        chunks.append(candidate)
+        text = text[len(candidate):]
+    return ['检测报告（' + str(i) + '/' + str(len(chunks)) + '）\n' + chunk
+            for i, chunk in enumerate(chunks, 1)]
+
+
 class Outbox:
     def __init__(self, directory, senders):
         self.root, self.senders = Path(directory), senders
@@ -99,6 +120,7 @@ class Outbox:
         if force or recovery or status != 'pass' and (changed or periodic):
             event_id = digest({'key': key, 'at': now})[:32]
             atomic_json(self.root / (event_id + '.json'), {'id': event_id, 'text': text, 'created': now,
+                                                         'wechat_parts': wechat_parts(text), 'wechat_next': 0,
                                                          'delivered': [], 'attempts': 0, 'next_attempt': 0})
             self.state['last_notice'] = now
         self.state.update(current=key, status=status)
@@ -118,7 +140,20 @@ class Outbox:
                 if channel in item['delivered']:
                     continue
                 try:
-                    sender(item['text'], item['id'])
+                    if channel == 'wechat':
+                        # Persist the exact segmentation for retries, including
+                        # legacy queued notices created before multipart support.
+                        if 'wechat_parts' not in item:
+                            item.update(wechat_parts=wechat_parts(item['text']), wechat_next=0)
+                            atomic_json(path, item)
+                        parts = item['wechat_parts']
+                        for index in range(item.get('wechat_next', 0), len(parts)):
+                            event = item['id'] if len(parts) == 1 else item['id'] + '-' + str(index + 1)
+                            sender(parts[index], event)
+                            item['wechat_next'] = index + 1
+                            atomic_json(path, item)
+                    else:
+                        sender(item['text'], item['id'])
                 except Exception:
                     pass  # No provider error body or credential-bearing traceback.
                 else:

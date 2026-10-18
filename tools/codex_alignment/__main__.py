@@ -8,6 +8,7 @@ import time
 from .evidence import atomic_json, digest
 from .notifications import Outbox, email_send, read_env, wechat_send
 from .runner import Runner, repository_state
+from .reporting import notification_signature, operation_document, save_document
 from .schedule import Schedule, lock
 
 
@@ -29,7 +30,7 @@ def outbox(cfg):
 def run_cli(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', required=True)
-    parser.add_argument('command', choices=['tick', 'acceptance', 'notify-test', 'status'])
+    parser.add_argument('command', choices=['tick', 'acceptance', 'notify-test', 'notify-latest', 'status'])
     args = parser.parse_args(argv)
     os.umask(0o077)
     path = Path(args.config)
@@ -60,6 +61,14 @@ def run_cli(argv=None):
             print(json.dumps({'notification_test': 'pending' if pending else 'delivered'}))
             return int(bool(pending))
         box.flush()
+        if args.command == 'notify-latest':
+            report = json.loads((root / 'latest.json').read_text())
+            text = save_document(root, report)
+            box.observe(report['status'], notification_signature(report),
+                        '以下是已有检测结果的报告补发，没有重新调用模型。\n\n' + text, force=True)
+            pending = box.flush()
+            print(json.dumps({'report_resent': report['run'], 'notification_pending': bool(pending)}))
+            return int(bool(pending))
         now = time.time()
         snapshot = json.loads(Path(cfg['snapshot_file']).read_text())
         cache = root / 'repository.json'
@@ -77,7 +86,7 @@ def run_cli(argv=None):
         if schedule.state.get('running'):
             interrupted = schedule.state.pop('running')
             box.observe('unverified', ['previous_run_interrupted'],
-                        'Sub2API 请求对齐检测：上一轮中断，结果未验证。请检查监控服务和运行资源。')
+                        operation_document('previous_run_interrupted'))
             schedule.save()
         if args.command == 'tick' and not schedule.due(now):
             return 0
@@ -85,18 +94,8 @@ def run_cli(argv=None):
         schedule.started(generation, now)
         report = Runner(cfg).run(reason, generation)
         schedule.finished(generation)
-        findings = report['findings']
-        text = ('Sub2API Codex 请求对齐检测：' + report['status'] + '\n运行：' + report['run'] +
-                '\n耗时：' + str(report['elapsed_seconds']) + ' 秒\n' +
-                ('问题：' + '\n'.join(findings[:12]) if findings else '已验证项目恢复正常。') +
-                '\n原生直连同一请求的完整报文仍未验证；详情见服务器脱敏报告。')
-        # Include stable details, excluding dynamic hashes/IDs, so a new drift
-        # location under the same scenario triggers a meaningful notification.
-        signature = [{'name': r['name'], 'status': r['status'],
-                      'diffs': [{k: v for k, v in item.items() if k in {
-                          'body_diff', 'header_contract_diff', 'tls_diff', 'identity_failures', 'reason'}}
-                                for item in r.get('replays', [])]} for r in report['scenarios']]
-        box.observe(report['status'], {'findings': findings, 'scenarios': signature}, text)
+        text = save_document(root, report)
+        box.observe(report['status'], notification_signature(report), text)
         pending = box.flush()
         print(json.dumps({'run': report['run'], 'status': report['status'], 'notification_pending': bool(pending)}))
         return 0
@@ -104,7 +103,7 @@ def run_cli(argv=None):
         # Persist inability even when snapshot/release lookup fails before a run.
         if 'box' in locals():
             box.observe('unverified', ['monitor_operation_failed_' + type(exc).__name__],
-                        'Sub2API 请求对齐检测暂时无法运行，请检查服务日志；此前结果不代表当前状态。')
+                        operation_document('monitor_operation_failed_' + type(exc).__name__))
             box.flush()
         raise
     finally:

@@ -22,6 +22,12 @@ sudo -u sub2api-alignment /opt/sub2api-alignment/venv/bin/python \
 
 `latest.json` and `runs/<run>/report.json` contain sanitized results and immutable per-run provenance. `progress.json` records completed phases if the watchdog interrupts a run. `outbox/` retains undelivered notifications separately for each channel. Never treat an old successful result as proof of current health.
 
+Each completed run also writes `latest.md` and `runs/<run>/report.md`: a Chinese report with a plain-language conclusion, request completion counts, scenario results, explained differences, coverage limits, and suggested next steps. It distinguishes successful responses from exact request alignment and exposes incomplete checks even when differences were also found. It includes every difference location already recorded in the JSON report, grouping repeats without truncating the document.
+
+Email includes the entire report in its body and a UTF-8 Markdown attachment. WeChat sends the same content in numbered parts of at most 3,000 UTF-8 bytes; the outbox records each successful part and resumes at the first unsent part after a failure. Delivery is complete only after both channels finish. As with any external message delivery, a process crash after the remote service accepts a message but before the local receipt is saved can cause a retry; part IDs remain stable.
+
+The runner command `notify-latest` regenerates and resends the last report, explicitly labeled as an existing result. It makes no model calls and leaves the original JSON and probe schedule unchanged. Run it using the installed service's usual user, working directory, and network restrictions; restore the normal `tick` command afterward. This is useful when improving report wording or checking notification delivery without paying for another live probe.
+
 ## What a run does
 
 1. Acquires a process lock and verifies fresh production health, account identity and proxy binding.
