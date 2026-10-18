@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/codexprobe"
 	"log/slog"
 	"net"
 	"net/http"
@@ -328,7 +329,7 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 	}
 
 	spec := buildClientHelloSpecFromProfile(profile)
-	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
+	tlsConn := utls.UClient(codexprobe.WrapTLS(ctx, conn), &utls.Config{ServerName: host}, utls.HelloCustom)
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {
 		_ = conn.Close()

@@ -1,6 +1,24 @@
 package service
 
-import "net/http"
+import (
+	"context"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/codexprobe"
+	"net/http"
+)
+
+func checkAlignmentProbeAccount(ctx context.Context, account *Account) error {
+	if codexprobe.FromContext(ctx) == nil {
+		return nil
+	}
+	if account == nil || account.IsShadow() {
+		return codexprobe.ErrProbe
+	}
+	var proxyID int64
+	if account.ProxyID != nil {
+		proxyID = *account.ProxyID
+	}
+	return codexprobe.CheckSelection(ctx, account.ID, proxyID, account.IsOpenAIOAuthLike())
+}
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -9,6 +27,18 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	if p := codexprobe.FromContext(request.Context()); p != nil {
+		if err := checkAlignmentProbeAccount(request.Context(), account); err != nil {
+			return nil, err
+		}
+		if err := p.CheckTransport(request, account.ID, proxyURL); err != nil {
+			return nil, err
+		}
+		if s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account) {
+			_ = p.Emit("incomplete", map[string]any{"reason": "plugin_transport_not_observable"})
+			return nil, codexprobe.ErrProbe
+		}
+	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
