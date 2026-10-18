@@ -1,14 +1,20 @@
 """Durable, per-channel delivery with stable incident keys and recovery."""
 import base64
 from email.message import EmailMessage
+import hashlib
 import json
 from pathlib import Path
+import re
 import secrets
 import shlex
 import smtplib
 import ssl
 import time
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlsplit
+
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .evidence import atomic_json, digest
 
@@ -58,50 +64,70 @@ def email_send(cfg, text, event_id, proxy_url=None):
             raise ValueError('smtp_recipient_refused')
 
 
-def wechat_send(cfg, text, event_id):
+def wechat_api(cfg, endpoint, payload):
     base = cfg['base_url'].rstrip('/')
     if base != 'https://ilinkai.weixin.qq.com':
         raise ValueError('unexpected_wechat_endpoint')
+    req = Request(base + '/ilink/bot/' + endpoint,
+                  data=json.dumps({**payload, 'base_info': {'channel_version': '2.2.0'}}).encode(), headers={
+        'Content-Type': 'application/json', 'AuthorizationType': 'ilink_bot_token',
+        'Authorization': 'Bearer ' + cfg['token'], 'iLink-App-Id': 'bot',
+        'iLink-App-ClientVersion': str((2 << 16) | (2 << 8)),
+        'X-WECHAT-UIN': base64.b64encode(str(secrets.randbits(32)).encode()).decode()})
+    with urlopen(req, timeout=30) as response:
+        return json.loads(response.read(65536))
+
+
+def wechat_send(cfg, text, event_id):
+    """Send one encrypted Markdown attachment using the iLink file protocol."""
+    raw = text.encode('utf-8')
+    filekey, key = secrets.token_hex(16), secrets.token_bytes(16)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(raw) + padder.finalize()
+    # AES-128-ECB with PKCS#7 is required by the WeChat media protocol.
+    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+    encrypted = encryptor.update(padded) + encryptor.finalize()
+    upload = wechat_api(cfg, 'getuploadurl', {
+        'filekey': filekey, 'media_type': 3, 'to_user_id': cfg['chat_id'],
+        'rawsize': len(raw), 'rawfilemd5': hashlib.md5(raw, usedforsecurity=False).hexdigest(),
+        'filesize': len(encrypted), 'no_need_thumb': True, 'aeskey': key.hex()})
+    if upload.get('ret', 0) != 0 or upload.get('errcode', 0) != 0:
+        raise ValueError('wechat_upload_authorization_refused')
+    url = upload.get('upload_full_url')
+    if not url and upload.get('upload_param'):
+        url = 'https://novac2c.cdn.weixin.qq.com/c2c/upload?' + urlencode({
+            'encrypted_query_param': upload['upload_param'], 'filekey': filekey})
+    target = urlsplit(url or '')
+    if (target.scheme != 'https' or target.hostname != 'novac2c.cdn.weixin.qq.com'
+            or target.port not in (None, 443) or target.path != '/c2c/upload'
+            or target.username or target.password or target.fragment):
+        raise ValueError('unexpected_wechat_upload_endpoint')
+    # Only ciphertext goes to the CDN. Bot authorization stays on the API host.
+    req = Request(url, data=encrypted, headers={'Content-Type': 'application/octet-stream'})
+    with urlopen(req, timeout=60) as response:
+        download = response.headers.get('x-encrypted-param')
+        if response.status != 200 or not download:
+            raise ValueError('wechat_file_upload_failed')
+    run = re.search(r'^- 运行编号：([A-Za-z0-9_-]{1,80})$', text, re.MULTILINE)
+    suffix = run.group(1) if run else re.sub(r'[^A-Za-z0-9_-]', '', event_id)[:40]
+    item = {'type': 4, 'file_item': {
+        'file_name': 'Sub2API-请求对齐报告-' + suffix + '.md', 'len': str(len(raw)),
+        'media': {'encrypt_query_param': download,
+                  'aes_key': base64.b64encode(key.hex().encode('ascii')).decode('ascii'),
+                  'encrypt_type': 1}}}
     message = {'from_user_id': '', 'to_user_id': cfg['chat_id'], 'client_id': 'alignment-' + event_id,
                'message_type': 2, 'message_state': 2,
-               'item_list': [{'type': 1, 'text_item': {'text': text}}]}
+               'item_list': [item]}
     if cfg.get('context_token'):
         message['context_token'] = cfg['context_token']
     for attempt in range(2):
-        body = json.dumps({'msg': message, 'base_info': {'channel_version': '2.2.0'}}).encode()
-        req = Request(base + '/ilink/bot/sendmessage', data=body, headers={
-            'Content-Type': 'application/json', 'AuthorizationType': 'ilink_bot_token',
-            'Authorization': 'Bearer ' + cfg['token'], 'iLink-App-Id': 'bot',
-            'iLink-App-ClientVersion': str((2 << 16) | (2 << 8)),
-            'X-WECHAT-UIN': base64.b64encode(str(secrets.randbits(32)).encode()).decode()})
-        with urlopen(req, timeout=30) as response:
-            result = json.loads(response.read(65536))
+        result = wechat_api(cfg, 'sendmessage', {'msg': message})
         if result.get('ret', 0) == 0 and result.get('errcode', 0) == 0:
             return
         if attempt == 0 and (result.get('errcode') == -14 or result.get('ret') == -14) and 'context_token' in message:
             message.pop('context_token')
             continue
         raise ValueError('wechat_delivery_refused')
-
-
-def wechat_parts(text, max_bytes=3000):
-    """Preserve the entire document within a conservative UTF-8 message size."""
-    if len(text.encode('utf-8')) <= max_bytes:
-        return [text]
-    capacity = max_bytes - 80  # Room for the numbered part heading.
-    if capacity < 4:
-        raise ValueError('wechat_part_budget_too_small')
-    chunks = []
-    while text:
-        candidate = text.encode('utf-8')[:capacity].decode('utf-8', errors='ignore')
-        if len(candidate) < len(text):
-            boundary = candidate.rfind('\n')
-            if boundary > len(candidate) // 2:
-                candidate = candidate[:boundary + 1]
-        chunks.append(candidate)
-        text = text[len(candidate):]
-    return ['检测报告（' + str(i) + '/' + str(len(chunks)) + '）\n' + chunk
-            for i, chunk in enumerate(chunks, 1)]
 
 
 class Outbox:
@@ -120,7 +146,6 @@ class Outbox:
         if force or recovery or status != 'pass' and (changed or periodic):
             event_id = digest({'key': key, 'at': now})[:32]
             atomic_json(self.root / (event_id + '.json'), {'id': event_id, 'text': text, 'created': now,
-                                                         'wechat_parts': wechat_parts(text), 'wechat_next': 0,
                                                          'delivered': [], 'attempts': 0, 'next_attempt': 0})
             self.state['last_notice'] = now
         self.state.update(current=key, status=status)
@@ -140,20 +165,9 @@ class Outbox:
                 if channel in item['delivered']:
                     continue
                 try:
-                    if channel == 'wechat':
-                        # Persist the exact segmentation for retries, including
-                        # legacy queued notices created before multipart support.
-                        if 'wechat_parts' not in item:
-                            item.update(wechat_parts=wechat_parts(item['text']), wechat_next=0)
-                            atomic_json(path, item)
-                        parts = item['wechat_parts']
-                        for index in range(item.get('wechat_next', 0), len(parts)):
-                            event = item['id'] if len(parts) == 1 else item['id'] + '-' + str(index + 1)
-                            sender(parts[index], event)
-                            item['wechat_next'] = index + 1
-                            atomic_json(path, item)
-                    else:
-                        sender(item['text'], item['id'])
+                    # Legacy partial text notices are now sent as one complete
+                    # document. Already delivered channels remain untouched.
+                    sender(item['text'], item['id'])
                 except Exception:
                     pass  # No provider error body or credential-bearing traceback.
                 else:

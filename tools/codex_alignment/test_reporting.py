@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.codex_alignment.__main__ import run_cli
-from tools.codex_alignment.notifications import Outbox, email_send, wechat_parts
+from tools.codex_alignment.notifications import Outbox, email_send, wechat_send
 from tools.codex_alignment.reporting import document, notification_signature, save_document
 
 
@@ -83,46 +83,114 @@ class ReportingTests(unittest.TestCase):
 
 
 class DeliveryTests(unittest.TestCase):
-    def test_unicode_document_splits_losslessly_with_numbered_size_bounded_parts(self):
-        text = ('这是一份中文报告🙂\n' * 550) + '不能遗漏的结尾。'
-        parts = wechat_parts(text)
-        self.assertGreater(len(parts), 1)
-        self.assertEqual(''.join(p.partition('\n')[2] for p in parts), text)
-        for i, part in enumerate(parts, 1):
-            self.assertTrue(part.startswith('检测报告（' + str(i) + '/' + str(len(parts)) + '）'))
-            self.assertLessEqual(len(part.encode('utf-8')), 3000)
+    def test_wechat_sends_one_encrypted_markdown_file_with_full_unicode_content(self):
+        import base64
+        import hashlib
+        from cryptography.hazmat.primitives import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        text = ('完整中文报告🙂\n' * 550) + '- 运行编号：20261018T093357Z-example\n'
+        cfg = {'base_url': 'https://ilinkai.weixin.qq.com', 'token': 'PRIVATE_TOKEN',
+               'chat_id': 'test-user', 'context_token': 'old-context'}
+        requests, messages = [], []
+        class Response:
+            status = 200
+            headers = {'x-encrypted-param': 'download-parameter'}
+            def __init__(self, body): self.body = body
+            def read(self, *_): return json.dumps(self.body).encode()
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+        def send(request, **kwargs):
+            requests.append(request)
+            if request.full_url.endswith('/getuploadurl'):
+                return Response({'ret': 0, 'upload_param': 'upload+parameter/='})
+            if '/c2c/upload?' in request.full_url:
+                return Response({})
+            message = json.loads(request.data)['msg']
+            messages.append(message)
+            return Response({'ret': -14} if 'context_token' in message else {'ret': 0})
+        with patch('tools.codex_alignment.notifications.urlopen', side_effect=send):
+            wechat_send(cfg, text, 'stable-event')
+        self.assertEqual(len(requests), 4)  # Authorize, upload, stale-context send, retry.
+        auth = json.loads(requests[0].data)
+        self.assertEqual(auth['media_type'], 3)
+        self.assertEqual(auth['rawsize'], len(text.encode()))
+        self.assertEqual(auth['rawfilemd5'], hashlib.md5(text.encode()).hexdigest())
+        self.assertEqual(requests[1].get_method(), 'POST')
+        self.assertIsNone(requests[1].get_header('Authorization'))
+        self.assertNotIn(text.encode(), requests[1].data)
+        self.assertEqual(len(requests[1].data), auth['filesize'])
+        self.assertEqual(messages[0]['client_id'], messages[1]['client_id'])
+        self.assertEqual(messages[0]['item_list'], messages[1]['item_list'])
+        self.assertEqual(len(messages[-1]['item_list']), 1)
+        item = messages[-1]['item_list'][0]
+        self.assertEqual(item['type'], 4)
+        self.assertNotIn('text_item', item)
+        self.assertEqual(item['file_item']['file_name'], 'Sub2API-请求对齐报告-20261018T093357Z-example.md')
+        self.assertEqual(int(item['file_item']['len']), len(text.encode()))
+        media = item['file_item']['media']
+        self.assertEqual(media['encrypt_query_param'], 'download-parameter')
+        key = bytes.fromhex(base64.b64decode(media['aes_key']).decode())
+        decryptor = Cipher(algorithms.AES(key), modes.ECB()).decryptor()
+        padded = decryptor.update(requests[1].data) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        self.assertEqual((unpadder.update(padded) + unpadder.finalize()).decode(), text)
 
-    def test_partial_wechat_failure_retries_only_unsent_parts_after_process_restart(self):
+    def test_file_delivery_failure_retries_only_wechat_with_same_full_document(self):
         text = '完整报告内容\n' * 800
         with tempfile.TemporaryDirectory() as tmp:
-            email, wechat, failed = [], [], []
+            email, wechat, attempts = [], [], []
             def wx(body, event):
-                if event.endswith('-2') and not failed:
-                    failed.append(event)
+                attempts.append((body, event))
+                if len(attempts) == 1:
                     raise OSError('PRIVATE_ERROR')
-                wechat.append((body, event))
+                wechat.append(body)
             box = Outbox(tmp, {'email': lambda body, event: email.append(body), 'wechat': wx})
             box.observe('drift', ['changed'], text, now=100)
             self.assertEqual(len(box.flush(now=100)), 1)
-            self.assertEqual(len(wechat), 1)
+            self.assertEqual(wechat, [])
             restarted = Outbox(tmp, box.senders)
             self.assertEqual(restarted.flush(now=1000), [])
             self.assertEqual(email, [text])
-            self.assertEqual([body for body, _ in wechat], wechat_parts(text))
-            self.assertEqual(len(set(event for _, event in wechat)), len(wechat))
-            self.assertEqual(wechat[1][1], failed[0])
+            self.assertEqual(wechat, [text])
+            self.assertEqual(attempts[0], attempts[1])
             self.assertNotIn('PRIVATE_ERROR', (Path(tmp) / 'state.json').read_text())
 
-    def test_legacy_outbox_document_is_upgraded_without_resending_email(self):
+    def test_legacy_partial_text_notice_becomes_complete_file_without_resending_email(self):
         with tempfile.TemporaryDirectory() as tmp:
             text = '旧队列里的完整报告\n' * 500
-            item = {'id': 'legacy', 'text': text, 'delivered': ['email'], 'attempts': 1, 'next_attempt': 0}
+            item = {'id': 'legacy', 'text': text, 'delivered': ['email'], 'attempts': 1, 'next_attempt': 0,
+                    'wechat_parts': ['old part one', 'old part two'], 'wechat_next': 1}
             (Path(tmp) / 'legacy.json').write_text(json.dumps(item))
             sent = []
             box = Outbox(tmp, {'email': lambda *_: self.fail('email already delivered'),
                                'wechat': lambda body, _: sent.append(body)})
             self.assertEqual(box.flush(now=1000), [])
-            self.assertEqual(sent, wechat_parts(text))
+            self.assertEqual(sent, [text])
+
+    def test_unexpected_cdn_url_is_rejected_before_upload(self):
+        cfg = {'base_url': 'https://ilinkai.weixin.qq.com', 'token': 'PRIVATE_TOKEN', 'chat_id': 'test-user'}
+        for url in ['https://untrusted.example/c2c/upload', 'http://novac2c.cdn.weixin.qq.com/c2c/upload',
+                    'https://novac2c.cdn.weixin.qq.com:444/c2c/upload',
+                    'https://user:password@novac2c.cdn.weixin.qq.com/c2c/upload']:
+            with self.subTest(url=url), \
+                 patch('tools.codex_alignment.notifications.wechat_api', return_value={'upload_full_url': url}), \
+                 patch('tools.codex_alignment.notifications.urlopen') as upload:
+                with self.assertRaises(ValueError):
+                    wechat_send(cfg, '中文全文', 'event')
+                upload.assert_not_called()
+
+    def test_missing_cdn_receipt_does_not_send_file_or_fall_back_to_long_text(self):
+        cfg = {'base_url': 'https://ilinkai.weixin.qq.com', 'token': 'PRIVATE_TOKEN', 'chat_id': 'test-user'}
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+        with patch('tools.codex_alignment.notifications.wechat_api', return_value={'upload_param': 'test'}) as api, \
+             patch('tools.codex_alignment.notifications.urlopen', return_value=Response()):
+            with self.assertRaisesRegex(ValueError, 'wechat_file_upload_failed'):
+                wechat_send(cfg, '中文全文', 'event')
+            self.assertEqual(api.call_count, 1)
 
     def test_email_contains_full_readable_body_and_downloadable_document(self):
         messages = []

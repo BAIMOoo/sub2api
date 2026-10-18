@@ -10,7 +10,7 @@ from urllib.request import HTTPSHandler, HTTPHandler, ProxyHandler, build_opener
 from .capture import socks_connect
 
 HOSTS = {'api.github.com', 'github.com', 'release-assets.githubusercontent.com',
-         'objects.githubusercontent.com', 'ilinkai.weixin.qq.com'}
+         'objects.githubusercontent.com', 'ilinkai.weixin.qq.com', 'novac2c.cdn.weixin.qq.com'}
 
 
 def configure(proxy_url):
