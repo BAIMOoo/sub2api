@@ -25,7 +25,8 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/sub2api-alignment
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Bubblewrap configures loopback inside its own network namespace via netlink.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 IPAddressDeny=any
 IPAddressAllow=localhost
 # Installer must add the selected SOCKS proxy IP in a private drop-in. Without
