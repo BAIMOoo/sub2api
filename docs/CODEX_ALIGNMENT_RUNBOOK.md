@@ -22,6 +22,12 @@ sudo -u sub2api-alignment /opt/sub2api-alignment/venv/bin/python \
 
 `latest.json` and `runs/<run>/report.json` contain sanitized results and immutable per-run provenance. `progress.json` records completed phases if the watchdog interrupts a run. `outbox/` retains undelivered notifications separately for each channel. Never treat an old successful result as proof of current health.
 
+Each completed run also writes `latest.md` and `runs/<run>/report.md`: a Chinese report with a plain-language conclusion, request completion counts, scenario results, explained differences, coverage limits, and suggested next steps. It distinguishes successful responses from exact request alignment and exposes incomplete checks even when differences were also found. It includes every difference location already recorded in the JSON report, grouping repeats without truncating the document.
+
+Email includes the entire report in its body and a UTF-8 Markdown attachment. WeChat sends one native `.md` file attachment containing the entire report, with the run ID in its filename; it sends no long text chunks. The file uses iLink’s AES-128-ECB/PKCS#7 media protocol and the WeChat CDN through the same fixed SOCKS exit. Only the exact HTTPS CDN upload endpoint is accepted, and bot authorization stays on the API host. A failed file delivery remains queued; it does not fall back to long text or resend an already delivered email. Legacy partially sent text notices finish by sending the complete document as a file. Delivery is complete only after both channels finish. A process crash after remote acceptance but before saving the local receipt can cause a retry; the message ID remains stable.
+
+The runner command `notify-latest` regenerates and resends the last report, explicitly labeled as an existing result. It makes no model calls and leaves the original JSON and probe schedule unchanged. Run it using the installed service's usual user, working directory, and network restrictions; restore the normal `tick` command afterward. This is useful when improving report wording or checking notification delivery without paying for another live probe.
+
 ## What a run does
 
 1. Acquires a process lock and verifies fresh production health, account identity and proxy binding.
@@ -48,7 +54,11 @@ On 2026-10-18 the selected account's visible model catalog offered Lite models o
 
 ## Triggers and changes
 
-Actions waits five minutes on pushes and cancels superseded runs on the same branch/PR; it has no daily count cap. The server coalesces repository, CI, image and relevant configuration changes into the latest pending generation. A live request is never cancelled by a commit. The daily run remains a backstop.
+Actions waits five minutes on pushes and cancels superseded runs on the same branch/PR; it has no daily count cap. The server coalesces repository, CI, production image/binary and private monitor-rule changes into the latest pending generation after a five-minute quiet window. A live request is never cancelled by a commit. The daily 09:00 Asia/Shanghai run remains a backstop.
+
+Saving admin account, proxy, group or global application settings does not trigger an extra live run, including representation-only changes such as an empty model mapping becoming absent. The production snapshot still records the complete configuration fingerprint, and every actual run verifies fresh health, account and proxy bindings before sending requests. To check an admin change immediately, use an explicit `acceptance` run; otherwise the next scheduled run checks the current configuration. The queue's `generation` identifies trigger inputs, while the report's `production.generation` identifies the complete production configuration.
+
+When updating an existing idle installation to this policy, back up `schedule.json` under the runner lock. If there is no pending/running work and its completed generation matches the current legacy inputs and latest report, rebase only `seen` and `completed` to the new trigger generation, preserving the daily date. Do not reset the daily schedule, discard pending code changes, or rewrite historical reports to avoid an upgrade-only probe.
 
 Changing `watchdog_seconds`, models or request budgets requires updating the private runner configuration; gateway attempt limits additionally live in its private observer configuration. If changing the watchdog beyond 60 minutes, review the signed-ticket validity limit and systemd timeout together. A proxy change also requires updating the observer's exact URL hash and the private systemd IP allow drop-in. Unmatched changes fail closed.
 
