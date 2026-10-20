@@ -54,7 +54,11 @@ On 2026-10-18 the selected account's visible model catalog offered Lite models o
 
 ## Triggers and changes
 
-Actions waits five minutes on pushes and cancels superseded runs on the same branch/PR; it has no daily count cap. The server coalesces repository, CI, image and relevant configuration changes into the latest pending generation. A live request is never cancelled by a commit. The daily run remains a backstop.
+Actions waits five minutes on pushes and cancels superseded runs on the same branch/PR; it has no daily count cap. The server coalesces repository, CI, production image/binary and private monitor-rule changes into the latest pending generation after a five-minute quiet window. A live request is never cancelled by a commit. The daily 09:00 Asia/Shanghai run remains a backstop.
+
+Saving admin account, proxy, group or global application settings does not trigger an extra live run, including representation-only changes such as an empty model mapping becoming absent. The production snapshot still records the complete configuration fingerprint, and every actual run verifies fresh health, account and proxy bindings before sending requests. To check an admin change immediately, use an explicit `acceptance` run; otherwise the next scheduled run checks the current configuration. The queue's `generation` identifies trigger inputs, while the report's `production.generation` identifies the complete production configuration.
+
+When updating an existing idle installation to this policy, back up `schedule.json` under the runner lock. If there is no pending/running work and its completed generation matches the current legacy inputs and latest report, rebase only `seen` and `completed` to the new trigger generation, preserving the daily date. Do not reset the daily schedule, discard pending code changes, or rewrite historical reports to avoid an upgrade-only probe.
 
 Changing `watchdog_seconds`, models or request budgets requires updating the private runner configuration; gateway attempt limits additionally live in its private observer configuration. If changing the watchdog beyond 60 minutes, review the signed-ticket validity limit and systemd timeout together. A proxy change also requires updating the observer's exact URL hash and the private systemd IP allow drop-in. Unmatched changes fail closed.
 

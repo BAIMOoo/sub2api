@@ -5,11 +5,11 @@ from pathlib import Path
 import sys
 import time
 
-from .evidence import atomic_json, digest
+from .evidence import atomic_json
 from .notifications import Outbox, email_send, read_env, wechat_send
 from .runner import Runner, repository_state
 from .reporting import notification_signature, operation_document, save_document
-from .schedule import Schedule, lock
+from .schedule import Schedule, change_generation, lock
 
 
 def outbox(cfg):
@@ -79,8 +79,7 @@ def run_cli(argv=None):
                 # Daily production checks still run during a GitHub outage.
                 pass
         repo = json.loads(cache.read_text()) if cache.exists() else {'head': None, 'conclusion': None}
-        generation = digest({'production': snapshot['generation'], 'head': repo['head'],
-                             'ci': repo['conclusion'], 'monitor_config': digest(cfg)})
+        generation = change_generation(snapshot, repo, cfg)
         schedule = Schedule(root / 'schedule.json')
         schedule.observe(generation, now)
         if schedule.state.get('running'):

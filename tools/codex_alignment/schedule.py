@@ -6,7 +6,20 @@ from pathlib import Path
 import time
 from zoneinfo import ZoneInfo
 
-from .evidence import atomic_json
+from .evidence import atomic_json, digest
+
+
+def change_generation(snapshot, repository, config):
+    """Wake probes for code/deployment changes, not admin account settings.
+
+    The full production configuration fingerprint stays in each run's evidence.
+    Image and binary digests identify a deployment without treating account,
+    proxy, group or global application settings as reasons for extra live calls.
+    """
+    return digest({'production': {'image': snapshot.get('image'),
+                                  'binary_sha256': snapshot.get('binary_sha256')},
+                   'head': repository['head'], 'ci': repository['conclusion'],
+                   'monitor_config': digest(config)})
 
 
 class Schedule:

@@ -8,7 +8,8 @@ The production host runs lightweight, serial probes using the owner's selected p
 
 ## Scheduling and resource controls
 
-- Every day at 09:00 Asia/Shanghai, plus deployment and relevant configuration changes.
+- Every day at 09:00 Asia/Shanghai, plus repository/CI changes, production image or binary changes, and private monitor-rule changes.
+- Admin account, proxy, group and global application settings do not trigger extra live runs. Their full configuration fingerprint remains in each run's production evidence; scheduled and manual runs check the current settings.
 - Same-branch commits have a five-minute quiet window; obsolete alignment workflow runs are cancelled. No daily workflow or live-run count limit.
 - Live runs are serialized and repeated triggers coalesce to the latest state. Do not cancel a live provider request merely because another commit arrived.
 - Initial configurable watchdog: 60 minutes, solely to terminate a stuck run. Measure phase durations and peak resources in the first acceptance run before tuning.
@@ -45,7 +46,7 @@ The monitor reports only. It must not merge code, repair application behavior, d
 2. Validate the native capture modes and strict proxy routing in isolation; record each limitation without presenting a combined full-wire pass.
 3. Benchmark on the production host with explicit memory/CPU/storage bounds, one probe at a time, and monitor application health during acceptance.
 4. Verify actual exit routing and current model availability. Complete the official Codex login if required; never copy the live gateway's writable refresh state.
-5. Verify probe-only production evidence, real provider acceptance, scheduled execution and deployment/configuration-change detection, and both notification deliveries.
+5. Verify probe-only production evidence, real provider acceptance, daily and code/deployment-change detection, suppression of admin-only triggers, and both notification deliveries.
 6. Leave a runbook, reproducible fixtures, rollback instructions, and an initial report tied to the running image. Unverified capabilities remain visible in that report.
 
 ## Primary evidence
