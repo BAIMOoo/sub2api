@@ -480,6 +480,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
+	if normalizedBody, changed := normalizeCodexPageContext(body); changed {
+		body = normalizedBody
+		reqLog.Info("openai.codex_page_context_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
+	}
 	if normalizedBody, changed := normalizeCodexAutomationBootstrap(body); changed {
 		body = normalizedBody
 		reqLog.Info("openai.codex_automation_bootstrap_normalized",
@@ -1673,6 +1679,23 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 		zap.String("reason", "function_call_output_missing_item_reference"),
 	)
 	h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires item_reference ids matching each call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
+	return false
+}
+
+// mayContainCodexCallOutputCandidate is a necessary-condition prefilter used
+// before decoding Responses bodies for targeted compatibility normalization.
+func mayContainCodexCallOutputCandidate(body []byte, toolNames ...string) bool {
+	if bytes.Contains(body, []byte(`\u`)) {
+		return true
+	}
+	if !bytes.Contains(body, []byte("function_call_output")) {
+		return false
+	}
+	for _, name := range toolNames {
+		if bytes.Contains(body, []byte(name)) {
+			return true
+		}
+	}
 	return false
 }
 
