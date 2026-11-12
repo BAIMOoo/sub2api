@@ -108,12 +108,18 @@ func TestForward_NormalizesTUIHarnessToCodexExec(t *testing.T) {
 	pinNativeHTTPTestIdentity(t)
 	body, err := json.Marshal(map[string]any{
 		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic TUI regression",
+		"tools": []any{map[string]any{
+			"type": "function", "name": "echo", "description": "Echo input",
+			"parameters": map[string]any{"type": "object", "properties": map[string]any{}},
+		}},
+		"tool_choice": "auto",
 		"input": []any{
 			map[string]any{
 				"type": "reasoning", "id": "rs_tui", "encrypted_content": "opaque",
 				"summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": "private"}},
 				"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": "synthetic"},
 			},
+			map[string]any{"type": "web_search_call", "id": "ws_tui", "status": "completed", "action": map[string]any{"type": "search", "query": "synthetic"}},
 			map[string]any{"type": "custom_tool_call", "id": "ctc_tui", "call_id": "call_tui", "name": "exec_command", "input": "pwd"},
 			map[string]any{"type": "custom_tool_call_output", "id": "ctco_tui", "call_id": "call_tui", "output": "ok"},
 		},
@@ -169,6 +175,18 @@ func TestForward_NormalizesTUIHarnessToCodexExec(t *testing.T) {
 			require.Equal(t, "call_tui", toolCall["call_id"])
 			require.Equal(t, "ctco_tui", toolOutput["id"])
 			require.Equal(t, "call_tui", toolOutput["call_id"])
+			tools := forwarded["tools"].([]any)
+			var names []string
+			for _, raw := range tools {
+				tool, _ := raw.(map[string]any)
+				names = append(names, tool["type"].(string))
+			}
+			require.ElementsMatch(t, []string{"function", "web_search"}, names)
+			require.Equal(t, "auto", forwarded["tool_choice"])
+			for _, raw := range items {
+				item, _ := raw.(map[string]any)
+				require.NotEqual(t, "additional_tools", item["type"])
+			}
 		})
 	}
 }
