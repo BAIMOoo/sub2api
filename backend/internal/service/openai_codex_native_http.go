@@ -19,7 +19,7 @@ func (policy codexHTTPPolicy) preservesNative() bool {
 	return policy == codexHTTPNative || policy == codexHTTPExec
 }
 
-func (policy codexHTTPPolicy) preservesExec() bool {
+func (policy codexHTTPPolicy) preservesCodexExec() bool {
 	return policy == codexHTTPExec
 }
 

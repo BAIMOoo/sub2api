@@ -218,7 +218,7 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 	}
 }
 
-func TestCodexExecHTTPIdentityExcludesOtherNativeClients(t *testing.T) {
+func TestCodexHTTPPolicyDistinguishesNativeClients(t *testing.T) {
 	for _, tc := range []struct {
 		name, ua, originator string
 		expected             codexHTTPPolicy

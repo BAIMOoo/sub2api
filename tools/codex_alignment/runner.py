@@ -22,6 +22,8 @@ from .releases import install, release, github, prune_binaries
 from .protocol import completion
 from urllib.error import HTTPError
 
+COMPACTION_RESUME_INPUT_TYPES = frozenset({'compaction', 'compaction_summary'})
+
 
 def native(binary, home, model, capture, timeout, scenario='basic'):
     with tempfile.TemporaryDirectory(prefix='alignment-work-') as work, capture.serve() as proxy:
@@ -150,7 +152,7 @@ def compaction_observed(requests):
     triggered = any(any(isinstance(i, dict) and i.get('type') == 'compaction_trigger'
                         for i in r['body'].get('input', [])) and
                     r.get('response', {}).get('compaction_output') for r in requests)
-    resumed = any(any(isinstance(i, dict) and i.get('type') in {'compaction', 'compaction_summary'}
+    resumed = any(any(isinstance(i, dict) and i.get('type') in COMPACTION_RESUME_INPUT_TYPES
                       for i in r['body'].get('input', [])) for r in requests)
     return bool(triggered and resumed)
 
@@ -162,7 +164,7 @@ def reasoning_replay_observed(requests, scenario):
             continue
         continued = tool_continuation(body) or (
             scenario == 'compact' and any(
-                isinstance(item, dict) and item.get('type') in {'compaction', 'compaction_summary'}
+                isinstance(item, dict) and item.get('type') in COMPACTION_RESUME_INPUT_TYPES
                 for item in body['input']
             )
         )

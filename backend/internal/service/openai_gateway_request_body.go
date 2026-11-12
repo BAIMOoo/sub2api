@@ -1477,7 +1477,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			return body, false, err
 		}
 	}
-	if !opts.HTTPPolicy.preservesExec() {
+	if !opts.HTTPPolicy.preservesCodexExec() {
 		if next, normalizedReasoningContent, err := normalizeOpenAIResponsesReasoningContentReplay(normalized); err != nil {
 			return body, false, err
 		} else if normalizedReasoningContent {
@@ -1518,7 +1518,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 	if account != nil && account.IsOpenAIOAuthLike() {
 		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(
 			normalized,
-			opts.HTTPPolicy.preservesExec(),
+			opts.HTTPPolicy.preservesCodexExec(),
 		)
 		if err != nil {
 			return body, false, err
@@ -1627,7 +1627,7 @@ func normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(body []byte, compact bool
 
 	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(
 		body,
-		httpPolicy.preservesExec(),
+		httpPolicy.preservesCodexExec(),
 	)
 	if err != nil {
 		return body, false, err

@@ -183,7 +183,7 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
-	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody, opts.HTTPPolicy.preservesExec()) {
+	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody, opts.HTTPPolicy.preservesCodexExec()) {
 		result.Modified = true
 	}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
@@ -1807,7 +1807,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// Native codex_exec HTTP requests are already accepted by the same
 		// upstream contract. Preserve their reasoning item byte-for-byte so the
 		// compatibility rewrite cannot turn an exact pass-through into drift.
-		if typ == "reasoning" && opts.HTTPPolicy.preservesExec() {
+		if typ == "reasoning" && opts.HTTPPolicy.preservesCodexExec() {
 			filtered = append(filtered, m)
 			continue
 		}

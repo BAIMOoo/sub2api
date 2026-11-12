@@ -198,7 +198,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpPolicy := nativeCodexHTTPPolicy(c, account)
 	preserveNativeHTTP := httpPolicy.preservesNative()
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
-		if !httpPolicy.preservesExec() {
+		if !httpPolicy.preservesCodexExec() {
 			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
 			if reasoningErr != nil {
 				return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
