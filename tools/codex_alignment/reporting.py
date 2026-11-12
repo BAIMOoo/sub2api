@@ -18,6 +18,7 @@ REASONS = {
     'native_compact_not_observed': '没有采集到上下文压缩流程',
     'native_expected_answer_not_observed': '没有得到预期回答，不能确认工具或问答成功',
     'native_capture_or_provider_incomplete': '官方请求的采集或响应不完整',
+    'native_reasoning_id_replay_not_observed': '本轮没有采集到带 id 和 encrypted_content 的 reasoning 续轮，无法验证这条已知差异路径',
     'missing_http_evidence': '缺少实际发往上游的 HTTP 请求证据',
     'missing_tls_evidence': '缺少 TLS 连接特征证据',
     'requested_mode_not_observed': '实际请求模式与指定测试模式不一致',
@@ -60,7 +61,7 @@ def label(row):
     match = re.fullmatch(r'v([\d_]+)-(\w+)-(basic|tool|compact)', name)
     if match:
         version, mode, case = match.groups()
-        return 'Codex ' + version.replace('_', '.') + ' / ' + mode.capitalize() + ' / ' + CASES[case]
+        return 'Codex exec ' + version.replace('_', '.') + ' / ' + mode.capitalize() + ' / ' + CASES[case]
     return name
 
 
@@ -72,10 +73,12 @@ def completed(replay):
 
 
 def notification_signature(report):
-    fields = {'body_diff', 'header_contract_diff', 'tls_diff', 'identity_failures', 'reason',
+    fields = {'body_diff', 'body_diff_details', 'header_contract_diff', 'tls_diff', 'identity_failures', 'reason',
               'header_order_equal', 'compression_equal', 'provider_verified'}
     return {'findings': report.get('findings', []), 'scenarios': [
-        {'name': row['name'], 'status': row['status'], 'violations': row.get('violations', []),
+        {'name': row['name'], 'status': row['status'], 'alignment_status': row.get('alignment_status'),
+         'reasoning_replay_observed': row.get('reasoning_replay_observed'),
+         'violations': row.get('violations', []),
          'diffs': [{k: v for k, v in item.items() if k in fields} for item in row.get('replays', [])]}
         for row in report.get('scenarios', [])]}
 
@@ -112,7 +115,7 @@ def document(report):
     else:
         lines.append('本轮仍有未完成或缺少证据的检查，不能把已有成功结果当作完整通过。')
     if status == 'drift':
-        lines.append('实际发出的请求与官方 Codex 存在差异。“请求成功”和“请求完全一致”是两项独立结论。')
+        lines.append('实际发出的请求与官方 codex exec 存在差异。“请求成功”和“请求完全一致”是两项独立结论。')
     if incomplete or operations:
         lines.append('同时存在检测不完整的情况，具体原因见下文；差异结果不会覆盖这些问题。')
 
@@ -130,6 +133,7 @@ def document(report):
     sources = [
         '时间：' + date(report.get('started_at')) + ' 至 ' + date(report.get('finished_at')) + '（北京时间）。',
         '耗时：' + str(report.get('elapsed_seconds', '未记录')) + ' 秒。',
+        '对照客户端：官方 codex exec 非交互模式；本报告不代表 Desktop、TUI 或 IDE 客户端已经对齐。',
         '触发方式：' + {'acceptance': '手动完整检测', 'daily_or_change': '每日定时或变更触发',
                        'version_changed': '官方版本变化'}.get(report.get('trigger'), '未记录') + '。',
         '对照版本：固定基准 ' + str(report.get('baseline', {}).get('version', '未记录')) +
@@ -145,8 +149,8 @@ def document(report):
     section('二、检测了什么', sources)
 
     checks = [
-        '官方 CLI 共发出 ' + str(report.get('native_upstream_attempts', '未记录')) + ' 次上游 HTTP 请求（包括模型目录等辅助请求，不等于对话次数）。',
-        '官方场景预期回答：' + str(answers) + '/' + str(len(native)) + ' 核对通过。工具与压缩场景还要求返回实际读取的随机文件内容。',
+        '官方 codex exec 共发出 ' + str(report.get('native_upstream_attempts', '未记录')) + ' 次上游 HTTP 请求（包括模型目录等辅助请求，不等于对话次数）。',
+        '官方 codex exec 场景预期回答：' + str(answers) + '/' + str(len(native)) + ' 核对通过。工具与压缩场景还要求返回实际读取的随机文件内容。',
         '生产请求重放：' + str(good) + '/' + str(len(replays)) + ' 收到完整成功响应。',
         '兼容接口：' + str(sum(r.get('status') == 'pass' for r in bridges)) + '/' + str(len(bridges)) +
         ' 通过；这里只验证响应完整及转换后的关键字段，不证明任意对话内容都正确。',
@@ -167,32 +171,61 @@ def document(report):
     section('三、执行结果', checks)
 
     details = defaultdict(set)
+    body_context = defaultdict(set)
     for row in rows:
         for replay in row.get('replays', []):
             for key in ('body_diff', 'header_contract_diff', 'tls_diff', 'identity_failures'):
                 for path in replay.get(key, []):
                     details[(key, path)].add(label(row))
+            for item in replay.get('body_diff_details', []):
+                if isinstance(item, dict) and isinstance(item.get('path'), str):
+                    body_context[item['path']].add((
+                        str(item.get('item_type', 'other')),
+                        str(item.get('field', 'field')),
+                        bool(item.get('native_present')),
+                        bool(item.get('gateway_present')),
+                    ))
             for key in ('header_order_equal', 'compression_equal'):
                 if replay.get(key) is False:
                     details[(key, '不一致')].add(label(row))
     explanations = []
     paths = [path for _, path in details]
     if any(p.startswith('$.user-agent') for p in paths):
-        explanations.append('客户端身份说明（User-Agent）不同：生产转发时使用的客户端标识与官方 CLI 不一致。这说明上游看到的请求外观不同；本项本身不说明业务失败。')
+        explanations.append('客户端身份说明（User-Agent）不同：生产转发时使用的客户端标识与官方 codex exec 不一致。这说明上游看到的请求外观不同；本项本身不说明业务失败。')
     if any(p.startswith('$.version:') for p in paths):
         explanations.append('版本说明（version）不同：至少一个对照版本与生产请求声明的版本不一致。固定旧版本基准不会自动更新，需要结合各版本结果判断。')
     if any('.call_id.' in p or '.call_id:' in p for p in paths):
         explanations.append('工具调用编号（call_id）不同：用于把工具执行结果关联到原调用的编号发生变化。当前完成情况见上一节；仍需确认改写后关联关系在更多工具链路中始终正确。')
-    if any(re.search(r'\.input\[\d+\]\.id:missing$', p) for p in paths):
+    reasoning_ids = [(path, context) for path, contexts in body_context.items()
+                     for context in contexts
+                     if context[0] == 'reasoning' and context[1] == 'id']
+    if reasoning_ids:
+        indexes = sorted({re.search(r'\.input\[(\d+)\]', path).group(1)
+                          for path, _ in reasoning_ids if re.search(r'\.input\[(\d+)\]', path)})
+        official_only = any(native_present and not gateway_present
+                            for _, (_, _, native_present, gateway_present) in reasoning_ids)
+        gateway_only = any(gateway_present and not native_present
+                           for _, (_, _, native_present, gateway_present) in reasoning_ids)
+        if official_only and not gateway_only:
+            direction = '官方 codex exec 保留该字段，当前生产请求删除该字段'
+        elif gateway_only and not official_only:
+            direction = '当前生产请求额外保留了该字段，官方 codex exec 没有'
+        else:
+            direction = '两侧都存在该字段，但内容或结构不一致'
+        explanations.append(
+            '输入条目的 reasoning id 在一侧缺失：涉及第 ' +
+            '、'.join(indexes) + ' 项（从 0 开始计数）；' + direction + '；'
+            '需要确认这是有意兼容改写，还是应当逐字节透传。')
+    elif any(re.search(r'\.input\[\d+\]\.id:missing$', p) for p in paths):
         explanations.append('输入条目的 id 在一侧缺失：一个请求保留了条目标识，另一个没有；需要核对是否影响条目的保留或关联。')
     if any(kind == 'tls_diff' for kind, _ in details):
         explanations.append('加密连接（TLS）检查有差异或缺少证据：这项比较的是连接建立时的特征，与模型能否正常回答分别判断。')
     if any(kind == 'identity_failures' for kind, _ in details):
         explanations.append('会话身份关联检查未通过：请求中的会话、线程或窗口编号，没有满足已检查的对应关系。')
     if any(kind == 'header_order_equal' for kind, _ in details):
-        explanations.append('请求头顺序不同：即使字段内容相同，实际发送时的排列也与官方 CLI 不一致。')
+        explanations.append('请求头顺序不同：即使字段内容相同，实际发送时的排列也与官方 codex exec 不一致。')
     if any(kind == 'compression_equal' for kind, _ in details):
-        explanations.append('请求压缩方式不同：请求正文发送前的压缩设置与官方 CLI 不一致。')
+        explanations.append('请求压缩方式不同：请求正文发送前的压缩设置与官方 codex exec 不一致。')
     if details:
         explanations.append('下方逐项列出了全部已记录的差异位置及受影响场景；相同差异合并展示，没有按条数截断。路径表示字段位置，不包含凭据或请求原文。')
     elif status == 'drift':
@@ -205,6 +238,9 @@ def document(report):
     for row in rows:
         for code in ([row['reason']] if row.get('reason') else []) + row.get('violations', []):
             missing.append(label(row) + '：' + reason(code) + '。')
+        for code in row.get('coverage_gaps', []):
+            if code != row.get('reason'):
+                missing.append(label(row) + '：' + reason(code) + '。')
         if row.get('capture_errors'):
             missing.append(label(row) + '：采集出现 ' + str(len(row['capture_errors'])) + ' 个错误，未输出可能含私密内容的错误原文。')
         for i, replay in enumerate(row.get('replays', []), 1):
@@ -219,6 +255,8 @@ def document(report):
     if 'coverage:standard_model_now_available_review_selection' in findings:
         missing.append('账号现在出现可用标准模式模型，需要重新选择模型并补做线上检测。')
     explained = {row.get('name', '') + ':' + row.get('reason', row.get('status', '')) for row in rows}
+    explained.update(row.get('name', '') + ':' + code for row in rows
+                     for code in row.get('coverage_gaps', []))
     explained.update('coverage:' + mode + ':' + code for mode, code in report.get('coverage_gaps', {}).items())
     explained.add('coverage:standard_model_now_available_review_selection')
     for finding in findings:
@@ -246,8 +284,28 @@ def document(report):
     grouped = defaultdict(list)
     for (kind, path), affected in sorted(details.items()):
         grouped[(kind, tuple(sorted(affected)))].append(path)
-    section('附录：差异位置（供排查使用）', [categories[kind] + '：' + '；'.join(paths) + '\n  涉及：' + '；'.join(affected)
-                                                for (kind, affected), paths in grouped.items()])
+
+    def display_path(kind, path):
+        contexts = sorted(body_context.get(path, [])) if kind == 'body_diff' else []
+        if not contexts:
+            return path
+        notes = []
+        for item_type, field, native_present, gateway_present in contexts:
+            if native_present == gateway_present:
+                presence = '两侧均' + ('有' if native_present else '无')
+            elif native_present:
+                presence = '仅官方 codex exec 有'
+            else:
+                presence = '仅生产请求有'
+            notes.append(item_type + '.' + field + '：' + presence)
+        return path + ' [' + '；'.join(notes) + ']'
+
+    section('附录：差异位置（供排查使用）', [
+        categories[kind] + '：' +
+        '；'.join(display_path(kind, path) for path in paths) +
+        '\n  涉及：' + '；'.join(affected)
+        for (kind, affected), paths in grouped.items()
+    ])
     section('报告定位', ['运行编号：' + str(report.get('run', '未记录')),
                         '本报告不包含 token、账号凭据、代理密码或对话原文。'])
     return '\n'.join(lines) + '\n'

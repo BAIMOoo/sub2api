@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 from tools.codex_alignment.capture import Budget, Capture, parse_hello, read_head, socks_connect
 from tools.codex_alignment.protocol import completion
-from tools.codex_alignment.runner import compaction_observed, gateway, native_answer_matches
+from tools.codex_alignment.runner import (apply_reasoning_coverage, compaction_observed, gateway,
+                                          native_answer_matches, reasoning_replay_observed)
 from tools.codex_alignment.evidence import (atomic_json, compare_replay, decode_body, differences,
                                             http_evidence, retain, sanitize, ticket)
 from tools.codex_alignment.notifications import Outbox, read_env
@@ -69,6 +70,36 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['status'], 'pass')
         self.assertFalse(result['wire_size_equal'])
         self.assertTrue(result['header_diff'])
+
+    def test_body_diff_identifies_reasoning_item_without_exposing_values(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        reasoning = {
+            'type': 'reasoning',
+            'id': 'rs_private_identifier',
+            'encrypted_content': 'PRIVATE_ENCRYPTED_CONTENT',
+            'summary': [],
+        }
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [reasoning]}, 1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{k: v for k, v in reasoning.items() if k != 'id'}]}, 1, 'gateway')
+        result = compare_replay(native, gateway)
+        self.assertEqual(result['body_diff'], ['$.input[0].id:missing'])
+        self.assertEqual(result['body_diff_details'], [{
+            'path': '$.input[0].id:missing',
+            'item_index': 0,
+            'item_type': 'reasoning',
+            'field': 'id',
+            'native_present': True,
+            'gateway_present': False,
+        }])
+        self.assertNotIn('PRIVATE_', json.dumps(result))
+        self.assertNotIn('rs_private_identifier', json.dumps(result))
 
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard
@@ -214,6 +245,30 @@ class CaptureTests(unittest.TestCase):
         self.assertTrue(native_answer_matches(output(expected + '\n'), expected))
         self.assertFalse(native_answer_matches(output('OK'), expected))
         self.assertFalse(native_answer_matches(output('The tool failed'), expected))
+
+    def test_reasoning_replay_requires_identifier_and_encrypted_content(self):
+        def request(*items):
+            return {'body': {'input': list(items)}}
+        self.assertFalse(reasoning_replay_observed([request()]))
+        self.assertFalse(reasoning_replay_observed([request(
+            {'type': 'reasoning', 'id': 'rs_missing_encrypted', 'summary': []})]))
+        self.assertFalse(reasoning_replay_observed([request(
+            {'type': 'reasoning', 'encrypted_content': 'opaque', 'summary': []})]))
+        self.assertTrue(reasoning_replay_observed([request(
+            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})]))
+
+    def test_missing_reasoning_replay_cannot_silently_pass(self):
+        row = {'status': 'pass'}
+        apply_reasoning_coverage(row, 'tool', False)
+        self.assertEqual(row['alignment_status'], 'pass')
+        self.assertEqual(row['status'], 'unverified')
+        self.assertEqual(row['reason'], 'native_reasoning_id_replay_not_observed')
+        self.assertEqual(row['coverage_gaps'], ['reasoning_id_replay_not_observed'])
+
+        observed = {'status': 'pass'}
+        apply_reasoning_coverage(observed, 'tool', True)
+        self.assertEqual(observed['status'], 'pass')
+        self.assertTrue(observed['reasoning_replay_observed'])
 
     def test_native_replay_does_not_duplicate_content_type_case_variants(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer

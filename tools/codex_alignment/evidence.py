@@ -14,6 +14,14 @@ MAX_BODY = 2 << 20
 PUBLIC_HEADERS = {'content-encoding', 'content-type', 'content-length', 'host',
                   'version', 'originator', 'x-openai-internal-codex-responses-lite', 'accept'}
 SECRET_HEADERS = {'authorization', 'cookie', 'chatgpt-account-id', 'proxy-authorization'}
+PUBLIC_INPUT_ITEM_TYPES = {
+    'additional_tools', 'assistant', 'compaction', 'compaction_summary',
+    'compaction_trigger', 'custom_tool_call', 'custom_tool_call_output',
+    'developer', 'function_call', 'function_call_output', 'image_generation_call',
+    'item_reference', 'local_shell_call', 'local_shell_call_output', 'mcp_tool_call',
+    'mcp_tool_call_output', 'message', 'reasoning', 'tool_call',
+    'tool_search_call', 'tool_search_output', 'user', 'web_search_call',
+}
 
 
 def canonical(value):
@@ -81,6 +89,26 @@ def decode_body(headers, raw):
     return json.loads(raw) if raw else None
 
 
+def input_structure(body):
+    """Expose only safe structural fields needed to explain a body difference."""
+    if not isinstance(body, dict) or not isinstance(body.get('input'), list):
+        return []
+    result = []
+    for index, item in enumerate(body['input']):
+        if not isinstance(item, dict):
+            result.append({'index': index, 'type': 'other', 'has_id': False,
+                           'has_call_id': False})
+            continue
+        item_type = item.get('type')
+        result.append({
+            'index': index,
+            'type': item_type if isinstance(item_type, str) and item_type in PUBLIC_INPUT_ITEM_TYPES else 'other',
+            'has_id': 'id' in item,
+            'has_call_id': 'call_id' in item,
+        })
+    return result
+
+
 def http_evidence(secret, method, path, pairs, body, wire_size, source):
     headers = {}
     plain = {k.lower(): v.strip() for k, v in pairs}
@@ -101,6 +129,7 @@ def http_evidence(secret, method, path, pairs, body, wire_size, source):
             formats[key] = identity_format(plain[key])
     return {'method': method, 'path': path, 'header_order': [k for k, _ in pairs],
             'headers': headers, 'wire_body_bytes': wire_size, 'body': sanitize(secret, body),
+            'body_structure': input_structure(body),
             'identity_checks': checks, 'identity_formats': formats, 'evidence': source,
             'cold_connection': True}
 
@@ -138,6 +167,32 @@ def differences(a, b, path='$'):
     return [] if a == b else [path + ':value']
 
 
+def body_difference_details(native, gateway, paths):
+    """Attach safe item type and presence details to input-level diff paths."""
+    def item_at(evidence, index):
+        return next((item for item in evidence.get('body_structure', [])
+                     if isinstance(item, dict) and item.get('index') == index), None)
+    details = []
+    pattern = re.compile(r'^\$\.input\[(\d+)\]\.([A-Za-z0-9_]+):(missing|type|value|length)$')
+    for path in paths:
+        match = pattern.match(path)
+        if not match:
+            continue
+        index, field, kind = int(match.group(1)), match.group(2), match.group(3)
+        native_item, gateway_item = item_at(native, index), item_at(gateway, index)
+        item_type = (native_item or gateway_item or {}).get('type', 'other')
+        field_key = 'has_' + field
+        details.append({
+            'path': path,
+            'item_index': index,
+            'item_type': item_type,
+            'field': field,
+            'native_present': bool((native_item or {}).get(field_key)),
+            'gateway_present': bool((gateway_item or {}).get(field_key)),
+        })
+    return details
+
+
 def normalized_body(body):
     value = copy.deepcopy(body)
     if not isinstance(value, dict):
@@ -161,6 +216,7 @@ def compare_replay(native, gateway):
     if not native or not gateway:
         return {'status': 'unverified', 'reason': 'missing_http_evidence'}
     body = differences(normalized_body(native['body']), normalized_body(gateway['body']))
+    body_details = body_difference_details(native, gateway, body[:100])
     identity = [k for k, v in gateway.get('identity_checks', {}).items() if not v]
     formats = gateway.get('identity_formats', {})
     if not formats:
@@ -192,9 +248,11 @@ def compare_replay(native, gateway):
                '$.client_metadata.x-codex-installation-id.', '$.client_metadata.x-codex-turn-metadata.')
     scoped_differences = [p for p in body if p.startswith(dynamic)]
     body = [p for p in body if not p.startswith(dynamic)]
+    body_details = [detail for detail in body_details if detail['path'] in body]
     order_equal = native['header_order'] == gateway['header_order']
     # Differences remain visible even where they are not a body regression.
-    return {'status': 'drift' if body or identity or header_contract or not order_equal else 'pass', 'body_diff': body[:100],
+    return {'status': 'drift' if body or identity or header_contract or not order_equal else 'pass',
+            'body_diff': body[:100], 'body_diff_details': body_details,
             'identity_failures': identity, 'header_diff': headers[:100],
             'scoped_identity_differences': scoped_differences,
             'identity_boundaries': ['opaque_turn_metadata_contents_unverified', 'window_uuid_suffix_relationship_unverified'],

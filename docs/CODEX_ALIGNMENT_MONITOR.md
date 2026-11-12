@@ -2,7 +2,7 @@
 
 ## Accepted scope
 
-Detect fork regressions after upstream merges and changes in official Codex stable releases. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
+Detect fork regressions after upstream merges and changes in official Codex stable releases. The live reference client is the official non-interactive `codex exec` command; Desktop, TUI and IDE parity are separate, unclaimed scopes. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
 
 The production host runs lightweight, serial probes using the owner's selected production OAuth account and fixed SOCKS exit. GitHub Actions runs the full offline regression suite. Test credentials and notification recipients are private configuration, never repository fixtures. A separate gateway probe key identifies synthetic traffic; it does not give the shared OAuth account an independent upstream allowance. Official Codex uses its own login directory, not a writable copy of the gateway's refresh-token state.
 
@@ -23,6 +23,8 @@ Keep the approved baseline immutable; discover the latest stable independently. 
 HTTP content captured through a TLS inspection proxy and a separately captured native ClientHello are independent evidence. A proxy's upstream TLS is not native TLS. In official 0.163.0, the custom-CA path explicitly chooses rustls; its handshake is not evidence of the default TLS backend. The same-transaction native direct final HTTP remains unverified until a suitable capture method is actually demonstrated.
 
 Observe gateway HTTP bytes after header ordering and before TLS encryption, only for authenticated synthetic probes. Compare body structure/content, ordered headers, encoding, session relationships, and TLS features separately. Dynamic identities must retain their format and cross-field relationships. Compatibility exceptions are explicit, reviewed rules; preserve unknown fields so new changes cannot disappear in normalization.
+
+Body drift retains the exact JSON path and also reports the safe input-item type plus field presence. This makes an `id` removal attributable to a `reasoning`, tool-call, message or unknown item without storing request values. Tool-continuation and compaction scenarios require an observed `reasoning` item carrying both an ID and encrypted content before they can be treated as complete coverage; otherwise they are `unverified`, never a silent pass.
 
 Native-forwarding checks preserve the supplied request except those exceptions. Responses, Chat Completions, and enabled Messages-to-Codex bridges have separate semantic contracts; their prompts and tool sets are not expected to equal a CLI's built-in workspace prompt. Record the final model and observed standard/Lite mode rather than inferring mode from a model name.
 

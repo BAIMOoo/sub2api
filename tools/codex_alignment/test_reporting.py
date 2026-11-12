@@ -36,11 +36,36 @@ class ReportingTests(unittest.TestCase):
         report['private_extra'] = 'PRIVATE_CANARY'
         report['scenarios'][0]['replays'][0]['raw_body'] = 'PRIVATE_CANARY'
         text = document(report)
-        for expected in ['2026-10-18 17:33:57', '生产请求重放：1/1', 'call_id', 'User-Agent',
+        for expected in ['2026-10-18 17:33:57', '生产请求重放：1/1', '官方 codex exec',
+                         '不代表 Desktop、TUI 或 IDE', 'call_id', 'User-Agent',
                          '标准模式', 'WebSocket', '分别测量', '不能仅凭本次差异',
                          'old+observer', 'abcdef', '完整成功响应', '工具调用编号']:
             self.assertIn(expected, text)
         self.assertNotIn('PRIVATE_CANARY', text)
+
+    def test_detailed_body_diff_names_reasoning_item_without_wire_values(self):
+        report = sample()
+        replay = report['scenarios'][0]['replays'][0]
+        replay['body_diff'] = ['$.input[7].id:missing']
+        replay['body_diff_details'] = [{
+            'path': '$.input[7].id:missing', 'item_index': 7, 'item_type': 'reasoning',
+            'field': 'id', 'native_present': True, 'gateway_present': False,
+        }]
+        text = document(report)
+        self.assertIn('reasoning id 在一侧缺失', text)
+        self.assertIn('官方 codex exec 保留该字段', text)
+        self.assertIn('reasoning.id：仅官方 codex exec 有', text)
+
+    def test_reasoning_coverage_gap_is_reported_as_unverified(self):
+        report = sample()
+        row = report['scenarios'][0]
+        row['alignment_status'] = row['status']
+        row['status'] = 'unverified'
+        row['reason'] = 'native_reasoning_id_replay_not_observed'
+        row['coverage_gaps'] = ['reasoning_id_replay_not_observed']
+        text = document(report)
+        self.assertIn('没有采集到带 id 和 encrypted_content 的 reasoning 续轮', text)
+        self.assertIn('证据不足，尚未验证', text)
 
     def test_drift_does_not_hide_partial_failure_or_missing_response_evidence(self):
         report = sample()

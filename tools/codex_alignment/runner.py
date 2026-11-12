@@ -155,6 +155,30 @@ def compaction_observed(requests):
     return bool(triggered and resumed)
 
 
+def reasoning_replay_observed(requests):
+    for request in requests:
+        body = request.get('body')
+        if not isinstance(body, dict) or not isinstance(body.get('input'), list):
+            continue
+        for item in body['input']:
+            if (isinstance(item, dict) and item.get('type') == 'reasoning'
+                    and isinstance(item.get('id'), str) and item['id'].strip()
+                    and isinstance(item.get('encrypted_content'), str)
+                    and item['encrypted_content'].strip()):
+                return True
+    return False
+
+
+def apply_reasoning_coverage(row, scenario, observed):
+    row['reasoning_replay_observed'] = observed if scenario in {'tool', 'compact'} else None
+    row['alignment_status'] = row['status']
+    if scenario in {'tool', 'compact'} and not observed:
+        row['coverage_gaps'] = ['reasoning_id_replay_not_observed']
+        if row['status'] == 'pass':
+            row['status'] = 'unverified'
+            row['reason'] = 'native_reasoning_id_replay_not_observed'
+
+
 def repository_state(repo):
     if repo != 'BAIMOoo/sub2api':
         raise ValueError('unexpected_repository')
@@ -182,6 +206,8 @@ class Runner:
         directory = self.root / 'runs' / run
         directory.mkdir(parents=True, mode=0o700)
         report = {'schema': 1, 'run': run, 'started_at': started, 'trigger': reason,
+                  'reference_client': 'codex_exec',
+                  'comparison_scope': 'official_codex_exec_http_body_headers_and_tls',
                   'generation': generation, 'scenarios': [], 'findings': [],
                   'boundaries': ['native_http_uses_custom_ca', 'tls_is_separate_measurement',
                                  'native_same_transaction_direct_http_unverified', 'fresh_gateway_connections',
@@ -257,6 +283,8 @@ class Runner:
                                'local_websocket_refusals': cap.websocket_refusals,
                                'replays': [], 'status': 'unverified'}
                         requests = [r for r in cap.requests if r['method'] == 'POST']
+                        reasoning_replay = (reasoning_replay_observed(requests)
+                                            if scenario in {'tool', 'compact'} else None)
                         if scenario == 'tool' and not any(tool_continuation(r['body']) for r in requests):
                             row['reason'] = 'native_tool_continuation_not_observed'
                         elif scenario == 'compact' and not compaction_observed(requests):
@@ -299,6 +327,7 @@ class Runner:
                                 row['replays'].append(comparison)
                             states = [r['status'] for r in row['replays']]
                             row['status'] = 'drift' if 'drift' in states else 'unverified' if 'unverified' in states else 'pass'
+                        apply_reasoning_coverage(row, scenario, reasoning_replay)
                         row['seconds'] = round(time.monotonic() - phase, 3)
                         report['scenarios'].append(row)
                         if row['status'] != 'pass':
