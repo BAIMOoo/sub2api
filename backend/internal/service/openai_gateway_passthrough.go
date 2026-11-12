@@ -164,10 +164,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
 		_, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
-		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBodyWithOptions(
+		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBodyWithNativeCodexHTTP(
 			body,
 			isOpenAIResponsesCompactPath(c),
-			openAIOAuthCompatibilityOptions{NativeCodexHTTP: preserveNativeHTTP},
+			preserveNativeHTTP,
 		)
 		if err != nil {
 			return nil, err
