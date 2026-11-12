@@ -196,17 +196,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
 	_, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
+	_, codexExecHTTP := codexExecHTTPIdentity(c, account)
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
-		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
-		if reasoningErr != nil {
-			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
-		}
-		if reasoningChanged {
-			body = normalizedReasoningBody
-			originalBody = normalizedReasoningBody
-			requestView = newOpenAIRequestView(normalizedReasoningBody)
-			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
-			originalModel = reqModel
+		if !codexExecHTTP {
+			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+			if reasoningErr != nil {
+				return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
+			}
+			if reasoningChanged {
+				body = normalizedReasoningBody
+				originalBody = normalizedReasoningBody
+				requestView = newOpenAIRequestView(normalizedReasoningBody)
+				reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+				originalModel = reqModel
+			}
 		}
 		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDsWithOptions(body, openAIResponsesInputIDOptions{
 			NativeCodexHTTP: preserveNativeHTTP,
@@ -516,6 +519,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 preserveNativeHTTP,
 				NativeCodexHTTP:                     preserveNativeHTTP,
+				CodexExecHTTP:                       codexExecHTTP,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				KeepSystemMessagesInInput:           true,
 				ResponsesLite:                       responsesLite,

@@ -47,6 +47,9 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 								"id":                "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
 								"encrypted_content": "gAAAAAB-native-encrypted-content",
 								"summary":           []any{},
+								"content": []any{
+									map[string]any{"type": "reasoning_text", "text": "synthetic reasoning"},
+								},
 								"internal_chat_message_metadata_passthrough": map[string]any{
 									"turn_id": "synthetic-turn",
 								},
@@ -168,6 +171,36 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 	}
 }
 
+func TestCodexExecHTTPIdentityExcludesOtherNativeClients(t *testing.T) {
+	for _, tc := range []struct {
+		name, ua, originator string
+		expected             bool
+	}{
+		{
+			name:       "codex_exec",
+			ua:         "codex_exec/0.163.0 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_exec; 0.163.0)",
+			originator: "codex_exec",
+			expected:   true,
+		},
+		{
+			name:       "codex_tui",
+			ua:         "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
+			originator: "codex-tui",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			c.Request.Header.Set("User-Agent", tc.ua)
+			c.Request.Header.Set("originator", tc.originator)
+			c.Request.Header.Set("version", "0.163.0")
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			_, ok := codexExecHTTPIdentity(c, codexBodyEncodingTestAccount(158))
+			assert.Equal(t, tc.expected, ok)
+		})
+	}
+}
+
 func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		t.Run(fmt.Sprintf("native=%v", native), func(t *testing.T) {
@@ -217,12 +250,14 @@ func TestCodexNativeHTTPPreservesReasoningItemExactly(t *testing.T) {
 	native := filterCodexInputWithOptions(input, codexInputFilterOptions{
 		PreserveReferences: true,
 		NativeCodexHTTP:    true,
+		CodexExecHTTP:      true,
 	})
 	require.Equal(t, input, native)
 
-	legacy := filterCodexInputWithOptions(input, codexInputFilterOptions{
+	otherNative := filterCodexInputWithOptions(input, codexInputFilterOptions{
 		PreserveReferences: true,
+		NativeCodexHTTP:    true,
 	})
-	require.NotContains(t, legacy[0].(map[string]any), "id")
-	require.Equal(t, "gAAAAAB-enc-payload", legacy[0].(map[string]any)["encrypted_content"])
+	require.NotContains(t, otherNative[0].(map[string]any), "id")
+	require.Equal(t, "gAAAAAB-enc-payload", otherNative[0].(map[string]any)["encrypted_content"])
 }

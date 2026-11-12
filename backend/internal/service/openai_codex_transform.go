@@ -93,6 +93,7 @@ type codexOAuthTransformOptions struct {
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
 	NativeCodexHTTP                     bool
+	CodexExecHTTP                       bool
 	OmitPromotedSystemMessagesFromInput bool
 	// KeepSystemMessagesInInput 把 role:"system" 就地归一化为 role:"developer"，
 	// 不提升/镜像到顶层 instructions。官方 Responses Lite 把基础指令放在 input，
@@ -183,7 +184,7 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
-	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithNativeCodexHTTP(reqBody, opts.NativeCodexHTTP) {
+	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody, opts.CodexExecHTTP) {
 		result.Modified = true
 	}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
@@ -343,6 +344,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			PreserveReferences: needsToolContinuation,
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
 			NativeCodexHTTP:    opts.NativeCodexHTTP,
+			CodexExecHTTP:      opts.CodexExecHTTP,
 		})
 		reqBody["input"] = input
 		result.Modified = true
@@ -1692,6 +1694,7 @@ type codexInputFilterOptions struct {
 	PreserveReferences bool
 	PreserveCallIDs    bool
 	NativeCodexHTTP    bool
+	CodexExecHTTP      bool
 }
 
 // filterCodexInput 按需过滤 item_reference 与 id。
@@ -1807,7 +1810,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// Native codex_exec HTTP requests are already accepted by the same
 		// upstream contract. Preserve their reasoning item byte-for-byte so the
 		// compatibility rewrite cannot turn an exact pass-through into drift.
-		if typ == "reasoning" && opts.NativeCodexHTTP {
+		if typ == "reasoning" && opts.CodexExecHTTP {
 			filtered = append(filtered, m)
 			continue
 		}
