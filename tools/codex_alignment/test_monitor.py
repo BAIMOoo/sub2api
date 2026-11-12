@@ -93,7 +93,6 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['body_diff_details'], [{
             'path': '$.input[0].id:missing',
             'json_pointer': '/input/0/id',
-            'gateway_json_pointer': '/input/0/id',
             'item_index': 0,
             'item_type': 'reasoning',
             'field': 'id',
@@ -192,7 +191,6 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['body_diff_details'], [{
             'path': '$.input:length',
             'json_pointer': '/input',
-            'gateway_json_pointer': '/input',
             'item_type': 'input',
             'field': 'length',
             'native_present': True,

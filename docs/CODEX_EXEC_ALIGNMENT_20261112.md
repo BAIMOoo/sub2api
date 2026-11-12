@@ -58,11 +58,14 @@
 内部消息元数据和其他未知字段。非 Codex 兼容入口、OpenAI API Key 上游和
 WebSocket 仍保留各自兼容行为。
 
-监控同时增加两项约束：
+监控和出站归一化同时增加以下约束：
 
 1. 正文差异附带安全的条目类型和字段存在性，例如标记为 `reasoning.id：仅官方 codex exec 有`，不保存请求值；内部消息元数据也不再做归一化隐藏。
 2. 工具和压缩场景如果没有观察到同时带 `id` 与 `encrypted_content` 的 `reasoning` 续轮，状态改为 `unverified`，不再静默通过。
 3. `input` 条目数量不一致时只报告 count/length 差异，不定位具体是哪一条，由后续开发人员根据原始脱敏证据排查。
+4. 已识别 Codex HTTP harness 的 Responses Lite 请求在最终出站前统一为单个
+   `input[0].additional_tools` 工具载体，并把顶层 `instructions` 转为带
+   `model.base_instructions` 元数据的 developer message。
 
 ## 仍未验证
 

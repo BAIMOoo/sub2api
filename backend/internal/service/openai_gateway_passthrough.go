@@ -177,12 +177,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		if httpPolicy.preservesCodexExec() && !isOpenAIResponsesCompactPath(c) &&
 			isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
-			promotedBody, promoted, promoteErr := promoteOpenAIResponsesLiteToolsForExecBody(body)
-			if promoteErr != nil {
-				return nil, promoteErr
+			canonicalBody, canonical, canonicalErr := canonicalizeCodexExecLiteBody(body)
+			if canonicalErr != nil {
+				return nil, canonicalErr
 			}
-			if promoted {
-				body = promotedBody
+			if canonical {
+				body = canonicalBody
 			}
 		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()

@@ -212,16 +212,30 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 						carrier, ok := items[0].(map[string]any)
 						require.True(t, ok)
 						require.Equal(t, "additional_tools", carrier["type"])
+						require.NotContains(t, forwarded, "instructions")
+						require.NotContains(t, forwarded, "tools")
+						developer, ok := items[1].(map[string]any)
+						require.True(t, ok)
+						require.Equal(t, "message", developer["type"])
+						require.Equal(t, "developer", developer["role"])
+						require.Equal(t, "Synthetic harness regression",
+							developer["content"].([]any)[0].(map[string]any)["text"])
+						require.Equal(t, []any{"model.base_instructions"},
+							developer["internal_chat_message_metadata_passthrough"].(map[string]any)["content_item_kinds"])
 						var names []string
 						for _, rawTool := range carrier["tools"].([]any) {
 							tool, _ := rawTool.(map[string]any)
 							names = append(names, tool["type"].(string))
 						}
-						require.Contains(t, names, "namespace")
 						require.Contains(t, names, "web_search")
-						require.False(t, gjsonToolsContainWebSearch(gjson.GetBytes(upstream.lastBody, "tools")))
+						if passthrough {
+							require.Contains(t, names, "function")
+						} else {
+							require.Contains(t, names, "namespace")
+						}
 						return
 					}
+					require.Equal(t, "Synthetic harness regression", forwarded["instructions"])
 					tools := forwarded["tools"].([]any)
 					var names []string
 					for _, raw := range tools {

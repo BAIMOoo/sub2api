@@ -206,7 +206,6 @@ def body_difference_details(native, gateway, records):
             details.append({
                 'path': record['path'],
                 'json_pointer': '/input',
-                'gateway_json_pointer': '/input',
                 'item_type': 'input',
                 'field': 'length',
                 'native_present': True,
@@ -233,7 +232,6 @@ def body_difference_details(native, gateway, records):
         details.append({
             'path': record['path'],
             'json_pointer': json_pointer(pointer_segments),
-            'gateway_json_pointer': json_pointer(pointer_segments),
             'item_index': index,
             'item_type': item_type,
             'field': field,

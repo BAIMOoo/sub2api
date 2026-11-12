@@ -1706,27 +1706,6 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool, httpPolicy c
 	return normalized, changed, nil
 }
 
-// promoteOpenAIResponsesLiteToolsForExecBody applies the codex_exec Lite tool
-// layout to an OAuth passthrough body. The regular managed transform already
-// performs this promotion; passthrough needs the same canonical prefix shape.
-func promoteOpenAIResponsesLiteToolsForExecBody(body []byte) ([]byte, bool, error) {
-	if !bytes.Contains(body, []byte(`"tools"`)) {
-		return body, false, nil
-	}
-	var reqBody map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &reqBody); err != nil {
-		return body, false, fmt.Errorf("decode responses Lite exec tools: %w", err)
-	}
-	if !promoteTopLevelToolsToAdditionalTools(reqBody, false) {
-		return body, false, nil
-	}
-	rebuilt, err := marshalOpenAIUpstreamJSON(reqBody)
-	if err != nil {
-		return body, false, fmt.Errorf("encode responses Lite exec tools: %w", err)
-	}
-	return rebuilt, true, nil
-}
-
 func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byte) string {
 	if !isOpenAICodexModel(reqModel) {
 		return ""

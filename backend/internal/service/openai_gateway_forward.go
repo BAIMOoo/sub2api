@@ -708,6 +708,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	if httpPolicy.preservesCodexExec() && responsesLite && !isCompactRequest {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		canonical, canonicalErr := canonicalizeCodexExecLiteRequest(decoded)
+		if canonicalErr != nil {
+			return nil, canonicalErr
+		}
+		if canonical {
+			markDecodedModified()
+		}
+	}
+
 	if bodyModified {
 		if requestView.HasPatches() {
 			if patchedBody, patchErr := requestView.ApplyPatches(); patchErr == nil {

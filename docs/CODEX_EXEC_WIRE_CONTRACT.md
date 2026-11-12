@@ -39,7 +39,7 @@
 
 zstd 测试验证编码、解压后的 JSON、压缩后长度与重放一致性，不证明不同压缩库产出相同字节。
 
-本轮用校验过 release digest 的官方 Linux arm64 0.158.0 二进制，在隔离容器、虚拟 API Key 和本地 HTTP mock 中采集了普通 / Lite 两个完整正文，已保存至 `backend/internal/service/testdata/codex_exec_0158/`，来源和摘要见该目录 README。回归通过完整 HTTP `Forward()` 路径，分别覆盖 transform / passthrough，比较原生 `codex exec` 的完整正文；TUI、Desktop、IDE 还分别覆盖普通 / Lite 与头部归一化。非 Codex 与 OpenAI API Key 路径另行验证原有清理规则。测试还核对 0.158.0 身份、Lite 头和 zstd 编码声明。
+本轮用校验过 release digest 的官方 Linux arm64 0.158.0 二进制，在隔离容器、虚拟 API Key 和本地 HTTP mock 中采集了普通 / Lite 两个完整正文，已保存至 `backend/internal/service/testdata/codex_exec_0158/`，来源和摘要见该目录 README。原生 fixture 回归通过完整 HTTP `Forward()` 路径，分别覆盖 transform / passthrough 并比较完整正文；TUI、Desktop、IDE 和 override identity 回归分别核对身份归一化、Lite 指令与工具布局、reasoning/metadata 及工具 ID 保留。非 Codex 与 OpenAI API Key 路径另行验证原有清理规则。测试还核对 0.158.0 身份、Lite 头和 zstd 编码声明。
 
 这些采集不是 ChatGPT OAuth 实包；现网 OAuth 对内部元数据的接受情况由生产对齐运行 `20261112T010000Z-88612991` 单独证明。采集本身不证明 Cookie、TLS 或压缩字节相同，历史 ClientHello 和头序摘录也未附完整原始抓包。
 

@@ -360,13 +360,8 @@ def document(report):
             notes.append(item_type + '.' + field + '：' + presence)
         pointers = sorted({context['json_pointer'] for context in contexts
                            if isinstance(context.get('json_pointer'), str)})
-        gateway_pointers = sorted({context['gateway_json_pointer'] for context in contexts
-                                   if isinstance(context.get('gateway_json_pointer'), str)})
         suffix = ' [' + '；'.join(notes) + ']'
-        if pointers and gateway_pointers and pointers != gateway_pointers:
-            suffix += (' JSON Pointer：native ' + '、'.join(pointers) +
-                       '；gateway ' + '、'.join(gateway_pointers))
-        elif pointers:
+        if pointers:
             suffix += ' JSON Pointer：' + '、'.join(pointers)
         return path + suffix
 

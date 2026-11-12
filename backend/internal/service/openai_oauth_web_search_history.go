@@ -24,7 +24,6 @@ import (
 const (
 	openAIWebSearchCallItemType      = "web_search_call"
 	openAIAdditionalToolsItemType    = "additional_tools"
-	openAICompactionTriggerItemType  = "compaction_trigger"
 	openAIAdditionalToolsDefaultRole = "developer"
 )
 
@@ -79,14 +78,12 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 	hasWebSearchCall := false
 	callerDeclaredTools := false
 	additionalToolsIndex := -1
-	itemTypes := make([]string, len(input))
 	for i, rawItem := range input {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
 			continue
 		}
-		itemTypes[i] = strings.TrimSpace(firstNonEmptyString(item["type"]))
-		switch itemTypes[i] {
+		switch strings.TrimSpace(firstNonEmptyString(item["type"])) {
 		case openAIWebSearchCallItemType:
 			hasWebSearchCall = true
 		case openAIAdditionalToolsItemType:
@@ -155,10 +152,8 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 	hasWebSearchCall := false
 	callerDeclaredTools := false
 	additionalToolsIndex := -1
-	itemTypes := make([]string, len(items))
 	for i, item := range items {
-		itemTypes[i] = strings.TrimSpace(item.Get("type").String())
-		switch itemTypes[i] {
+		switch strings.TrimSpace(item.Get("type").String()) {
 		case openAIWebSearchCallItemType:
 			hasWebSearchCall = true
 		case openAIAdditionalToolsItemType:

@@ -36,11 +36,13 @@ ChatGPT/Codex OAuth protocol path are normalized to the `codex_exec` wire
 contract, including input-item
 `internal_chat_message_metadata_passthrough`. Live alignment run
 `20261112T010000Z-88612991` observed official OAuth requests carrying this field
-and completing successfully upstream. Full Forward regressions cover TUI,
-Desktop, and IDE identities in standard and Lite modes and compare the complete
-body, prompts, tools, and native IDs. Non-Codex compatibility paths, OpenAI
-API-key upstreams, and WebSocket retain their separate contracts, including the
-legacy cleanup based on https://github.com/Wei-Shaw/sub2api/issues/7066.
+and completing successfully upstream. Native fixture tests compare the complete
+official body. Full Forward harness regressions separately cover TUI, Desktop,
+IDE, and overridden-originator identities in standard and Lite modes, including
+instruction placement, the canonical tool carrier, reasoning/metadata, and
+native IDs. Non-Codex compatibility paths, OpenAI API-key upstreams, and
+WebSocket retain their separate contracts, including the legacy cleanup based
+on https://github.com/Wei-Shaw/sub2api/issues/7066.
 
 Official layout source:
 https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/client.rs#L912
