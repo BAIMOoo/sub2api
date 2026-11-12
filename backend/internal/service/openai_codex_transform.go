@@ -1771,7 +1771,7 @@ func codexInputCallIDs(input []any) map[string]struct{} {
 func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []any {
 	filtered := make([]any, 0, len(input))
 	referenceIDMappings := codexItemReferenceIDMappings(input, opts.PreserveCallIDs)
-	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.HTTPPolicy.preservesNative()}
+	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.HTTPPolicy.preservesCodexExec()}
 	inputItemIDs := codexInputItemIDs(input, idOptions)
 	inputCallIDs := codexInputCallIDs(input)
 	for _, item := range input {
@@ -1848,7 +1848,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 				if !referencesExistingItem {
 					if normalizedID, mapped := referenceIDMappings[trimmedID]; mapped {
 						newItem["id"] = normalizedID
-					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.HTTPPolicy.preservesNative() {
+					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.HTTPPolicy.preservesCodexExec() {
 						// A bare call_* reference is a legacy function-call identifier.
 						// Normalize it even when its call item lives in an earlier turn.
 						newItem["id"] = normalizeCodexCallID(trimmedID)

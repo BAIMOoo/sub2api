@@ -196,7 +196,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
 	httpPolicy := nativeCodexHTTPPolicy(c, account)
-	preserveNativeHTTP := httpPolicy.preservesNative()
+	normalizeAsExec := httpPolicy.preservesCodexExec()
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
 		if !httpPolicy.preservesCodexExec() {
 			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
@@ -212,7 +212,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 		}
 		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDsWithOptions(body, openAIResponsesInputIDOptions{
-			NativeCodexHTTP: preserveNativeHTTP,
+			NativeCodexHTTP: normalizeAsExec,
 		})
 		if sanitizeErr != nil {
 			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
@@ -517,7 +517,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				IsCodexCLI:                          isCodexCLI,
 				IsCompact:                           isCompactRequest,
 				SkipDefaultInstructions:             true,
-				PreserveToolCallIDs:                 preserveNativeHTTP,
+				PreserveToolCallIDs:                 normalizeAsExec,
 				HTTPPolicy:                          httpPolicy,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				KeepSystemMessagesInInput:           true,

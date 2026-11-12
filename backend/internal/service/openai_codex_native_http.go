@@ -11,13 +11,8 @@ type codexHTTPPolicy uint8
 
 const (
 	codexHTTPLegacy codexHTTPPolicy = iota
-	codexHTTPNative
 	codexHTTPExec
 )
-
-func (policy codexHTTPPolicy) preservesNative() bool {
-	return policy == codexHTTPNative || policy == codexHTTPExec
-}
 
 func (policy codexHTTPPolicy) preservesCodexExec() bool {
 	return policy == codexHTTPExec
@@ -56,14 +51,10 @@ func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIde
 }
 
 func nativeCodexHTTPPolicy(c *gin.Context, account *Account) codexHTTPPolicy {
-	identity, ok := nativeCodexHTTPIdentity(c, account)
-	if !ok {
-		return codexHTTPLegacy
-	}
-	if identity.originator == "codex_exec" {
+	if _, ok := nativeCodexHTTPIdentity(c, account); ok {
 		return codexHTTPExec
 	}
-	return codexHTTPNative
+	return codexHTTPLegacy
 }
 
 // applyCodexHTTPIdentityHeaders preserves a consistent native identity unless
@@ -74,7 +65,8 @@ func (s *OpenAIGatewayService) applyCodexHTTPIdentityHeaders(c *gin.Context, acc
 		return
 	}
 	force := s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI
-	if identity, ok := nativeCodexHTTPIdentity(c, account); ok && !force && account.GetOpenAIUserAgent() == "" {
+	if identity, ok := nativeCodexHTTPIdentity(c, account); ok && identity.originator == "codex_exec" &&
+		!force && account.GetOpenAIUserAgent() == "" {
 		h.Set("user-agent", identity.userAgent)
 		h.Set("originator", identity.originator)
 		h.Set("version", identity.version)

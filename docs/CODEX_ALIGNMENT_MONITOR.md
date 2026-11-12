@@ -2,7 +2,7 @@
 
 ## Accepted scope
 
-Detect fork regressions after upstream merges and changes in official Codex stable releases. The live reference client is the official non-interactive `codex exec` command; Desktop, TUI and IDE parity are separate, unclaimed scopes. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
+Detect fork regressions after upstream merges and changes in official Codex stable releases. The live reference client is the official non-interactive `codex exec` command. Gateway behavior normalizes recognized Codex HTTP harnesses to the same exec wire conventions; live automated capture remains exec-based, while TUI/Desktop/IDE normalization is covered by full Forward regressions. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
 
 The production host runs lightweight, serial probes using the owner's selected production OAuth account and fixed SOCKS exit. GitHub Actions runs the full offline regression suite. Test credentials and notification recipients are private configuration, never repository fixtures. A separate gateway probe key identifies synthetic traffic; it does not give the shared OAuth account an independent upstream allowance. Official Codex uses its own login directory, not a writable copy of the gateway's refresh-token state.
 

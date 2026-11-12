@@ -27,7 +27,7 @@
 - 账号与 API Key 作用域化继续处理会话标识；比较时核对格式和跨字段关联关系，鉴权值、会话值和随机材料不能作为固定字节基准。
 - 对官方 `codex exec` 的原生 HTTP 请求保留 input item 的 `internal_chat_message_metadata_passthrough`。2026-11-12 的生产对齐检测 `20261112T010000Z-88612991` 中，官方 `codex exec` OAuth 请求实际携带该字段并完成上游请求；因此当前原生路径按实测报文透传。
 - 非 `codex exec` 的兼容入口、TUI/Desktop/IDE 以及旧兼容路径继续执行该字段清理。历史 [#7066](https://github.com/Wei-Shaw/sub2api/issues/7066) 的清理规则仍保留在这些路径，不能把原生 `codex exec` 的结论推广到其他客户端。
-- TUI/Desktop/IDE 的已有 native HTTP 身份和工具 ID 行为保持冻结；本次 `codex_exec` 精确 reasoning/metadata 策略不得扩散到这些客户端。范围外不等于允许顺手改变现有行为。
+- 所有可识别的 Codex HTTP harness 在 Sub2API 出站前统一归一化为 `codex_exec` 的协议形态：非 exec harness 的 UA/originator/version 使用规范 `codex_exec` 身份，reasoning、metadata、工具 ID 和工具布局采用同一套 exec 兼容规则。harness 自身的消息内容、工具集合和会话内容仍可不同。
 
 ## 传输基准与配置
 

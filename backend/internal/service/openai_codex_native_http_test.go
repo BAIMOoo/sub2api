@@ -103,8 +103,9 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 	}
 }
 
-func TestForward_CodexExecExactPolicyDoesNotApplyToTUI(t *testing.T) {
+func TestForward_NormalizesTUIHarnessToCodexExec(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	pinNativeHTTPTestIdentity(t)
 	body, err := json.Marshal(map[string]any{
 		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic TUI regression",
 		"input": []any{
@@ -136,9 +137,9 @@ func TestForward_CodexExecExactPolicyDoesNotApplyToTUI(t *testing.T) {
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 			_, err := svc.Forward(context.Background(), c, account, body)
 			require.NoError(t, err)
-			require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+			require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
 			require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("version"))
-			require.Equal(t, "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)", upstream.lastReq.Header.Get("user-agent"))
+			require.Equal(t, nativeHTTPTestCanonicalUA, upstream.lastReq.Header.Get("user-agent"))
 			var forwarded map[string]any
 			require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
 			items := forwarded["input"].([]any)
@@ -161,8 +162,9 @@ func TestForward_CodexExecExactPolicyDoesNotApplyToTUI(t *testing.T) {
 			require.NotNil(t, reasoning)
 			require.NotNil(t, toolCall)
 			require.NotNil(t, toolOutput)
-			require.NotContains(t, reasoning, "content")
-			require.NotContains(t, reasoning, "internal_chat_message_metadata_passthrough")
+			require.Equal(t, "rs_tui", reasoning["id"])
+			require.Contains(t, reasoning, "content")
+			require.Contains(t, reasoning, "internal_chat_message_metadata_passthrough")
 			require.Equal(t, "ctc_tui", toolCall["id"])
 			require.Equal(t, "call_tui", toolCall["call_id"])
 			require.Equal(t, "ctco_tui", toolOutput["id"])
@@ -239,7 +241,7 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 	}
 }
 
-func TestCodexHTTPPolicyDistinguishesNativeClients(t *testing.T) {
+func TestCodexHTTPPolicyNormalizesNativeHarnesses(t *testing.T) {
 	for _, tc := range []struct {
 		name, ua, originator string
 		expected             codexHTTPPolicy
@@ -254,7 +256,7 @@ func TestCodexHTTPPolicyDistinguishesNativeClients(t *testing.T) {
 			name:       "codex_tui",
 			ua:         "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
 			originator: "codex-tui",
-			expected:   codexHTTPNative,
+			expected:   codexHTTPExec,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,7 +291,7 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			assert.False(t, gjson.GetBytes(sanitized, "input.3.id").Exists())
 			policy := codexHTTPLegacy
 			if native {
-				policy = codexHTTPNative
+				policy = codexHTTPExec
 			}
 			filtered := filterCodexInputWithOptions(input, codexInputFilterOptions{
 				PreserveReferences: true, PreserveCallIDs: true, HTTPPolicy: policy,
@@ -327,10 +329,9 @@ func TestCodexNativeHTTPPreservesReasoningItemExactly(t *testing.T) {
 	})
 	require.Equal(t, input, native)
 
-	otherNative := filterCodexInputWithOptions(input, codexInputFilterOptions{
+	legacy := filterCodexInputWithOptions(input, codexInputFilterOptions{
 		PreserveReferences: true,
-		HTTPPolicy:         codexHTTPNative,
 	})
-	require.NotContains(t, otherNative[0].(map[string]any), "id")
-	require.Equal(t, "gAAAAAB-enc-payload", otherNative[0].(map[string]any)["encrypted_content"])
+	require.NotContains(t, legacy[0].(map[string]any), "id")
+	require.Equal(t, "gAAAAAB-enc-payload", legacy[0].(map[string]any)["encrypted_content"])
 }

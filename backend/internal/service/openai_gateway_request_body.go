@@ -1492,7 +1492,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 	}
 	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDsWithOptions(normalized, openAIResponsesInputIDOptions{
-		NativeCodexHTTP: opts.HTTPPolicy.preservesNative(),
+		NativeCodexHTTP: opts.HTTPPolicy.preservesCodexExec(),
 	}); err != nil {
 		return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
 	} else if idsChanged {

@@ -5,7 +5,7 @@
 - 基准客户端：官方 Codex CLI 的非交互子命令 `codex exec`。
 - 对齐分支：HTTP；WebSocket 是明确的未覆盖边界。
 - 对比方向：`codex exec -> 官方上游` 与 `codex exec -> Sub2API -> 官方上游`。
-- 不在本次结论内：Codex Desktop、TUI、IDE 插件和 WebSocket。
+- 不在 live 采样范围内：Codex Desktop、TUI、IDE 插件和 WebSocket；其中可识别的 Codex HTTP harness 由完整 Forward 回归验证会归一化为 `codex_exec` 出站形态。
 - 生产来源：`b18f7ff606a61ac87f1db1597154af845e6593f1`。
 - 最近生产检测：`20261112T010000Z-88612991`。
 
