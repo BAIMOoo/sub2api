@@ -47,6 +47,9 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 								"id":                "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
 								"encrypted_content": "gAAAAAB-native-encrypted-content",
 								"summary":           []any{},
+								"internal_chat_message_metadata_passthrough": map[string]any{
+									"turn_id": "synthetic-turn",
+								},
 							},
 							map[string]any{"type": "custom_tool_call", "id": "ctc_item", "call_id": callID, "name": "exec_command", "input": "pwd"},
 							map[string]any{"type": "custom_tool_call_output", "id": resultID, "call_id": callID, "output": "/synthetic"},

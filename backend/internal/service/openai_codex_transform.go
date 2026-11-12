@@ -183,7 +183,9 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
-	if normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody) {
+	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithOptions(reqBody, openAIOAuthCompatibilityOptions{
+		NativeCodexHTTP: opts.NativeCodexHTTP,
+	}) {
 		result.Modified = true
 	}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。

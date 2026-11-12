@@ -82,3 +82,23 @@ func TestOAuthInputInternalMetadataCompatibility(t *testing.T) {
 	require.True(t, ok)
 	require.NotContains(t, input[0], "internal_chat_message_metadata_passthrough")
 }
+
+func TestOAuthInputInternalMetadataPreservedForNativeCodexHTTP(t *testing.T) {
+	const field = "internal_chat_message_metadata_passthrough"
+	body := []byte(`{"model":"gpt-6-astra","input":[{"type":"reasoning","id":"rs_native","encrypted_content":"opaque","summary":[],"internal_chat_message_metadata_passthrough":{"turn_id":"synthetic"}}]}`)
+	opts := openAIOAuthCompatibilityOptions{NativeCodexHTTP: true}
+
+	var fieldsBody map[string]any
+	require.NoError(t, json.Unmarshal(body, &fieldsBody))
+	require.False(t, normalizeOpenAIOAuthResponsesCompatibilityFieldsWithOptions(fieldsBody, opts))
+	input := fieldsBody["input"].([]any)
+	require.Contains(t, input[0].(map[string]any), field)
+
+	fieldsOut, _, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithOptions(body, opts)
+	require.NoError(t, err)
+	require.Equal(t, "synthetic", gjson.GetBytes(fieldsOut, "input.0."+field+".turn_id").String())
+
+	passthroughOut, _, err := normalizeOpenAIPassthroughOAuthBodyWithOptions(body, false, opts)
+	require.NoError(t, err)
+	require.Equal(t, "synthetic", gjson.GetBytes(passthroughOut, "input.0."+field+".turn_id").String())
+}

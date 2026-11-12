@@ -1249,7 +1249,15 @@ func extractOpenAIRequestMetaFromBody(body []byte) (model string, stream bool, p
 	return view.Model, view.Stream, view.PromptCacheKey
 }
 
+type openAIOAuthCompatibilityOptions struct {
+	NativeCodexHTTP bool
+}
+
 func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any) bool {
+	return normalizeOpenAIOAuthResponsesCompatibilityFieldsWithOptions(reqBody, openAIOAuthCompatibilityOptions{})
+}
+
+func normalizeOpenAIOAuthResponsesCompatibilityFieldsWithOptions(reqBody map[string]any, opts openAIOAuthCompatibilityOptions) bool {
 	if reqBody == nil {
 		return false
 	}
@@ -1267,23 +1275,31 @@ func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any) bo
 		delete(reqBody, "commands")
 		changed = true
 	}
-	// Codex can attach internal message metadata when a custom provider is
-	// named OpenAI. ChatGPT rejects this field on input items (#7066).
-	input, _ := reqBody["input"].([]any)
-	for _, value := range input {
-		item, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, exists := item["internal_chat_message_metadata_passthrough"]; exists {
-			delete(item, "internal_chat_message_metadata_passthrough")
-			changed = true
+	if !opts.NativeCodexHTTP {
+		// Codex can attach internal message metadata when a custom provider is
+		// named OpenAI. Legacy ChatGPT compatibility removes it because older
+		// upstreams rejected the field (#7066). Native codex_exec requests keep
+		// it so the gateway forwards the exact observed wire shape.
+		input, _ := reqBody["input"].([]any)
+		for _, value := range input {
+			item, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, exists := item["internal_chat_message_metadata_passthrough"]; exists {
+				delete(item, "internal_chat_message_metadata_passthrough")
+				changed = true
+			}
 		}
 	}
 	return changed
 }
 
 func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, error) {
+	return normalizeOpenAIOAuthResponsesCompatibilityBodyWithOptions(body, openAIOAuthCompatibilityOptions{})
+}
+
+func normalizeOpenAIOAuthResponsesCompatibilityBodyWithOptions(body []byte, opts openAIOAuthCompatibilityOptions) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -1314,21 +1330,23 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 		normalized = next
 		changed = true
 	}
-	// Only remove the input-item field, never same-named user content.
-	input := gjson.GetBytes(normalized, "input")
-	if !input.IsArray() {
-		return normalized, changed, nil
-	}
-	for i, item := range input.Array() {
-		if !item.IsObject() || !item.Get("internal_chat_message_metadata_passthrough").Exists() {
-			continue
+	if !opts.NativeCodexHTTP {
+		// Only remove the input-item field, never same-named user content.
+		input := gjson.GetBytes(normalized, "input")
+		if !input.IsArray() {
+			return normalized, changed, nil
 		}
-		next, err := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
-		if err != nil {
-			return body, false, fmt.Errorf("normalize oauth input metadata: %w", err)
+		for i, item := range input.Array() {
+			if !item.IsObject() || !item.Get("internal_chat_message_metadata_passthrough").Exists() {
+				continue
+			}
+			next, err := sjson.DeleteBytes(normalized, fmt.Sprintf("input.%d.internal_chat_message_metadata_passthrough", i))
+			if err != nil {
+				return body, false, fmt.Errorf("normalize oauth input metadata: %w", err)
+			}
+			normalized = next
+			changed = true
 		}
-		normalized = next
-		changed = true
 	}
 	return normalized, changed, nil
 }
@@ -1498,7 +1516,10 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 	}
 	if account != nil && account.IsOpenAIOAuthLike() {
-		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBody(normalized)
+		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithOptions(
+			normalized,
+			openAIOAuthCompatibilityOptions{NativeCodexHTTP: opts.NativeCodexHTTP},
+		)
 		if err != nil {
 			return body, false, err
 		}
@@ -1596,11 +1617,15 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 // 1) 删除 ChatGPT internal API 不支持的顶层 Responses 参数
 // 2) store=false 3) 非 compact 保持 stream=true；compact 强制 stream=false
 func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, bool, error) {
+	return normalizeOpenAIPassthroughOAuthBodyWithOptions(body, compact, openAIOAuthCompatibilityOptions{})
+}
+
+func normalizeOpenAIPassthroughOAuthBodyWithOptions(body []byte, compact bool, opts openAIOAuthCompatibilityOptions) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
 
-	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body)
+	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithOptions(body, opts)
 	if err != nil {
 		return body, false, err
 	}
