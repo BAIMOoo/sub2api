@@ -99,20 +99,11 @@ func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 				require.Equal(t, forwardedMetadata["turn_id"], forwardedMetadata["root_turn_id"])
 				require.Equal(t, forwardedMetadata["x-codex-window-id"], upstream.lastReq.Header.Get("x-codex-window-id"))
 				require.Empty(t, upstream.lastReq.Header.Get("x-codex-installation-id"))
-				// The API-key capture contains a field ChatGPT has explicitly rejected.
-				// Assert that single compatibility exception separately; never call the
-				// production normalizer on expected fixtures, which could hide regressions.
 				input, ok := request["input"].([]any)
 				require.True(t, ok)
 				forwardedInput, ok := forwarded["input"].([]any)
 				require.True(t, ok)
 				require.Len(t, forwardedInput, len(input))
-				for i, value := range input {
-					item, ok := value.(map[string]any)
-					require.True(t, ok)
-					delete(item, "internal_chat_message_metadata_passthrough")
-					require.NotContains(t, forwardedInput[i], "internal_chat_message_metadata_passthrough")
-				}
 				maskCodexExecScopedIdentities(t, request)
 				maskCodexExecScopedIdentities(t, forwarded)
 				require.Equal(t, request, forwarded, "native request fields, prompts, tools, and item IDs must survive forwarding")
