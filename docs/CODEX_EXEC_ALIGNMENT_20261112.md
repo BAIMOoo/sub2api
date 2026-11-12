@@ -58,6 +58,7 @@ Desktop、IDE 或非原生兼容路径。
 
 1. 正文差异附带安全的条目类型和字段存在性，例如标记为 `reasoning.id：仅官方 codex exec 有`，不保存请求值；内部消息元数据也不再做归一化隐藏。
 2. 工具和压缩场景如果没有观察到同时带 `id` 与 `encrypted_content` 的 `reasoning` 续轮，状态改为 `unverified`，不再静默通过。
+3. `input` 条目数量不一致时只报告 count/length 差异，不定位具体是哪一条，由后续开发人员根据原始脱敏证据排查。
 
 ## 仍未验证
 
