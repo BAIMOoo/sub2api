@@ -21,25 +21,25 @@
 
 - 普通模式保留原生顶层工具和基础指令；只对 Lite 执行已有的第三方函数工具搬迁。
 - 已有的 Lite `additional_tools`、命名空间、基础提示和有效 item ID 应保留，不重复插入。
-- 原生 Codex HTTP 请求的有效 `call_id`、跨轮次调用引用及 `custom_tool_call_output.id` 保留；结果条目 ID 不套用兼容入口的 `fc` 前缀限制，空值和超过 64 字节的 ID 仍清理。第三方、API-key 和 WebSocket 路径继续使用原有兼容规则。
+- 使用 Codex OAuth 推理协议的已识别 HTTP harness 在出站前统一采用 `codex_exec` 协议规则：有效 `call_id`、跨轮次调用引用及 `custom_tool_call_output.id` 保留；结果条目 ID 不套用兼容入口的 `fc` 前缀限制，空值和超过 64 字节的 ID 仍清理。非 Codex 客户端、OpenAI API Key 上游和 WebSocket 路径继续使用原有兼容规则。
 - 搜索历史兼容仍按模式补充声明：普通模式使用顶层 `tools`，Lite 使用 `additional_tools`。无工具时补充 cached-only 搜索并设置 `tool_choice=none` 是网关兼容修复，会有意区别于原生请求，防止引入新的搜索调用。该修复是独立 OAuth 兼容能力，可覆盖 HTTP 与既有 WebSocket 路径；它不作为 `codex_exec` HTTP 精确对齐或监控验收的证据。
 - compact 有独立协议约定，不能套用主 Responses 的工具搬迁与头序规则。
 - 账号与 API Key 作用域化继续处理会话标识；比较时核对格式和跨字段关联关系，鉴权值、会话值和随机材料不能作为固定字节基准。
-- 对官方 `codex exec` 的原生 HTTP 请求保留 input item 的 `internal_chat_message_metadata_passthrough`。2026-11-12 的生产对齐检测 `20261112T010000Z-88612991` 中，官方 `codex exec` OAuth 请求实际携带该字段并完成上游请求；因此当前原生路径按实测报文透传。
-- 非 `codex exec` 的兼容入口、TUI/Desktop/IDE 以及旧兼容路径继续执行该字段清理。历史 [#7066](https://github.com/Wei-Shaw/sub2api/issues/7066) 的清理规则仍保留在这些路径，不能把原生 `codex exec` 的结论推广到其他客户端。
+- 对使用 Codex OAuth 推理协议的已识别 HTTP harness 保留 input item 的 `internal_chat_message_metadata_passthrough`。2026-11-12 的生产对齐检测 `20261112T010000Z-88612991` 中，官方 `codex exec` OAuth 请求实际携带该字段并完成上游请求；TUI、Desktop 和 IDE 归一化后使用同一规则。
 - 所有可识别的 Codex HTTP harness 在 Sub2API 出站前统一归一化为 `codex_exec` 的协议形态：非 exec harness 的 UA/originator/version 使用规范 `codex_exec` 身份，reasoning、metadata、工具 ID 和工具布局采用同一套 exec 兼容规则。harness 自身的消息内容、工具集合和会话内容仍可不同。
+- 上述 harness 归一化限定在 Codex OAuth 推理协议路径。非 Codex 兼容入口、OpenAI API Key 上游和 WebSocket 不属于本规则；历史 [#7066](https://github.com/Wei-Shaw/sub2api/issues/7066) 的清理规则仍适用于这些路径。
 
 ## 传输基准与配置
 
 已有的 Linux ClientHello 摘录在 `backend/internal/pkg/tlsfingerprint/profiles.go`，HTTP/1.1 主 Responses 的头顺序摘录在 `httporder.go`。后者只覆盖 `chatgpt.com/backend-api/codex/responses`，不覆盖 compact 与 WebSocket 握手。
 
-原生 Codex HTTP 的 User-Agent、originator 和 version 经一致性校验后保留；缺失 originator/version 时从有效 UA 补齐。身份冲突、非法版本或低于上游最低版本的请求按现有兼容身份规则回退。账号级自定义 UA 与 ForceCodexCLI 的显式覆盖仍有优先级。原生识别只用于报文兼容，不替代鉴权或访问控制。
+入站身份为 `codex_exec` 时，User-Agent、originator 和 version 经一致性校验后保留；缺失 originator/version 时从有效 UA 补齐。TUI、Desktop、IDE 等其他已识别 harness 使用后台版本配置生成的规范 `codex_exec` 身份。身份冲突、非法版本或低于上游最低版本的请求按现有兼容身份规则回退。账号级自定义 UA 与 ForceCodexCLI 的显式覆盖仍有优先级。原生识别只用于报文兼容，不替代鉴权或访问控制。
 
 后台客户端版本配置及自动同步继续决定兼容请求、凭据请求等路径的规范身份，不再覆盖有效原生 HTTP 的版本。0.158.0 与 0.163.0 可以同时保持各自身份，无需降低网关全局版本。WebSocket 身份策略不在本次修改范围。TLS 指纹需启用并选择对应的 Codex Linux profile；自定义 profile、关闭身份统一及插件传输都会影响实际线上报文。
 
 zstd 测试验证编码、解压后的 JSON、压缩后长度与重放一致性，不证明不同压缩库产出相同字节。
 
-本轮用校验过 release digest 的官方 Linux arm64 0.158.0 二进制，在隔离容器、虚拟 API Key 和本地 HTTP mock 中采集了普通 / Lite 两个完整正文，已保存至 `backend/internal/service/testdata/codex_exec_0158/`，来源和摘要见该目录 README。回归通过完整 HTTP `Forward()` 路径，分别覆盖 transform / passthrough，比较原生 `codex exec` 的完整正文，并验证其他客户端仍执行旧元数据清理。测试还核对 0.158.0 身份、Lite 头和 zstd 编码声明。
+本轮用校验过 release digest 的官方 Linux arm64 0.158.0 二进制，在隔离容器、虚拟 API Key 和本地 HTTP mock 中采集了普通 / Lite 两个完整正文，已保存至 `backend/internal/service/testdata/codex_exec_0158/`，来源和摘要见该目录 README。回归通过完整 HTTP `Forward()` 路径，分别覆盖 transform / passthrough，比较原生 `codex exec` 的完整正文；TUI、Desktop、IDE 还分别覆盖普通 / Lite 与头部归一化。非 Codex 与 OpenAI API Key 路径另行验证原有清理规则。测试还核对 0.158.0 身份、Lite 头和 zstd 编码声明。
 
 这些采集不是 ChatGPT OAuth 实包；现网 OAuth 对内部元数据的接受情况由生产对齐运行 `20261112T010000Z-88612991` 单独证明。采集本身不证明 Cookie、TLS 或压缩字节相同，历史 ClientHello 和头序摘录也未附完整原始抓包。
 

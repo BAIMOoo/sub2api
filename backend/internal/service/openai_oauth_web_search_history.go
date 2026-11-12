@@ -66,15 +66,6 @@ func shouldPinOpenAIWebSearchHistoryToolChoice(choice any) bool {
 	}
 }
 
-// openAIAdditionalToolsInsertIndex keeps a trailing compaction trigger last,
-// as required by the remote compaction v2 wire format.
-func openAIAdditionalToolsInsertIndex(itemTypes []string) int {
-	if n := len(itemTypes); n > 0 && itemTypes[n-1] == openAICompactionTriggerItemType {
-		return n - 1
-	}
-	return len(itemTypes)
-}
-
 // ensureOpenAIOAuthWebSearchToolForHistory is the map variant used by the
 // Codex OAuth transform.
 func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesLite bool) bool {
@@ -128,7 +119,9 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 		existing, _ := item["tools"].([]any)
 		item["tools"] = append(existing, cloneOpenAIWebSearchHistoryTool())
 	default:
-		at := openAIAdditionalToolsInsertIndex(itemTypes)
+		// Lite declarations belong in the input prefix. A trailing compaction
+		// trigger remains last because the new item is inserted at index zero.
+		at := 0
 		additional := map[string]any{
 			"type":  openAIAdditionalToolsItemType,
 			"role":  openAIAdditionalToolsDefaultRole,
@@ -205,7 +198,8 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 	case additionalToolsIndex >= 0:
 		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools", additionalToolsIndex), []any{cloneOpenAIWebSearchHistoryTool()})
 	default:
-		next, err = insertOpenAIAdditionalToolsItemRaw(body, items, openAIAdditionalToolsInsertIndex(itemTypes))
+		// Lite declarations belong in the input prefix.
+		next, err = insertOpenAIAdditionalToolsItemRaw(body, items, 0)
 	}
 	if err != nil {
 		return body, false, fmt.Errorf("declare web_search tool for web_search_call history: %w", err)

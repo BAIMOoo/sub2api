@@ -175,6 +175,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
+		if httpPolicy.preservesCodexExec() && !isOpenAIResponsesCompactPath(c) &&
+			isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
+			promotedBody, promoted, promoteErr := promoteOpenAIResponsesLiteToolsForExecBody(body)
+			if promoteErr != nil {
+				return nil, promoteErr
+			}
+			if promoted {
+				body = promotedBody
+			}
+		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()
 
 		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))

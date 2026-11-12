@@ -88,16 +88,16 @@ func TestEnsureOpenAIOAuthWebSearchToolForHistory(t *testing.T) {
 		{"standard ignores additional_tools declaration", `{"input":[{"type":"additional_tools","tools":[{"type":"web_search"}]},` + search + `]}`, false, true, "tools", 1, "none", nil},
 		{"no web_search_call item", `{"input":[{"type":"message","role":"user","content":"web_search_call"}],"tools":[]}`, false, false, "", 0, "", nil},
 		{"string input", `{"input":"web_search_call"}`, false, false, "", 0, "", nil},
-		{"lite inserts before compaction trigger", `{"input":[` + user + `,` + search + `,` + trigger + `]}`, true, true, "input.2.tools", 1, "none",
-			[]string{"message", "web_search_call", "additional_tools", "compaction_trigger"}},
-		{"lite appends without trigger", `{"input":` + history + `,"tool_choice":"auto"}`, true, true, "input.2.tools", 1, "none",
-			[]string{"message", "web_search_call", "additional_tools"}},
+		{"lite inserts before compaction trigger", `{"input":[` + user + `,` + search + `,` + trigger + `]}`, true, true, "input.0.tools", 1, "none",
+			[]string{"additional_tools", "message", "web_search_call", "compaction_trigger"}},
+		{"lite inserts with prefix", `{"input":` + history + `,"tool_choice":"auto"}`, true, true, "input.0.tools", 1, "none",
+			[]string{"additional_tools", "message", "web_search_call"}},
 		{"lite extends caller additional_tools", `{"input":[{"type":"additional_tools","role":"developer","tools":[{"type":"function","name":"echo"}]},` + search + `,` + trigger + `],"tool_choice":"auto"}`, true, true, "input.0.tools", 2, "auto",
 			[]string{"additional_tools", "web_search_call", "compaction_trigger"}},
 		{"lite fills empty additional_tools", `{"input":[{"type":"additional_tools","role":"developer"},` + search + `]}`, true, true, "input.0.tools", 1, "none",
 			[]string{"additional_tools", "web_search_call"}},
-		{"lite keeps top-level tools untouched", `{"input":` + history + `,"tools":[{"type":"function","name":"echo"}]}`, true, true, "input.2.tools", 1, "",
-			[]string{"message", "web_search_call", "additional_tools"}},
+		{"lite keeps top-level tools untouched", `{"input":` + history + `,"tools":[{"type":"function","name":"echo"}]}`, true, true, "input.0.tools", 1, "",
+			[]string{"additional_tools", "message", "web_search_call"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

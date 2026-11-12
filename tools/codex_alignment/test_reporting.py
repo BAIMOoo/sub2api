@@ -102,9 +102,16 @@ class ReportingTests(unittest.TestCase):
         report = sample()
         replay = report['scenarios'][0]['replays'][0]
         replay['body_diff'] = ['$.input:length']
-        replay['body_diff_details'] = []
+        replay['body_diff_details'] = [{
+            'path': '$.input:length', 'item_type': 'input', 'field': 'length',
+            'native_present': True, 'gateway_present': True,
+            'native_length': 12, 'gateway_length': 11,
+        }]
         text = document(report)
         self.assertIn('输入条目数量不同', text)
+        self.assertIn('官方 codex exec 有 12 条', text)
+        self.assertIn('生产请求有 11 条', text)
+        self.assertIn('相差 1 条', text)
         self.assertIn('不定位具体是哪一条', text)
 
     def test_drift_does_not_hide_partial_failure_or_missing_response_evidence(self):

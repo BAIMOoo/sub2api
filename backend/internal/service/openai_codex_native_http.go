@@ -18,11 +18,12 @@ func (policy codexHTTPPolicy) preservesCodexExec() bool {
 	return policy == codexHTTPExec
 }
 
-// nativeCodexHTTPIdentity selects preservation from the original HTTP headers,
-// independently of ForceCodexCLI and the mutable outbound headers. Recognition
-// is a wire-compatibility decision, not an authentication or access-control gate.
-// WS and compatibility bridges retain their existing normalization contracts.
-func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIdentity, bool) {
+// nativeCodexHTTPClientIdentity recognizes a Codex harness from the original
+// HTTP User-Agent independently of ForceCodexCLI and the mutable outbound
+// headers. It intentionally ignores conflicting originator/version headers:
+// recognition selects the exec body contract, while outbound enforcement will
+// replace those headers with the canonical codex_exec identity.
+func nativeCodexHTTPClientIdentity(c *gin.Context, account *Account) (codexOutboundIdentity, bool) {
 	if c == nil || c.Request == nil || account == nil || !account.UsesOpenAICodexProtocol() ||
 		GetOpenAIClientTransport(c) != OpenAIClientTransportHTTP || isOpenAICompatMessagesBridgeContext(c) {
 		return codexOutboundIdentity{}, false
@@ -32,8 +33,8 @@ func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIde
 		return codexOutboundIdentity{}, false
 	}
 	ua := h.Get("User-Agent")
-	originator, pairedUA, ok := openai.PairCodexClientIdentity(ua)
-	if !ok || pairedUA != ua {
+	originator, _, ok := openai.PairCodexClientIdentity(ua)
+	if !ok {
 		return codexOutboundIdentity{}, false
 	}
 	version := NormalizeCodexClientVersion(openai.CodexUserAgentVersion(ua))
@@ -41,17 +42,34 @@ func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIde
 		openai.SetCodexUserAgentVersion(ua, version) != ua {
 		return codexOutboundIdentity{}, false
 	}
+	return codexOutboundIdentity{userAgent: ua, originator: originator, version: version}, true
+}
+
+// nativeCodexHTTPIdentity additionally requires consistent originator/version
+// headers. Only an exact, internally consistent codex_exec identity may be
+// preserved verbatim.
+func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIdentity, bool) {
+	identity, ok := nativeCodexHTTPClientIdentity(c, account)
+	if !ok {
+		return codexOutboundIdentity{}, false
+	}
+	h := c.Request.Header
+	_, pairedUA, paired := openai.PairCodexClientIdentity(h.Get("User-Agent"))
+	if !paired || pairedUA != h.Get("User-Agent") {
+		return codexOutboundIdentity{}, false
+	}
+	originator, version := identity.originator, identity.version
 	if supplied := h.Get("originator"); supplied != "" && supplied != originator {
 		return codexOutboundIdentity{}, false
 	}
 	if supplied := h.Get("version"); supplied != "" && supplied != version {
 		return codexOutboundIdentity{}, false
 	}
-	return codexOutboundIdentity{userAgent: ua, originator: originator, version: version}, true
+	return identity, true
 }
 
 func nativeCodexHTTPPolicy(c *gin.Context, account *Account) codexHTTPPolicy {
-	if _, ok := nativeCodexHTTPIdentity(c, account); ok {
+	if _, ok := nativeCodexHTTPClientIdentity(c, account); ok {
 		return codexHTTPExec
 	}
 	return codexHTTPLegacy

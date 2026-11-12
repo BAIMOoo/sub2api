@@ -185,6 +185,7 @@ def document(report):
 
     details = defaultdict(set)
     body_context = defaultdict(dict)
+    input_length_diffs = []
     for row in rows:
         for replay in row.get('replays', []):
             for key in ('body_diff', 'header_contract_diff', 'tls_diff', 'identity_failures'):
@@ -195,6 +196,12 @@ def document(report):
                     body_context[item['path']][
                         (str(item.get('item_type', 'other')), str(item.get('field', 'field')))
                     ] = item
+                    if (item['path'] == '$.input:length'
+                            and isinstance(item.get('native_length'), int)
+                            and isinstance(item.get('gateway_length'), int)):
+                        input_length_diffs.append((
+                            label(row), item['native_length'], item['gateway_length'],
+                        ))
             for key in ('header_order_equal', 'compression_equal'):
                 if replay.get(key) is False:
                     details[(key, '不一致')].add(label(row))
@@ -207,9 +214,20 @@ def document(report):
     if any('.call_id.' in p or '.call_id:' in p for p in paths):
         explanations.append('工具调用编号（call_id）不同：用于把工具执行结果关联到原调用的编号发生变化。当前完成情况见上一节；仍需确认改写后关联关系在更多工具链路中始终正确。')
     if '$.input:length' in paths:
-        explanations.append(
-            '输入条目数量不同：官方 codex exec 与生产请求的 input 条数不一致。'
-            '报告只记录存在条目增减，不定位具体是哪一条；交由后续开发人员根据原始脱敏证据排查。')
+        if input_length_diffs:
+            counts = '；'.join(
+                affected + '：官方 codex exec 有 ' + str(native_length) +
+                ' 条，生产请求有 ' + str(gateway_length) +
+                ' 条，相差 ' + str(abs(native_length - gateway_length)) + ' 条'
+                for affected, native_length, gateway_length in dict.fromkeys(input_length_diffs)
+            )
+            explanations.append(
+                '输入条目数量不同：' + counts + '。'
+                '报告只记录条数及差值，不定位具体是哪一条；交由后续开发人员根据原始脱敏证据排查。')
+        else:
+            explanations.append(
+                '输入条目数量不同：官方 codex exec 与生产请求的 input 条数不一致。'
+                '报告只记录存在条目增减，不定位具体是哪一条；交由后续开发人员根据原始脱敏证据排查。')
     reasoning_ids = [(path, context) for path, contexts in body_context.items()
                      for context in contexts.values()
                      if context.get('item_type') == 'reasoning' and context.get('field') == 'id']
@@ -322,6 +340,15 @@ def document(report):
         for context in contexts:
             item_type = context.get('item_type', 'other')
             field = context.get('field', 'field')
+            if item_type == 'input' and field == 'length':
+                if isinstance(context.get('native_length'), int) and isinstance(
+                        context.get('gateway_length'), int):
+                    notes.append(
+                        'input.length：官方 codex exec ' + str(context['native_length']) +
+                        ' 条，生产请求 ' + str(context['gateway_length']) + ' 条')
+                else:
+                    notes.append('input.length：数量不同')
+                continue
             native_present = bool(context.get('native_present'))
             gateway_present = bool(context.get('gateway_present'))
             if native_present == gateway_present:

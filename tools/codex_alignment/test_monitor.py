@@ -189,7 +189,17 @@ class EvidenceTests(unittest.TestCase):
             1, 'gateway')
         result = compare_replay(native, gateway)
         self.assertEqual(result['body_diff'], ['$.input:length'])
-        self.assertEqual(result['body_diff_details'], [])
+        self.assertEqual(result['body_diff_details'], [{
+            'path': '$.input:length',
+            'json_pointer': '/input',
+            'gateway_json_pointer': '/input',
+            'item_type': 'input',
+            'field': 'length',
+            'native_present': True,
+            'gateway_present': True,
+            'native_length': 1,
+            'gateway_length': 0,
+        }])
 
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard

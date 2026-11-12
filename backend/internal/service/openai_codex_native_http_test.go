@@ -103,11 +103,11 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 	}
 }
 
-func TestForward_NormalizesTUIHarnessToCodexExec(t *testing.T) {
+func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pinNativeHTTPTestIdentity(t)
 	body, err := json.Marshal(map[string]any{
-		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic TUI regression",
+		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic harness regression",
 		"tools": []any{map[string]any{
 			"type": "function", "name": "echo", "description": "Echo input",
 			"parameters": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -125,69 +125,117 @@ func TestForward_NormalizesTUIHarnessToCodexExec(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	for _, passthrough := range []bool{false, true} {
-		t.Run(fmt.Sprintf("passthrough=%v", passthrough), func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-			c.Request.Header.Set("User-Agent", "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)")
-			c.Request.Header.Set("originator", "codex-tui")
-			c.Request.Header.Set("version", "0.163.0")
-			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			upstream := &httpUpstreamRecorder{resp: &http.Response{
-				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tui\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")),
-			}}
-			account := codexBodyEncodingTestAccount(158)
-			account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
-			account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
-			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-			_, err := svc.Forward(context.Background(), c, account, body)
-			require.NoError(t, err)
-			require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
-			require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("version"))
-			require.Equal(t, nativeHTTPTestCanonicalUA, upstream.lastReq.Header.Get("user-agent"))
-			var forwarded map[string]any
-			require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
-			items := forwarded["input"].([]any)
-			var reasoning map[string]any
-			var toolCall, toolOutput map[string]any
-			for _, raw := range items {
-				item, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				switch item["type"] {
-				case "reasoning":
-					reasoning = item
-				case "custom_tool_call":
-					toolCall = item
-				case "custom_tool_call_output":
-					toolOutput = item
-				}
+	harnesses := []struct {
+		name       string
+		userAgent  string
+		originator string
+	}{
+		{
+			name:       "tui",
+			userAgent:  "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
+			originator: "codex-tui",
+		},
+		{
+			name:       "desktop",
+			userAgent:  "Codex Desktop/0.163.0 (Mac OS X 15.1.0; arm64) unknown (Codex Desktop; 0.163.0)",
+			originator: "Codex Desktop",
+		},
+		{
+			name:       "ide",
+			userAgent:  "codex_vscode/0.163.0 (Mac OS X 15.1.0; arm64) vscode (codex_vscode; 0.163.0)",
+			originator: "codex_vscode",
+		},
+		{
+			name:       "tui originator override",
+			userAgent:  "cccc/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
+			originator: "cccc",
+		},
+	}
+	for _, harness := range harnesses {
+		for _, passthrough := range []bool{false, true} {
+			for _, lite := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/passthrough=%v/lite=%v", harness.name, passthrough, lite), func(t *testing.T) {
+					c, _ := gin.CreateTestContext(httptest.NewRecorder())
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+					c.Request.Header.Set("User-Agent", harness.userAgent)
+					c.Request.Header.Set("originator", harness.originator)
+					c.Request.Header.Set("version", "0.163.0")
+					if lite {
+						c.Request.Header.Set(responsesLiteHeader, "true")
+					}
+					SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+					upstream := &httpUpstreamRecorder{resp: &http.Response{
+						StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+						Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_harness\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")),
+					}}
+					account := codexBodyEncodingTestAccount(158)
+					account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
+					account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+					svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+					_, err := svc.Forward(context.Background(), c, account, body)
+					require.NoError(t, err)
+					require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
+					require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("version"))
+					require.Equal(t, nativeHTTPTestCanonicalUA, upstream.lastReq.Header.Get("user-agent"))
+					var forwarded map[string]any
+					require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
+					items := forwarded["input"].([]any)
+					var reasoning map[string]any
+					var toolCall, toolOutput map[string]any
+					for _, raw := range items {
+						item, ok := raw.(map[string]any)
+						if !ok {
+							continue
+						}
+						switch item["type"] {
+						case "reasoning":
+							reasoning = item
+						case "custom_tool_call":
+							toolCall = item
+						case "custom_tool_call_output":
+							toolOutput = item
+						}
+					}
+					require.NotNil(t, reasoning)
+					require.NotNil(t, toolCall)
+					require.NotNil(t, toolOutput)
+					require.Equal(t, "rs_tui", reasoning["id"])
+					require.Contains(t, reasoning, "content")
+					require.Contains(t, reasoning, "internal_chat_message_metadata_passthrough")
+					require.Equal(t, "ctc_tui", toolCall["id"])
+					require.Equal(t, "call_tui", toolCall["call_id"])
+					require.Equal(t, "ctco_tui", toolOutput["id"])
+					require.Equal(t, "call_tui", toolOutput["call_id"])
+					require.Equal(t, "auto", forwarded["tool_choice"])
+					if lite {
+						require.NotEmpty(t, items)
+						carrier, ok := items[0].(map[string]any)
+						require.True(t, ok)
+						require.Equal(t, "additional_tools", carrier["type"])
+						var names []string
+						for _, rawTool := range carrier["tools"].([]any) {
+							tool, _ := rawTool.(map[string]any)
+							names = append(names, tool["type"].(string))
+						}
+						require.Contains(t, names, "namespace")
+						require.Contains(t, names, "web_search")
+						require.False(t, gjsonToolsContainWebSearch(gjson.GetBytes(upstream.lastBody, "tools")))
+						return
+					}
+					tools := forwarded["tools"].([]any)
+					var names []string
+					for _, raw := range tools {
+						tool, _ := raw.(map[string]any)
+						names = append(names, tool["type"].(string))
+					}
+					require.ElementsMatch(t, []string{"function", "web_search"}, names)
+					for _, raw := range items {
+						item, _ := raw.(map[string]any)
+						require.NotEqual(t, "additional_tools", item["type"])
+					}
+				})
 			}
-			require.NotNil(t, reasoning)
-			require.NotNil(t, toolCall)
-			require.NotNil(t, toolOutput)
-			require.Equal(t, "rs_tui", reasoning["id"])
-			require.Contains(t, reasoning, "content")
-			require.Contains(t, reasoning, "internal_chat_message_metadata_passthrough")
-			require.Equal(t, "ctc_tui", toolCall["id"])
-			require.Equal(t, "call_tui", toolCall["call_id"])
-			require.Equal(t, "ctco_tui", toolOutput["id"])
-			require.Equal(t, "call_tui", toolOutput["call_id"])
-			tools := forwarded["tools"].([]any)
-			var names []string
-			for _, raw := range tools {
-				tool, _ := raw.(map[string]any)
-				names = append(names, tool["type"].(string))
-			}
-			require.ElementsMatch(t, []string{"function", "web_search"}, names)
-			require.Equal(t, "auto", forwarded["tool_choice"])
-			for _, raw := range items {
-				item, _ := raw.(map[string]any)
-				require.NotEqual(t, "additional_tools", item["type"])
-			}
-		})
+		}
 	}
 }
 
@@ -276,6 +324,24 @@ func TestCodexHTTPPolicyNormalizesNativeHarnesses(t *testing.T) {
 			originator: "codex-tui",
 			expected:   codexHTTPExec,
 		},
+		{
+			name:       "codex_desktop",
+			ua:         "Codex Desktop/0.163.0 (Mac OS X 15.1.0; arm64) unknown (Codex Desktop; 0.163.0)",
+			originator: "Codex Desktop",
+			expected:   codexHTTPExec,
+		},
+		{
+			name:       "codex_ide",
+			ua:         "codex_vscode/0.163.0 (Mac OS X 15.1.0; arm64) vscode (codex_vscode; 0.163.0)",
+			originator: "codex_vscode",
+			expected:   codexHTTPExec,
+		},
+		{
+			name:       "tui originator override",
+			ua:         "cccc/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
+			originator: "cccc",
+			expected:   codexHTTPExec,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -287,6 +353,18 @@ func TestCodexHTTPPolicyNormalizesNativeHarnesses(t *testing.T) {
 			assert.Equal(t, tc.expected, nativeCodexHTTPPolicy(c, codexBodyEncodingTestAccount(158)))
 		})
 	}
+}
+
+func TestCodexHTTPPolicyKeepsAPIKeyTransportSeparate(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)")
+	c.Request.Header.Set("originator", "codex-tui")
+	c.Request.Header.Set("version", "0.163.0")
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	account := codexBodyEncodingTestAccount(158)
+	account.Type = AccountTypeAPIKey
+	assert.Equal(t, codexHTTPLegacy, nativeCodexHTTPPolicy(c, account))
 }
 
 func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {

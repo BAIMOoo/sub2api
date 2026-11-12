@@ -168,7 +168,13 @@ def difference_records(a, b, path='$', segments=()):
         return out
     if isinstance(a, list):
         if path == '$.input' and len(a) != len(b):
-            return [{'path': path + ':length', 'segments': segments, 'change_type': 'length'}]
+            return [{
+                'path': path + ':length',
+                'segments': segments,
+                'change_type': 'length',
+                'native_length': len(a),
+                'gateway_length': len(b),
+            }]
         out = ([{'path': path + ':length', 'segments': segments, 'change_type': 'length'}]
                if len(a) != len(b) else [])
         for i, (x, y) in enumerate(zip(a, b)):
@@ -196,6 +202,19 @@ def body_difference_details(native, gateway, records):
     details = []
     for record in records:
         segments = record.get('segments', ())
+        if record.get('change_type') == 'length' and segments == ('input',):
+            details.append({
+                'path': record['path'],
+                'json_pointer': '/input',
+                'gateway_json_pointer': '/input',
+                'item_type': 'input',
+                'field': 'length',
+                'native_present': True,
+                'gateway_present': True,
+                'native_length': record['native_length'],
+                'gateway_length': record['gateway_length'],
+            })
+            continue
         if (len(segments) < 3 or segments[0] != 'input'
                 or not isinstance(segments[1], int)):
             continue

@@ -45,14 +45,18 @@
 这些逻辑早于本次监控，线上应用容器自 2026-10-18 启动后没有更换。
 
 原生元数据保留依据：2026-11-12 运行 `20261112T010000Z-88612991` 的官方 OAuth
-`codex exec` 请求实际携带该字段并完成上游请求。该结论不扩展到 TUI、
-Desktop、IDE 或非原生兼容路径。
+`codex exec` 请求实际携带该字段并完成上游请求。修复后，TUI、Desktop、IDE
+等已识别 Codex HTTP harness 在 Codex OAuth 推理路径上也使用这项规则；非 Codex
+兼容入口、OpenAI API Key 上游和 WebSocket 仍使用各自契约。
 
 这个分支只在官方响应实际产生带 `id` 的 `reasoning` 输出时才会暴露，所以早期没有该条目的定时样本会通过，后来出现该条目后才持续报告 `input[7].id:missing`。
 
 ## 本地修复
 
-原生 `codex exec` HTTP 路径现在逐字段保留 `reasoning` 条目，包括 `id`、`encrypted_content`、`summary`、`content`、内部消息元数据和其他未知字段。非原生兼容入口仍保留旧兼容行为。
+所有已识别 Codex HTTP harness 在 Codex OAuth 推理路径上都逐字段保留
+`reasoning` 条目，包括 `id`、`encrypted_content`、`summary`、`content`、
+内部消息元数据和其他未知字段。非 Codex 兼容入口、OpenAI API Key 上游和
+WebSocket 仍保留各自兼容行为。
 
 监控同时增加两项约束：
 
@@ -65,4 +69,5 @@ Desktop、IDE 或非原生兼容路径。
 - 当前生产尚未部署本修复，生产检测仍会继续报告旧的 `reasoning.id` 差异。
 - 标准模式没有可用的线上模型。
 - WebSocket 不在当前检测范围。
-- Codex Desktop、TUI 和 IDE 插件没有独立基准。
+- Codex Desktop、TUI 和 IDE 没有独立的 live 抓包基准；目前只通过完整
+  Forward 回归验证其出站协议归一化。

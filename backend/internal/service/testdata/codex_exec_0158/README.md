@@ -31,13 +31,16 @@ identity (0.163.0 / xterm-256color) from the incoming native identity
 (0.158.0 / unknown), and requires the incoming identity to survive. These header
 test values are separate from the captured body provenance above.
 
-The gateway scopes session identities. Native `codex exec` HTTP preserves
-input-item `internal_chat_message_metadata_passthrough`; live alignment run
+The gateway scopes session identities. Recognized Codex HTTP harnesses on the
+ChatGPT/Codex OAuth protocol path are normalized to the `codex_exec` wire
+contract, including input-item
+`internal_chat_message_metadata_passthrough`. Live alignment run
 `20261112T010000Z-88612991` observed official OAuth requests carrying this field
-and completing successfully upstream. Other compatibility paths, TUI, Desktop
-and IDE clients retain the legacy cleanup based on
-https://github.com/Wei-Shaw/sub2api/issues/7066. The HTTP forwarding tests assert
-both policies and compare the complete body, prompts, tools, and native IDs.
+and completing successfully upstream. Full Forward regressions cover TUI,
+Desktop, and IDE identities in standard and Lite modes and compare the complete
+body, prompts, tools, and native IDs. Non-Codex compatibility paths, OpenAI
+API-key upstreams, and WebSocket retain their separate contracts, including the
+legacy cleanup based on https://github.com/Wei-Shaw/sub2api/issues/7066.
 
 Official layout source:
 https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/client.rs#L912
