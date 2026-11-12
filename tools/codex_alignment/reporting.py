@@ -74,10 +74,10 @@ def completed(replay):
 
 def field_presence_direction(contexts):
     contexts = list(contexts)
-    official_only = any(native_present and not gateway_present
-                        for _, _, native_present, gateway_present in contexts)
-    gateway_only = any(gateway_present and not native_present
-                       for _, _, native_present, gateway_present in contexts)
+    official_only = any(context.get('native_present') and not context.get('gateway_present')
+                        for context in contexts)
+    gateway_only = any(context.get('gateway_present') and not context.get('native_present')
+                       for context in contexts)
     if official_only and not gateway_only:
         return 'official_only'
     if gateway_only and not official_only:
@@ -184,7 +184,7 @@ def document(report):
     section('三、执行结果', checks)
 
     details = defaultdict(set)
-    body_context = defaultdict(set)
+    body_context = defaultdict(dict)
     for row in rows:
         for replay in row.get('replays', []):
             for key in ('body_diff', 'header_contract_diff', 'tls_diff', 'identity_failures'):
@@ -192,12 +192,9 @@ def document(report):
                     details[(key, path)].add(label(row))
             for item in replay.get('body_diff_details', []):
                 if isinstance(item, dict) and isinstance(item.get('path'), str):
-                    body_context[item['path']].add((
-                        str(item.get('item_type', 'other')),
-                        str(item.get('field', 'field')),
-                        bool(item.get('native_present')),
-                        bool(item.get('gateway_present')),
-                    ))
+                    body_context[item['path']][
+                        (str(item.get('item_type', 'other')), str(item.get('field', 'field')))
+                    ] = item
             for key in ('header_order_equal', 'compression_equal'):
                 if replay.get(key) is False:
                     details[(key, '不一致')].add(label(row))
@@ -210,8 +207,8 @@ def document(report):
     if any('.call_id.' in p or '.call_id:' in p for p in paths):
         explanations.append('工具调用编号（call_id）不同：用于把工具执行结果关联到原调用的编号发生变化。当前完成情况见上一节；仍需确认改写后关联关系在更多工具链路中始终正确。')
     reasoning_ids = [(path, context) for path, contexts in body_context.items()
-                     for context in contexts
-                     if context[0] == 'reasoning' and context[1] == 'id']
+                     for context in contexts.values()
+                     if context.get('item_type') == 'reasoning' and context.get('field') == 'id']
     if reasoning_ids:
         indexes = set()
         for path, _ in reasoning_ids:
@@ -232,8 +229,8 @@ def document(report):
     elif any(re.search(r'\.input\[\d+\]\.id:missing$', p) for p in paths):
         explanations.append('输入条目的 id 在一侧缺失：一个请求保留了条目标识，另一个没有；需要核对是否影响条目的保留或关联。')
     metadata_contexts = [(path, context) for path, contexts in body_context.items()
-                         for context in contexts
-                         if context[1] == 'internal_chat_message_metadata_passthrough']
+                         for context in contexts.values()
+                         if context.get('field') == 'internal_chat_message_metadata_passthrough']
     if metadata_contexts:
         direction = field_presence_direction(context for _, context in metadata_contexts)
         if direction == 'official_only':
@@ -313,11 +310,16 @@ def document(report):
         grouped[(kind, tuple(sorted(affected)))].append(path)
 
     def display_path(kind, path):
-        contexts = sorted(body_context.get(path, [])) if kind == 'body_diff' else []
+        contexts = [body_context[path][key] for key in sorted(body_context.get(path, {}))
+                    ] if kind == 'body_diff' else []
         if not contexts:
             return path
         notes = []
-        for item_type, field, native_present, gateway_present in contexts:
+        for context in contexts:
+            item_type = context.get('item_type', 'other')
+            field = context.get('field', 'field')
+            native_present = bool(context.get('native_present'))
+            gateway_present = bool(context.get('gateway_present'))
             if native_present == gateway_present:
                 presence = '两侧均' + ('有' if native_present else '无')
             elif native_present:
@@ -325,7 +327,12 @@ def document(report):
             else:
                 presence = '仅生产请求有'
             notes.append(item_type + '.' + field + '：' + presence)
-        return path + ' [' + '；'.join(notes) + ']'
+        pointers = sorted({context['json_pointer'] for context in contexts
+                           if isinstance(context.get('json_pointer'), str)})
+        suffix = ' [' + '；'.join(notes) + ']'
+        if pointers:
+            suffix += ' JSON Pointer：' + '、'.join(pointers)
+        return path + suffix
 
     section('附录：差异位置（供排查使用）', [
         categories[kind] + '：' +

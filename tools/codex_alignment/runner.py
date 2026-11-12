@@ -155,10 +155,18 @@ def compaction_observed(requests):
     return bool(triggered and resumed)
 
 
-def reasoning_replay_observed(requests):
+def reasoning_replay_observed(requests, scenario):
     for request in requests:
         body = request.get('body')
         if not isinstance(body, dict) or not isinstance(body.get('input'), list):
+            continue
+        continued = tool_continuation(body) or (
+            scenario == 'compact' and any(
+                isinstance(item, dict) and item.get('type') in {'compaction', 'compaction_summary'}
+                for item in body['input']
+            )
+        )
+        if not continued:
             continue
         for item in body['input']:
             if (isinstance(item, dict) and item.get('type') == 'reasoning'
@@ -175,8 +183,9 @@ def apply_reasoning_coverage(row, scenario, observed):
     row['alignment_status'] = row['status']
     if required and not observed:
         row['coverage_gaps'] = ['reasoning_id_replay_not_observed']
-        row['status'] = 'unverified'
-        row['reason'] = 'native_reasoning_id_replay_not_observed'
+        row['reason'] = row.get('reason') or 'native_reasoning_id_replay_not_observed'
+        if row['status'] == 'pass':
+            row['status'] = 'unverified'
 
 
 def repository_state(repo):
@@ -283,7 +292,7 @@ class Runner:
                                'local_websocket_refusals': cap.websocket_refusals,
                                'replays': [], 'status': 'unverified'}
                         requests = [r for r in cap.requests if r['method'] == 'POST']
-                        reasoning_replay = (reasoning_replay_observed(requests)
+                        reasoning_replay = (reasoning_replay_observed(requests, scenario)
                                             if scenario in {'tool', 'compact'} else None)
                         if scenario == 'tool' and not any(tool_continuation(r['body']) for r in requests):
                             row['reason'] = 'native_tool_continuation_not_observed'

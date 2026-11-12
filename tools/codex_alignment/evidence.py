@@ -151,45 +151,69 @@ def ticket(secret, run, sample, expires):
     return encoded.decode() + '.' + hmac.new(secret.encode(), encoded, hashlib.sha256).hexdigest()
 
 
-def differences(a, b, path='$'):
-    """Report paths only: even unexpected scalar values cannot leak into alerts."""
+def difference_records(a, b, path='$', segments=()):
+    """Return safe path metadata without persisting compared values."""
     if type(a) is not type(b):
-        return [path + ':type']
+        return [{'path': path + ':type', 'segments': segments, 'change_type': 'type'}]
     if isinstance(a, dict):
-        out = [path + '.' + k + ':missing' for k in sorted(a.keys() ^ b.keys())]
+        out = [{
+            'path': path + '.' + k + ':missing',
+            'segments': segments + (k,),
+            'change_type': 'missing',
+            'native_present': k in a,
+            'gateway_present': k in b,
+        } for k in sorted(a.keys() ^ b.keys())]
         for k in sorted(a.keys() & b.keys()):
-            out.extend(differences(a[k], b[k], path + '.' + k))
+            out.extend(difference_records(a[k], b[k], path + '.' + k, segments + (k,)))
         return out
     if isinstance(a, list):
-        out = [path + ':length'] if len(a) != len(b) else []
+        out = ([{'path': path + ':length', 'segments': segments, 'change_type': 'length'}]
+               if len(a) != len(b) else [])
         for i, (x, y) in enumerate(zip(a, b)):
-            out.extend(differences(x, y, path + '[' + str(i) + ']'))
+            out.extend(difference_records(x, y, path + '[' + str(i) + ']', segments + (i,)))
         return out
-    return [] if a == b else [path + ':value']
+    return [] if a == b else [{'path': path + ':value', 'segments': segments, 'change_type': 'value'}]
 
 
-def body_difference_details(native, gateway, paths):
+def differences(a, b, path='$'):
+    """Report paths only: even unexpected scalar values cannot leak into alerts."""
+    return [record['path'] for record in difference_records(a, b, path)]
+
+
+def json_pointer(segments):
+    return ''.join('/' + str(segment).replace('~', '~0').replace('/', '~1')
+                   for segment in segments)
+
+
+def body_difference_details(native, gateway, records):
     """Attach safe item type and presence details to input-level diff paths."""
     def by_index(evidence):
         return {item['index']: item for item in evidence.get('body_structure', [])
                 if isinstance(item, dict) and isinstance(item.get('index'), int)}
     native_items, gateway_items = by_index(native), by_index(gateway)
     details = []
-    pattern = re.compile(r'^\$\.input\[(\d+)\]\.([A-Za-z0-9_]+):(?:missing|type|value|length)$')
-    for path in paths:
-        match = pattern.match(path)
-        if not match:
+    for record in records:
+        segments = record.get('segments', ())
+        if (len(segments) < 3 or segments[0] != 'input'
+                or not isinstance(segments[1], int)):
             continue
-        index, field = int(match.group(1)), match.group(2)
+        index, field = segments[1], str(segments[2])
         native_item, gateway_item = native_items.get(index), gateway_items.get(index)
         item_type = (native_item or gateway_item or {}).get('type', 'other')
+        if record.get('change_type') == 'missing':
+            native_present = record.get('native_present', False)
+            gateway_present = record.get('gateway_present', False)
+        else:
+            native_present = field in (native_item or {}).get('fields', [])
+            gateway_present = field in (gateway_item or {}).get('fields', [])
         details.append({
-            'path': path,
+            'path': record['path'],
+            'json_pointer': json_pointer(segments),
             'item_index': index,
             'item_type': item_type,
             'field': field,
-            'native_present': field in (native_item or {}).get('fields', []),
-            'gateway_present': field in (gateway_item or {}).get('fields', []),
+            'native_present': native_present,
+            'gateway_present': gateway_present,
         })
     return details
 
@@ -213,8 +237,8 @@ def normalized_body(body):
 def compare_replay(native, gateway):
     if not native or not gateway:
         return {'status': 'unverified', 'reason': 'missing_http_evidence'}
-    body = differences(normalized_body(native['body']), normalized_body(gateway['body']))
-    body_details = body_difference_details(native, gateway, body[:100])
+    body_records = difference_records(normalized_body(native['body']), normalized_body(gateway['body']))
+    body = [record['path'] for record in body_records]
     identity = [k for k, v in gateway.get('identity_checks', {}).items() if not v]
     formats = gateway.get('identity_formats', {})
     if not formats:
@@ -246,7 +270,8 @@ def compare_replay(native, gateway):
                '$.client_metadata.x-codex-installation-id.', '$.client_metadata.x-codex-turn-metadata.')
     scoped_differences = [p for p in body if p.startswith(dynamic)]
     body = [p for p in body if not p.startswith(dynamic)]
-    body_details = [detail for detail in body_details if detail['path'] in body]
+    body_records = [record for record in body_records if record['path'] in body]
+    body_details = body_difference_details(native, gateway, body_records[:100])
     order_equal = native['header_order'] == gateway['header_order']
     # Differences remain visible even where they are not a body regression.
     return {'status': 'drift' if body or identity or header_contract or not order_equal else 'pass',

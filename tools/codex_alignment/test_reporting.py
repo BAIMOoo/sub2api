@@ -50,11 +50,13 @@ class ReportingTests(unittest.TestCase):
         replay['body_diff_details'] = [{
             'path': '$.input[7].id:missing', 'item_index': 7, 'item_type': 'reasoning',
             'field': 'id', 'native_present': True, 'gateway_present': False,
+            'json_pointer': '/input/7/id',
         }]
         text = document(report)
         self.assertIn('reasoning id 在一侧缺失', text)
         self.assertIn('官方 codex exec 保留该字段', text)
         self.assertIn('reasoning.id：仅官方 codex exec 有', text)
+        self.assertIn('JSON Pointer：/input/7/id', text)
 
     def test_reasoning_coverage_gap_is_reported_as_unverified(self):
         report = sample()

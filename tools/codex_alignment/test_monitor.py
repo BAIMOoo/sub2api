@@ -92,6 +92,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['body_diff'], ['$.input[0].id:missing'])
         self.assertEqual(result['body_diff_details'], [{
             'path': '$.input[0].id:missing',
+            'json_pointer': '/input/0/id',
             'item_index': 0,
             'item_type': 'reasoning',
             'field': 'id',
@@ -136,7 +137,7 @@ class EvidenceTests(unittest.TestCase):
         native = http_evidence(
             SECRET, 'POST', '/backend-api/codex/responses',
             [('Host', 'chatgpt.com'), ('session-id', identity)],
-            {**common, 'input': [{'type': 'reasoning', 'summary': []}]},
+            {**common, 'input': [{'type': 'reasoning', 'summary': [], 'future-field': True}]},
             1, 'native')
         gateway = http_evidence(
             SECRET, 'POST', '/backend-api/codex/responses',
@@ -144,10 +145,33 @@ class EvidenceTests(unittest.TestCase):
             {**common, 'input': [{'type': 'reasoning'}]},
             1, 'gateway')
         result = compare_replay(native, gateway)
+        for field in ('summary', 'future-field'):
+            detail = next(item for item in result['body_diff_details']
+                          if item['path'] == '$.input[0].' + field + ':missing')
+            self.assertEqual(detail['json_pointer'], '/input/0/' + field)
+            self.assertTrue(detail['native_present'])
+            self.assertFalse(detail['gateway_present'])
+
+    def test_body_diff_details_attach_context_to_value_changes(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'id': 'rs_native'}]},
+            1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'id': 'rs_gateway'}]},
+            1, 'gateway')
+        result = compare_replay(native, gateway)
         detail = next(item for item in result['body_diff_details']
-                      if item['path'] == '$.input[0].summary:missing')
+                      if item['path'].endswith('.id.$hmac:value'))
+        self.assertEqual(detail['json_pointer'], '/input/0/id/$hmac')
+        self.assertEqual(detail['field'], 'id')
         self.assertTrue(detail['native_present'])
-        self.assertFalse(detail['gateway_present'])
+        self.assertTrue(detail['gateway_present'])
 
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard
@@ -297,13 +321,19 @@ class CaptureTests(unittest.TestCase):
     def test_reasoning_replay_requires_identifier_and_encrypted_content(self):
         def request(*items):
             return {'body': {'input': list(items)}}
-        self.assertFalse(reasoning_replay_observed([request()]))
+        self.assertFalse(reasoning_replay_observed([request()], 'tool'))
         self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'id': 'rs_missing_encrypted', 'summary': []})]))
+            {'type': 'reasoning', 'id': 'rs_missing_encrypted', 'summary': []})], 'tool'))
         self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'encrypted_content': 'opaque', 'summary': []})]))
+            {'type': 'reasoning', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
+        self.assertFalse(reasoning_replay_observed([request(
+            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
         self.assertTrue(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})]))
+            {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'},
+            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
+        self.assertTrue(reasoning_replay_observed([request(
+            {'type': 'compaction', 'id': 'cmp_1', 'encrypted_content': 'opaque'},
+            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'compact'))
 
     def test_missing_reasoning_replay_cannot_silently_pass(self):
         row = {'status': 'pass'}
@@ -321,7 +351,8 @@ class CaptureTests(unittest.TestCase):
         drift = {'status': 'drift'}
         apply_reasoning_coverage(drift, 'tool', False)
         self.assertEqual(drift['alignment_status'], 'drift')
-        self.assertEqual(drift['status'], 'unverified')
+        self.assertEqual(drift['status'], 'drift')
+        self.assertEqual(drift['reason'], 'native_reasoning_id_replay_not_observed')
 
     def test_native_replay_does_not_duplicate_content_type_case_variants(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer
