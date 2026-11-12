@@ -82,6 +82,20 @@ class ReportingTests(unittest.TestCase):
         self.assertIn('严格对齐时应保留', text)
         self.assertIn('internal_chat_message_metadata_passthrough：仅官方 codex exec 有', text)
 
+    def test_internal_message_metadata_direction_uses_recorded_presence(self):
+        report = sample()
+        replay = report['scenarios'][0]['replays'][0]
+        path = '$.input[7].internal_chat_message_metadata_passthrough:missing'
+        replay['body_diff'] = [path]
+        replay['body_diff_details'] = [{
+            'path': path, 'item_index': 7, 'item_type': 'reasoning',
+            'field': 'internal_chat_message_metadata_passthrough',
+            'native_present': False, 'gateway_present': True,
+        }]
+        text = document(report)
+        self.assertIn('当前生产请求额外保留了该字段', text)
+        self.assertIn('需确认该字段从上游发起是否已被接受', text)
+
     def test_drift_does_not_hide_partial_failure_or_missing_response_evidence(self):
         report = sample()
         report['findings'].append('incomplete:run_deadline')

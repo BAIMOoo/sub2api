@@ -3,6 +3,7 @@
 ## 对齐范围
 
 - 基准客户端：官方 Codex CLI 的非交互子命令 `codex exec`。
+- 对齐分支：HTTP；WebSocket 是明确的未覆盖边界。
 - 对比方向：`codex exec -> 官方上游` 与 `codex exec -> Sub2API -> 官方上游`。
 - 不在本次结论内：Codex Desktop、TUI、IDE 插件和 WebSocket。
 - 生产来源：`b18f7ff606a61ac87f1db1597154af845e6593f1`。
@@ -43,11 +44,15 @@
 
 这些逻辑早于本次监控，线上应用容器自 2026-10-18 启动后没有更换。
 
+原生元数据保留依据：2026-11-12 运行 `20261112T010000Z-88612991` 的官方 OAuth
+`codex exec` 请求实际携带该字段并完成上游请求。该结论不扩展到 TUI、
+Desktop、IDE 或非原生兼容路径。
+
 这个分支只在官方响应实际产生带 `id` 的 `reasoning` 输出时才会暴露，所以早期没有该条目的定时样本会通过，后来出现该条目后才持续报告 `input[7].id:missing`。
 
 ## 本地修复
 
-原生 `codex exec` HTTP 路径现在逐字段保留 `reasoning` 条目，包括 `id`、`encrypted_content`、`summary`、内部消息元数据和其他未知字段。非原生兼容入口仍保留旧兼容行为。
+原生 `codex exec` HTTP 路径现在逐字段保留 `reasoning` 条目，包括 `id`、`encrypted_content`、`summary`、`content`、内部消息元数据和其他未知字段。非原生兼容入口仍保留旧兼容行为。
 
 监控同时增加两项约束：
 

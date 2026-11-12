@@ -130,6 +130,25 @@ class EvidenceTests(unittest.TestCase):
         self.assertFalse(result['body_diff_details'][0]['gateway_present'])
         self.assertNotIn('PRIVATE_TURN', json.dumps(result))
 
+    def test_body_diff_details_report_presence_for_arbitrary_fields(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'summary': []}]},
+            1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning'}]},
+            1, 'gateway')
+        result = compare_replay(native, gateway)
+        detail = next(item for item in result['body_diff_details']
+                      if item['path'] == '$.input[0].summary:missing')
+        self.assertTrue(detail['native_present'])
+        self.assertFalse(detail['gateway_present'])
+
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard
         raw = zstandard.ZstdCompressor(write_content_size=False).compress(b'{"a":1}')
@@ -298,6 +317,11 @@ class CaptureTests(unittest.TestCase):
         apply_reasoning_coverage(observed, 'tool', True)
         self.assertEqual(observed['status'], 'pass')
         self.assertTrue(observed['reasoning_replay_observed'])
+
+        drift = {'status': 'drift'}
+        apply_reasoning_coverage(drift, 'tool', False)
+        self.assertEqual(drift['alignment_status'], 'drift')
+        self.assertEqual(drift['status'], 'unverified')
 
     def test_native_replay_does_not_duplicate_content_type_case_variants(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer

@@ -221,12 +221,23 @@ def document(report):
             '需要确认这是有意兼容改写，还是应当逐字节透传。')
     elif any(re.search(r'\.input\[\d+\]\.id:missing$', p) for p in paths):
         explanations.append('输入条目的 id 在一侧缺失：一个请求保留了条目标识，另一个没有；需要核对是否影响条目的保留或关联。')
-    if any(context[1] == 'internal_chat_message_metadata_passthrough'
-           for contexts in body_context.values() for context in contexts):
-        explanations.append(
-            '输入条目的内部消息元数据字段在一侧缺失：官方 codex exec 包含 '
-            '`internal_chat_message_metadata_passthrough`，当前生产转发删除了它；'
-            '严格对齐时应保留，除非有经过验证的上游拒绝证据。')
+    metadata_contexts = [(path, context) for path, contexts in body_context.items()
+                         for context in contexts
+                         if context[1] == 'internal_chat_message_metadata_passthrough']
+    if metadata_contexts:
+        official_only = any(native_present and not gateway_present
+                            for _, (_, _, native_present, gateway_present) in metadata_contexts)
+        gateway_only = any(gateway_present and not native_present
+                           for _, (_, _, native_present, gateway_present) in metadata_contexts)
+        if official_only and not gateway_only:
+            direction = ('官方 codex exec 包含该字段，当前生产转发删除了它；'
+                         '严格对齐时应保留，除非有经过验证的上游拒绝证据。')
+        elif gateway_only and not official_only:
+            direction = ('当前生产请求额外保留了该字段，官方 codex exec 没有；'
+                         '需确认该字段从上游发起是否已被接受。')
+        else:
+            direction = '两侧都存在该字段，但内容或结构不一致。'
+        explanations.append('输入条目的内部消息元数据字段在一侧缺失：' + direction)
     if any(kind == 'tls_diff' for kind, _ in details):
         explanations.append('加密连接（TLS）检查有差异或缺少证据：这项比较的是连接建立时的特征，与模型能否正常回答分别判断。')
     if any(kind == 'identity_failures' for kind, _ in details):

@@ -98,18 +98,13 @@ def input_structure(body):
         row = {
             'index': index,
             'type': 'other',
-            'has_id': False,
-            'has_call_id': False,
-            'has_internal_chat_message_metadata_passthrough': False,
+            'fields': [],
         }
         if isinstance(item, dict):
             item_type = item.get('type')
             row.update({
                 'type': item_type if isinstance(item_type, str) and item_type in PUBLIC_INPUT_ITEM_TYPES else 'other',
-                'has_id': 'id' in item,
-                'has_call_id': 'call_id' in item,
-                'has_internal_chat_message_metadata_passthrough':
-                    'internal_chat_message_metadata_passthrough' in item,
+                'fields': sorted(item),
             })
         result.append(row)
     return result
@@ -188,14 +183,13 @@ def body_difference_details(native, gateway, paths):
         index, field = int(match.group(1)), match.group(2)
         native_item, gateway_item = native_items.get(index), gateway_items.get(index)
         item_type = (native_item or gateway_item or {}).get('type', 'other')
-        field_key = 'has_' + field
         details.append({
             'path': path,
             'item_index': index,
             'item_type': item_type,
             'field': field,
-            'native_present': bool((native_item or {}).get(field_key)),
-            'gateway_present': bool((gateway_item or {}).get(field_key)),
+            'native_present': field in (native_item or {}).get('fields', []),
+            'gateway_present': field in (gateway_item or {}).get('fields', []),
         })
     return details
 

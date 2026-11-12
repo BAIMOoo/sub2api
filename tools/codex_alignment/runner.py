@@ -175,9 +175,8 @@ def apply_reasoning_coverage(row, scenario, observed):
     row['alignment_status'] = row['status']
     if required and not observed:
         row['coverage_gaps'] = ['reasoning_id_replay_not_observed']
-        if row['status'] == 'pass':
-            row['status'] = 'unverified'
-            row['reason'] = 'native_reasoning_id_replay_not_observed'
+        row['status'] = 'unverified'
+        row['reason'] = 'native_reasoning_id_replay_not_observed'
 
 
 def repository_state(repo):

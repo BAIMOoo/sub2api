@@ -26,12 +26,13 @@ Cookie, compression, or byte-for-byte network equivalence. The HTTP forwarding
 test pins the separately configured canonical Ubuntu/x86_64 identity; the capture
 itself ran on Alpine/aarch64. WebSocket parity is outside this work's scope.
 
-The gateway intentionally scopes session identities and removes input-item
-`internal_chat_message_metadata_passthrough` for ChatGPT compatibility, based on
-https://github.com/Wei-Shaw/sub2api/issues/7066. Official 0.158.0 source retains
-this field when the provider name is `OpenAI`; the API-key capture does not prove
-its acceptance by current ChatGPT. The test explicitly asserts this exception
-and compares every other body field, including prompts, tools, and native IDs.
+The gateway scopes session identities. Native `codex exec` HTTP preserves
+input-item `internal_chat_message_metadata_passthrough`; live alignment run
+`20261112T010000Z-88612991` observed official OAuth requests carrying this field
+and completing successfully upstream. Other compatibility paths, TUI, Desktop
+and IDE clients retain the legacy cleanup based on
+https://github.com/Wei-Shaw/sub2api/issues/7066. The HTTP forwarding tests assert
+both policies and compare the complete body, prompts, tools, and native IDs.
 
 Official layout source:
 https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/client.rs#L912
