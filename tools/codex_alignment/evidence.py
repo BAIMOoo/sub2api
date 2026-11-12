@@ -97,7 +97,8 @@ def input_structure(body):
     for index, item in enumerate(body['input']):
         if not isinstance(item, dict):
             result.append({'index': index, 'type': 'other', 'has_id': False,
-                           'has_call_id': False})
+                           'has_call_id': False,
+                           'has_internal_chat_message_metadata_passthrough': False})
             continue
         item_type = item.get('type')
         result.append({
@@ -105,6 +106,8 @@ def input_structure(body):
             'type': item_type if isinstance(item_type, str) and item_type in PUBLIC_INPUT_ITEM_TYPES else 'other',
             'has_id': 'id' in item,
             'has_call_id': 'call_id' in item,
+            'has_internal_chat_message_metadata_passthrough':
+                'internal_chat_message_metadata_passthrough' in item,
         })
     return result
 
@@ -206,9 +209,6 @@ def normalized_body(body):
         for k in ('session_id', 'thread_id', 'x-codex-window-id'):
             if k in meta:
                 meta[k] = '<scoped-session>'
-    for item in value.get('input', []) if isinstance(value.get('input'), list) else []:
-        if isinstance(item, dict):
-            item.pop('internal_chat_message_metadata_passthrough', None)
     return value
 
 

@@ -101,6 +101,35 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn('PRIVATE_', json.dumps(result))
         self.assertNotIn('rs_private_identifier', json.dumps(result))
 
+    def test_internal_codex_exec_item_metadata_is_not_hidden_by_normalization(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        item = {
+            'type': 'reasoning',
+            'id': 'rs_private_identifier',
+            'encrypted_content': 'opaque',
+            'summary': [],
+            'internal_chat_message_metadata_passthrough': {'turn_id': 'PRIVATE_TURN'},
+        }
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [item]}, 1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{k: v for k, v in item.items()
+                                  if k != 'internal_chat_message_metadata_passthrough'}]},
+            1, 'gateway')
+        result = compare_replay(native, gateway)
+        self.assertEqual(result['status'], 'drift')
+        self.assertIn('$.input[0].internal_chat_message_metadata_passthrough:missing',
+                      result['body_diff'])
+        self.assertEqual(result['body_diff_details'][0]['item_type'], 'reasoning')
+        self.assertTrue(result['body_diff_details'][0]['native_present'])
+        self.assertFalse(result['body_diff_details'][0]['gateway_present'])
+        self.assertNotIn('PRIVATE_TURN', json.dumps(result))
+
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard
         raw = zstandard.ZstdCompressor(write_content_size=False).compress(b'{"a":1}')

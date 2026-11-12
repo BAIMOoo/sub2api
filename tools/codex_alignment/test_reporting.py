@@ -67,6 +67,21 @@ class ReportingTests(unittest.TestCase):
         self.assertIn('没有采集到带 id 和 encrypted_content 的 reasoning 续轮', text)
         self.assertIn('证据不足，尚未验证', text)
 
+    def test_internal_message_metadata_difference_is_explained(self):
+        report = sample()
+        replay = report['scenarios'][0]['replays'][0]
+        path = '$.input[7].internal_chat_message_metadata_passthrough:missing'
+        replay['body_diff'] = [path]
+        replay['body_diff_details'] = [{
+            'path': path, 'item_index': 7, 'item_type': 'reasoning',
+            'field': 'internal_chat_message_metadata_passthrough',
+            'native_present': True, 'gateway_present': False,
+        }]
+        text = document(report)
+        self.assertIn('内部消息元数据字段在一侧缺失', text)
+        self.assertIn('严格对齐时应保留', text)
+        self.assertIn('internal_chat_message_metadata_passthrough：仅官方 codex exec 有', text)
+
     def test_drift_does_not_hide_partial_failure_or_missing_response_evidence(self):
         report = sample()
         report['findings'].append('incomplete:run_deadline')
