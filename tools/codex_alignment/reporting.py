@@ -72,6 +72,19 @@ def completed(replay):
             and replay.get('provider_verified') is not False)
 
 
+def field_presence_direction(contexts):
+    contexts = list(contexts)
+    official_only = any(native_present and not gateway_present
+                        for _, _, native_present, gateway_present in contexts)
+    gateway_only = any(gateway_present and not native_present
+                       for _, _, native_present, gateway_present in contexts)
+    if official_only and not gateway_only:
+        return 'official_only'
+    if gateway_only and not official_only:
+        return 'gateway_only'
+    return 'different'
+
+
 def notification_signature(report):
     fields = {'body_diff', 'body_diff_details', 'header_contract_diff', 'tls_diff', 'identity_failures', 'reason',
               'header_order_equal', 'compression_equal', 'provider_verified'}
@@ -205,13 +218,10 @@ def document(report):
             match = re.search(r'\.input\[(\d+)\]', path)
             if match:
                 indexes.add(int(match.group(1)))
-        official_only = any(native_present and not gateway_present
-                            for _, (_, _, native_present, gateway_present) in reasoning_ids)
-        gateway_only = any(gateway_present and not native_present
-                           for _, (_, _, native_present, gateway_present) in reasoning_ids)
-        if official_only and not gateway_only:
+        direction = field_presence_direction(context for _, context in reasoning_ids)
+        if direction == 'official_only':
             direction = '官方 codex exec 保留该字段，当前生产请求删除该字段'
-        elif gateway_only and not official_only:
+        elif direction == 'gateway_only':
             direction = '当前生产请求额外保留了该字段，官方 codex exec 没有'
         else:
             direction = '两侧都存在该字段，但内容或结构不一致'
@@ -225,14 +235,11 @@ def document(report):
                          for context in contexts
                          if context[1] == 'internal_chat_message_metadata_passthrough']
     if metadata_contexts:
-        official_only = any(native_present and not gateway_present
-                            for _, (_, _, native_present, gateway_present) in metadata_contexts)
-        gateway_only = any(gateway_present and not native_present
-                           for _, (_, _, native_present, gateway_present) in metadata_contexts)
-        if official_only and not gateway_only:
+        direction = field_presence_direction(context for _, context in metadata_contexts)
+        if direction == 'official_only':
             direction = ('官方 codex exec 包含该字段，当前生产转发删除了它；'
                          '严格对齐时应保留，除非有经过验证的上游拒绝证据。')
-        elif gateway_only and not official_only:
+        elif direction == 'gateway_only':
             direction = ('当前生产请求额外保留了该字段，官方 codex exec 没有；'
                          '需确认该字段从上游发起是否已被接受。')
         else:
