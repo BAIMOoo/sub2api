@@ -22,7 +22,7 @@
 - 普通模式保留原生顶层工具和基础指令；只对 Lite 执行已有的第三方函数工具搬迁。
 - 已有的 Lite `additional_tools`、命名空间、基础提示和有效 item ID 应保留，不重复插入。
 - 原生 Codex HTTP 请求的有效 `call_id`、跨轮次调用引用及 `custom_tool_call_output.id` 保留；结果条目 ID 不套用兼容入口的 `fc` 前缀限制，空值和超过 64 字节的 ID 仍清理。第三方、API-key 和 WebSocket 路径继续使用原有兼容规则。
-- 搜索历史兼容仍按模式补充声明：普通模式使用顶层 `tools`，Lite 使用 `additional_tools`。无工具时补充 cached-only 搜索并设置 `tool_choice=none` 是网关兼容修复，会有意区别于原生请求，防止引入新的搜索调用。
+- 搜索历史兼容仍按模式补充声明：普通模式使用顶层 `tools`，Lite 使用 `additional_tools`。无工具时补充 cached-only 搜索并设置 `tool_choice=none` 是网关兼容修复，会有意区别于原生请求，防止引入新的搜索调用。该修复是独立 OAuth 兼容能力，可覆盖 HTTP 与既有 WebSocket 路径；它不作为 `codex_exec` HTTP 精确对齐或监控验收的证据。
 - compact 有独立协议约定，不能套用主 Responses 的工具搬迁与头序规则。
 - 账号与 API Key 作用域化继续处理会话标识；比较时核对格式和跨字段关联关系，鉴权值、会话值和随机材料不能作为固定字节基准。
 - 对官方 `codex exec` 的原生 HTTP 请求保留 input item 的 `internal_chat_message_metadata_passthrough`。2026-11-12 的生产对齐检测 `20261112T010000Z-88612991` 中，官方 `codex exec` OAuth 请求实际携带该字段并完成上游请求；因此当前原生路径按实测报文透传。

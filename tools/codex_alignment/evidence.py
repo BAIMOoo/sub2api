@@ -1,6 +1,7 @@
 """Never persist arbitrary wire strings; retain all fields for drift detection."""
 import base64
 import copy
+from difflib import SequenceMatcher
 import hashlib
 import hmac
 import json
@@ -167,6 +168,42 @@ def difference_records(a, b, path='$', segments=()):
             out.extend(difference_records(a[k], b[k], path + '.' + k, segments + (k,)))
         return out
     if isinstance(a, list):
+        if path == '$.input' and all(isinstance(item, dict) for item in a + b):
+            matcher = SequenceMatcher(
+                None,
+                [canonical(item) for item in a],
+                [canonical(item) for item in b],
+                autojunk=False,
+            )
+            out = ([{'path': path + ':length', 'segments': segments, 'change_type': 'length'}]
+                   if len(a) != len(b) else [])
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag == 'equal':
+                    continue
+                paired = min(i2 - i1, j2 - j1)
+                for offset in range(paired):
+                    index = i1 + offset
+                    out.extend(difference_records(
+                        a[index], b[j1 + offset], path + '[' + str(index) + ']',
+                        segments + (index,),
+                    ))
+                for index in range(i1 + paired, i2):
+                    out.append({
+                        'path': path + '[' + str(index) + ']:missing',
+                        'segments': segments + (index,),
+                        'change_type': 'missing',
+                        'native_present': True,
+                        'gateway_present': False,
+                    })
+                for index in range(j1 + paired, j2):
+                    out.append({
+                        'path': path + '[' + str(index) + ']:missing',
+                        'segments': segments + (index,),
+                        'change_type': 'missing',
+                        'native_present': False,
+                        'gateway_present': True,
+                    })
+            return out
         out = ([{'path': path + ':length', 'segments': segments, 'change_type': 'length'}]
                if len(a) != len(b) else [])
         for i, (x, y) in enumerate(zip(a, b)):
@@ -194,18 +231,19 @@ def body_difference_details(native, gateway, records):
     details = []
     for record in records:
         segments = record.get('segments', ())
-        if record.get('change_type') == 'length' and segments == ('input',):
-            for index in sorted(set(native_items) ^ set(gateway_items)):
-                native_item, gateway_item = native_items.get(index), gateway_items.get(index)
-                details.append({
-                    'path': record['path'],
-                    'json_pointer': json_pointer(segments + (index,)),
-                    'item_index': index,
-                    'item_type': (native_item or gateway_item or {}).get('type', 'other'),
-                    'field': 'item',
-                    'native_present': native_item is not None,
-                    'gateway_present': gateway_item is not None,
-                })
+        if (record.get('change_type') == 'missing' and len(segments) == 2
+                and segments[0] == 'input' and isinstance(segments[1], int)):
+            index = segments[1]
+            native_item, gateway_item = native_items.get(index), gateway_items.get(index)
+            details.append({
+                'path': record['path'],
+                'json_pointer': json_pointer(segments),
+                'item_index': index,
+                'item_type': (native_item or gateway_item or {}).get('type', 'other'),
+                'field': 'item',
+                'native_present': record.get('native_present', False),
+                'gateway_present': record.get('gateway_present', False),
+            })
             continue
         if (len(segments) < 3 or segments[0] != 'input'
                 or not isinstance(segments[1], int)):

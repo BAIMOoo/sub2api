@@ -99,7 +99,7 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 		case openAIWebSearchCallItemType:
 			hasWebSearchCall = true
 		case openAIAdditionalToolsItemType:
-			if openAIToolsContainWebSearch(item["tools"]) {
+			if responsesLite && openAIToolsContainWebSearch(item["tools"]) {
 				return false
 			}
 			if tools, _ := item["tools"].([]any); len(tools) > 0 {
@@ -167,7 +167,7 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 			hasWebSearchCall = true
 		case openAIAdditionalToolsItemType:
 			itemTools := item.Get("tools")
-			if gjsonToolsContainWebSearch(itemTools) {
+			if responsesLite && gjsonToolsContainWebSearch(itemTools) {
 				return body, false, nil
 			}
 			if itemTools.IsArray() && len(itemTools.Array()) > 0 {

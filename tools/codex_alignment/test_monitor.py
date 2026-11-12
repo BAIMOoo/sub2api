@@ -187,9 +187,9 @@ class EvidenceTests(unittest.TestCase):
             {**common, 'input': []},
             1, 'gateway')
         result = compare_replay(native, gateway)
-        self.assertEqual(result['body_diff'], ['$.input:length'])
+        self.assertEqual(result['body_diff'], ['$.input:length', '$.input[0]:missing'])
         self.assertEqual(result['body_diff_details'], [{
-            'path': '$.input:length',
+            'path': '$.input[0]:missing',
             'json_pointer': '/input/0',
             'item_index': 0,
             'item_type': 'reasoning',
@@ -197,6 +197,30 @@ class EvidenceTests(unittest.TestCase):
             'native_present': True,
             'gateway_present': False,
         }])
+
+    def test_body_diff_details_align_non_tail_item_removal(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [
+                {'type': 'message', 'role': 'user', 'content': 'hello'},
+                {'type': 'reasoning', 'id': 'rs_keep'},
+            ]}, 1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'id': 'rs_keep'}]},
+            1, 'gateway')
+        result = compare_replay(native, gateway)
+        detail = next(item for item in result['body_diff_details']
+                      if item['path'] == '$.input[0]:missing')
+        self.assertEqual(detail['json_pointer'], '/input/0')
+        self.assertEqual(detail['item_type'], 'message')
+        self.assertTrue(detail['native_present'])
+        self.assertFalse(detail['gateway_present'])
+        self.assertNotIn('$.input[1]:missing', result['body_diff'])
 
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard
