@@ -163,12 +163,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		identity, ok := nativeCodexHTTPIdentity(c, account)
-		codexExecHTTP := ok && isCodexExecHTTPIdentity(identity)
-		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBodyWithCodexExecHTTP(
+		httpPolicy := nativeCodexHTTPPolicy(c, account)
+		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(
 			body,
 			isOpenAIResponsesCompactPath(c),
-			codexExecHTTP,
+			httpPolicy,
 		)
 		if err != nil {
 			return nil, err
@@ -211,14 +210,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	if account != nil && account.IsOpenAI() {
 		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
-		identity, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
-		codexExecHTTP := preserveNativeHTTP && isCodexExecHTTPIdentity(identity)
+		httpPolicy := nativeCodexHTTPPolicy(c, account)
 		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesCompatibilityBodyWithOptions(body, account, openAIResponsesCompatibilityOptions{
-			Config:          s.cfg,
-			ResponsesLite:   responsesLite,
-			Compact:         isOpenAIResponsesCompactPath(c),
-			NativeCodexHTTP: preserveNativeHTTP,
-			CodexExecHTTP:   codexExecHTTP,
+			Config:        s.cfg,
+			ResponsesLite: responsesLite,
+			Compact:       isOpenAIResponsesCompactPath(c),
+			HTTPPolicy:    httpPolicy,
 		})
 		if normalizeErr != nil {
 			return nil, fmt.Errorf("normalize passthrough Responses compatibility: %w", normalizeErr)

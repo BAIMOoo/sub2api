@@ -195,10 +195,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
-	identity, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
-	codexExecHTTP := preserveNativeHTTP && isCodexExecHTTPIdentity(identity)
+	httpPolicy := nativeCodexHTTPPolicy(c, account)
+	preserveNativeHTTP := httpPolicy.preservesNative()
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
-		if !codexExecHTTP {
+		if !httpPolicy.preservesExec() {
 			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
 			if reasoningErr != nil {
 				return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
@@ -518,8 +518,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				IsCompact:                           isCompactRequest,
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 preserveNativeHTTP,
-				NativeCodexHTTP:                     preserveNativeHTTP,
-				CodexExecHTTP:                       codexExecHTTP,
+				HTTPPolicy:                          httpPolicy,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				KeepSystemMessagesInInput:           true,
 				ResponsesLite:                       responsesLite,

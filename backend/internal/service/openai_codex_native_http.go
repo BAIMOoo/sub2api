@@ -7,6 +7,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type codexHTTPPolicy uint8
+
+const (
+	codexHTTPLegacy codexHTTPPolicy = iota
+	codexHTTPNative
+	codexHTTPExec
+)
+
+func (policy codexHTTPPolicy) preservesNative() bool {
+	return policy == codexHTTPNative || policy == codexHTTPExec
+}
+
+func (policy codexHTTPPolicy) preservesExec() bool {
+	return policy == codexHTTPExec
+}
+
 // nativeCodexHTTPIdentity selects preservation from the original HTTP headers,
 // independently of ForceCodexCLI and the mutable outbound headers. Recognition
 // is a wire-compatibility decision, not an authentication or access-control gate.
@@ -39,8 +55,15 @@ func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIde
 	return codexOutboundIdentity{userAgent: ua, originator: originator, version: version}, true
 }
 
-func isCodexExecHTTPIdentity(identity codexOutboundIdentity) bool {
-	return identity.originator == "codex_exec"
+func nativeCodexHTTPPolicy(c *gin.Context, account *Account) codexHTTPPolicy {
+	identity, ok := nativeCodexHTTPIdentity(c, account)
+	if !ok {
+		return codexHTTPLegacy
+	}
+	if identity.originator == "codex_exec" {
+		return codexHTTPExec
+	}
+	return codexHTTPNative
 }
 
 // applyCodexHTTPIdentityHeaders preserves a consistent native identity unless

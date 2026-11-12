@@ -92,8 +92,7 @@ type codexOAuthTransformOptions struct {
 	IsCompact                           bool
 	SkipDefaultInstructions             bool
 	PreserveToolCallIDs                 bool
-	NativeCodexHTTP                     bool
-	CodexExecHTTP                       bool
+	HTTPPolicy                          codexHTTPPolicy
 	OmitPromotedSystemMessagesFromInput bool
 	// KeepSystemMessagesInInput 把 role:"system" 就地归一化为 role:"developer"，
 	// 不提升/镜像到顶层 instructions。官方 Responses Lite 把基础指令放在 input，
@@ -184,7 +183,7 @@ func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool, isCompact
 
 func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuthTransformOptions) codexTransformResult {
 	result := codexTransformResult{}
-	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody, opts.CodexExecHTTP) {
+	if normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody, opts.HTTPPolicy.preservesExec()) {
 		result.Modified = true
 	}
 	// 工具续链需求会影响存储策略与 input 过滤逻辑。
@@ -343,8 +342,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		input = filterCodexInputWithOptions(input, codexInputFilterOptions{
 			PreserveReferences: needsToolContinuation,
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
-			NativeCodexHTTP:    opts.NativeCodexHTTP,
-			CodexExecHTTP:      opts.CodexExecHTTP,
+			HTTPPolicy:         opts.HTTPPolicy,
 		})
 		reqBody["input"] = input
 		result.Modified = true
@@ -1693,8 +1691,7 @@ func isInstructionsEmpty(reqBody map[string]any) bool {
 type codexInputFilterOptions struct {
 	PreserveReferences bool
 	PreserveCallIDs    bool
-	NativeCodexHTTP    bool
-	CodexExecHTTP      bool
+	HTTPPolicy         codexHTTPPolicy
 }
 
 // filterCodexInput 按需过滤 item_reference 与 id。
@@ -1774,7 +1771,7 @@ func codexInputCallIDs(input []any) map[string]struct{} {
 func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []any {
 	filtered := make([]any, 0, len(input))
 	referenceIDMappings := codexItemReferenceIDMappings(input, opts.PreserveCallIDs)
-	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.NativeCodexHTTP}
+	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.HTTPPolicy.preservesNative()}
 	inputItemIDs := codexInputItemIDs(input, idOptions)
 	inputCallIDs := codexInputCallIDs(input)
 	for _, item := range input {
@@ -1810,7 +1807,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// Native codex_exec HTTP requests are already accepted by the same
 		// upstream contract. Preserve their reasoning item byte-for-byte so the
 		// compatibility rewrite cannot turn an exact pass-through into drift.
-		if typ == "reasoning" && opts.CodexExecHTTP {
+		if typ == "reasoning" && opts.HTTPPolicy.preservesExec() {
 			filtered = append(filtered, m)
 			continue
 		}
@@ -1851,7 +1848,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 				if !referencesExistingItem {
 					if normalizedID, mapped := referenceIDMappings[trimmedID]; mapped {
 						newItem["id"] = normalizedID
-					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.NativeCodexHTTP {
+					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.HTTPPolicy.preservesNative() {
 						// A bare call_* reference is a legacy function-call identifier.
 						// Normalize it even when its call item lives in an earlier turn.
 						newItem["id"] = normalizeCodexCallID(trimmedID)

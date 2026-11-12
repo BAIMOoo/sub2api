@@ -1455,10 +1455,9 @@ func normalizeOpenAIResponsesWebSocketCompatibilityBodyWithConfig(cfg *config.Co
 }
 
 type openAIResponsesCompatibilityOptions struct {
-	Config          *config.Config
-	ResponsesLite   bool
-	NativeCodexHTTP bool
-	CodexExecHTTP   bool
+	Config        *config.Config
+	ResponsesLite bool
+	HTTPPolicy    codexHTTPPolicy
 	// Compact marks the /responses/compact wire shape, which is left as-is
 	// by request-shape compatibility rewrites such as web_search history.
 	Compact bool
@@ -1478,7 +1477,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			return body, false, err
 		}
 	}
-	if !opts.CodexExecHTTP {
+	if !opts.HTTPPolicy.preservesExec() {
 		if next, normalizedReasoningContent, err := normalizeOpenAIResponsesReasoningContentReplay(normalized); err != nil {
 			return body, false, err
 		} else if normalizedReasoningContent {
@@ -1501,7 +1500,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 	}
 	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDsWithOptions(normalized, openAIResponsesInputIDOptions{
-		NativeCodexHTTP: opts.NativeCodexHTTP,
+		NativeCodexHTTP: opts.HTTPPolicy.preservesNative(),
 	}); err != nil {
 		return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
 	} else if idsChanged {
@@ -1519,7 +1518,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 	if account != nil && account.IsOpenAIOAuthLike() {
 		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(
 			normalized,
-			opts.CodexExecHTTP,
+			opts.HTTPPolicy.preservesExec(),
 		)
 		if err != nil {
 			return body, false, err
@@ -1618,15 +1617,18 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 // 1) 删除 ChatGPT internal API 不支持的顶层 Responses 参数
 // 2) store=false 3) 非 compact 保持 stream=true；compact 强制 stream=false
 func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, bool, error) {
-	return normalizeOpenAIPassthroughOAuthBodyWithCodexExecHTTP(body, compact, false)
+	return normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(body, compact, codexHTTPLegacy)
 }
 
-func normalizeOpenAIPassthroughOAuthBodyWithCodexExecHTTP(body []byte, compact bool, codexExecHTTP bool) ([]byte, bool, error) {
+func normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(body []byte, compact bool, httpPolicy codexHTTPPolicy) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
 
-	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(body, codexExecHTTP)
+	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(
+		body,
+		httpPolicy.preservesExec(),
+	)
 	if err != nil {
 		return body, false, err
 	}

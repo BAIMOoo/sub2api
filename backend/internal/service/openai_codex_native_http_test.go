@@ -103,6 +103,53 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 	}
 }
 
+func TestForward_CodexExecExactPolicyDoesNotApplyToTUI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body, err := json.Marshal(map[string]any{
+		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic TUI regression",
+		"input": []any{map[string]any{
+			"type": "reasoning", "id": "rs_tui", "encrypted_content": "opaque",
+			"summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": "private"}},
+			"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": "synthetic"},
+		}},
+	})
+	require.NoError(t, err)
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough=%v", passthrough), func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			c.Request.Header.Set("User-Agent", "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)")
+			c.Request.Header.Set("originator", "codex-tui")
+			c.Request.Header.Set("version", "0.163.0")
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tui\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n")),
+			}}
+			account := codexBodyEncodingTestAccount(158)
+			account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
+			account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			_, err := svc.Forward(context.Background(), c, account, body)
+			require.NoError(t, err)
+			var forwarded map[string]any
+			require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
+			items := forwarded["input"].([]any)
+			var reasoning map[string]any
+			for _, raw := range items {
+				item, ok := raw.(map[string]any)
+				if ok && item["type"] == "reasoning" {
+					reasoning = item
+					break
+				}
+			}
+			require.NotNil(t, reasoning)
+			require.NotContains(t, reasoning, "content")
+			require.NotContains(t, reasoning, "internal_chat_message_metadata_passthrough")
+		})
+	}
+}
+
 func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pinNativeHTTPTestIdentity(t)
@@ -174,18 +221,19 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 func TestCodexExecHTTPIdentityExcludesOtherNativeClients(t *testing.T) {
 	for _, tc := range []struct {
 		name, ua, originator string
-		expected             bool
+		expected             codexHTTPPolicy
 	}{
 		{
 			name:       "codex_exec",
 			ua:         "codex_exec/0.163.0 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_exec; 0.163.0)",
 			originator: "codex_exec",
-			expected:   true,
+			expected:   codexHTTPExec,
 		},
 		{
 			name:       "codex_tui",
 			ua:         "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
 			originator: "codex-tui",
+			expected:   codexHTTPNative,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,8 +243,7 @@ func TestCodexExecHTTPIdentityExcludesOtherNativeClients(t *testing.T) {
 			c.Request.Header.Set("originator", tc.originator)
 			c.Request.Header.Set("version", "0.163.0")
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			identity, ok := nativeCodexHTTPIdentity(c, codexBodyEncodingTestAccount(158))
-			assert.Equal(t, tc.expected, ok && isCodexExecHTTPIdentity(identity))
+			assert.Equal(t, tc.expected, nativeCodexHTTPPolicy(c, codexBodyEncodingTestAccount(158)))
 		})
 	}
 }
@@ -219,7 +266,13 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			assert.Equal(t, native, gjson.GetBytes(sanitized, "input.1.id").Exists())
 			assert.False(t, gjson.GetBytes(sanitized, "input.2.id").Exists())
 			assert.False(t, gjson.GetBytes(sanitized, "input.3.id").Exists())
-			filtered := filterCodexInputWithOptions(input, codexInputFilterOptions{PreserveReferences: true, PreserveCallIDs: true, NativeCodexHTTP: native})
+			policy := codexHTTPLegacy
+			if native {
+				policy = codexHTTPNative
+			}
+			filtered := filterCodexInputWithOptions(input, codexInputFilterOptions{
+				PreserveReferences: true, PreserveCallIDs: true, HTTPPolicy: policy,
+			})
 			call := filtered[0].(map[string]any)["call_id"]
 			output := filtered[1].(map[string]any)
 			assert.Equal(t, call, output["call_id"])
@@ -249,14 +302,13 @@ func TestCodexNativeHTTPPreservesReasoningItemExactly(t *testing.T) {
 
 	native := filterCodexInputWithOptions(input, codexInputFilterOptions{
 		PreserveReferences: true,
-		NativeCodexHTTP:    true,
-		CodexExecHTTP:      true,
+		HTTPPolicy:         codexHTTPExec,
 	})
 	require.Equal(t, input, native)
 
 	otherNative := filterCodexInputWithOptions(input, codexInputFilterOptions{
 		PreserveReferences: true,
-		NativeCodexHTTP:    true,
+		HTTPPolicy:         codexHTTPNative,
 	})
 	require.NotContains(t, otherNative[0].(map[string]any), "id")
 	require.Equal(t, "gAAAAAB-enc-payload", otherNative[0].(map[string]any)["encrypted_content"])
