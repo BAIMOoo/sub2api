@@ -195,8 +195,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
-	_, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
-	_, codexExecHTTP := codexExecHTTPIdentity(c, account)
+	identity, preserveNativeHTTP := nativeCodexHTTPIdentity(c, account)
+	codexExecHTTP := preserveNativeHTTP && isCodexExecHTTPIdentity(identity)
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
 		if !codexExecHTTP {
 			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)

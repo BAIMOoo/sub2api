@@ -195,8 +195,8 @@ func TestCodexExecHTTPIdentityExcludesOtherNativeClients(t *testing.T) {
 			c.Request.Header.Set("originator", tc.originator)
 			c.Request.Header.Set("version", "0.163.0")
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			_, ok := codexExecHTTPIdentity(c, codexBodyEncodingTestAccount(158))
-			assert.Equal(t, tc.expected, ok)
+			identity, ok := nativeCodexHTTPIdentity(c, codexBodyEncodingTestAccount(158))
+			assert.Equal(t, tc.expected, ok && isCodexExecHTTPIdentity(identity))
 		})
 	}
 }

@@ -39,12 +39,8 @@ func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIde
 	return codexOutboundIdentity{userAgent: ua, originator: originator, version: version}, true
 }
 
-func codexExecHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIdentity, bool) {
-	identity, ok := nativeCodexHTTPIdentity(c, account)
-	if !ok || identity.originator != "codex_exec" {
-		return codexOutboundIdentity{}, false
-	}
-	return identity, true
+func isCodexExecHTTPIdentity(identity codexOutboundIdentity) bool {
+	return identity.originator == "codex_exec"
 }
 
 // applyCodexHTTPIdentityHeaders preserves a consistent native identity unless
