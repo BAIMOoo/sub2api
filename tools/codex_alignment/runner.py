@@ -170,9 +170,10 @@ def reasoning_replay_observed(requests):
 
 
 def apply_reasoning_coverage(row, scenario, observed):
-    row['reasoning_replay_observed'] = observed if scenario in {'tool', 'compact'} else None
+    required = scenario in {'tool', 'compact'}
+    row['reasoning_replay_observed'] = observed if required else None
     row['alignment_status'] = row['status']
-    if scenario in {'tool', 'compact'} and not observed:
+    if required and not observed:
         row['coverage_gaps'] = ['reasoning_id_replay_not_observed']
         if row['status'] == 'pass':
             row['status'] = 'unverified'

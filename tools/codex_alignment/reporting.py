@@ -200,8 +200,11 @@ def document(report):
                      for context in contexts
                      if context[0] == 'reasoning' and context[1] == 'id']
     if reasoning_ids:
-        indexes = sorted({re.search(r'\.input\[(\d+)\]', path).group(1)
-                          for path, _ in reasoning_ids if re.search(r'\.input\[(\d+)\]', path)})
+        indexes = set()
+        for path, _ in reasoning_ids:
+            match = re.search(r'\.input\[(\d+)\]', path)
+            if match:
+                indexes.add(int(match.group(1)))
         official_only = any(native_present and not gateway_present
                             for _, (_, _, native_present, gateway_present) in reasoning_ids)
         gateway_only = any(gateway_present and not native_present
@@ -214,15 +217,12 @@ def document(report):
             direction = '两侧都存在该字段，但内容或结构不一致'
         explanations.append(
             '输入条目的 reasoning id 在一侧缺失：涉及第 ' +
-            '、'.join(indexes) + ' 项（从 0 开始计数）；' + direction + '；'
+            '、'.join(str(index) for index in sorted(indexes)) + ' 项（从 0 开始计数）；' + direction + '；'
             '需要确认这是有意兼容改写，还是应当逐字节透传。')
     elif any(re.search(r'\.input\[\d+\]\.id:missing$', p) for p in paths):
         explanations.append('输入条目的 id 在一侧缺失：一个请求保留了条目标识，另一个没有；需要核对是否影响条目的保留或关联。')
-    metadata_paths = [
-        path for path, contexts in body_context.items()
-        if any(context[1] == 'internal_chat_message_metadata_passthrough' for context in contexts)
-    ]
-    if metadata_paths:
+    if any(context[1] == 'internal_chat_message_metadata_passthrough'
+           for contexts in body_context.values() for context in contexts):
         explanations.append(
             '输入条目的内部消息元数据字段在一侧缺失：官方 codex exec 包含 '
             '`internal_chat_message_metadata_passthrough`，当前生产转发删除了它；'

@@ -95,20 +95,23 @@ def input_structure(body):
         return []
     result = []
     for index, item in enumerate(body['input']):
-        if not isinstance(item, dict):
-            result.append({'index': index, 'type': 'other', 'has_id': False,
-                           'has_call_id': False,
-                           'has_internal_chat_message_metadata_passthrough': False})
-            continue
-        item_type = item.get('type')
-        result.append({
+        row = {
             'index': index,
-            'type': item_type if isinstance(item_type, str) and item_type in PUBLIC_INPUT_ITEM_TYPES else 'other',
-            'has_id': 'id' in item,
-            'has_call_id': 'call_id' in item,
-            'has_internal_chat_message_metadata_passthrough':
-                'internal_chat_message_metadata_passthrough' in item,
-        })
+            'type': 'other',
+            'has_id': False,
+            'has_call_id': False,
+            'has_internal_chat_message_metadata_passthrough': False,
+        }
+        if isinstance(item, dict):
+            item_type = item.get('type')
+            row.update({
+                'type': item_type if isinstance(item_type, str) and item_type in PUBLIC_INPUT_ITEM_TYPES else 'other',
+                'has_id': 'id' in item,
+                'has_call_id': 'call_id' in item,
+                'has_internal_chat_message_metadata_passthrough':
+                    'internal_chat_message_metadata_passthrough' in item,
+            })
+        result.append(row)
     return result
 
 
@@ -172,17 +175,18 @@ def differences(a, b, path='$'):
 
 def body_difference_details(native, gateway, paths):
     """Attach safe item type and presence details to input-level diff paths."""
-    def item_at(evidence, index):
-        return next((item for item in evidence.get('body_structure', [])
-                     if isinstance(item, dict) and item.get('index') == index), None)
+    def by_index(evidence):
+        return {item['index']: item for item in evidence.get('body_structure', [])
+                if isinstance(item, dict) and isinstance(item.get('index'), int)}
+    native_items, gateway_items = by_index(native), by_index(gateway)
     details = []
-    pattern = re.compile(r'^\$\.input\[(\d+)\]\.([A-Za-z0-9_]+):(missing|type|value|length)$')
+    pattern = re.compile(r'^\$\.input\[(\d+)\]\.([A-Za-z0-9_]+):(?:missing|type|value|length)$')
     for path in paths:
         match = pattern.match(path)
         if not match:
             continue
-        index, field, kind = int(match.group(1)), match.group(2), match.group(3)
-        native_item, gateway_item = item_at(native, index), item_at(gateway, index)
+        index, field = int(match.group(1)), match.group(2)
+        native_item, gateway_item = native_items.get(index), gateway_items.get(index)
         item_type = (native_item or gateway_item or {}).get('type', 'other')
         field_key = 'has_' + field
         details.append({
