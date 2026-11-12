@@ -206,6 +206,10 @@ def document(report):
         explanations.append('版本说明（version）不同：至少一个对照版本与生产请求声明的版本不一致。固定旧版本基准不会自动更新，需要结合各版本结果判断。')
     if any('.call_id.' in p or '.call_id:' in p for p in paths):
         explanations.append('工具调用编号（call_id）不同：用于把工具执行结果关联到原调用的编号发生变化。当前完成情况见上一节；仍需确认改写后关联关系在更多工具链路中始终正确。')
+    if '$.input:length' in paths:
+        explanations.append(
+            '输入条目数量不同：官方 codex exec 与生产请求的 input 条数不一致。'
+            '报告只记录存在条目增减，不定位具体是哪一条；交由后续开发人员根据原始脱敏证据排查。')
     reasoning_ids = [(path, context) for path, contexts in body_context.items()
                      for context in contexts.values()
                      if context.get('item_type') == 'reasoning' and context.get('field') == 'id']

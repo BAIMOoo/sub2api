@@ -98,6 +98,15 @@ class ReportingTests(unittest.TestCase):
         self.assertIn('当前生产请求额外保留了该字段', text)
         self.assertIn('需确认该字段从上游发起是否已被接受', text)
 
+    def test_input_length_diff_does_not_pretend_to_name_an_item(self):
+        report = sample()
+        replay = report['scenarios'][0]['replays'][0]
+        replay['body_diff'] = ['$.input:length']
+        replay['body_diff_details'] = []
+        text = document(report)
+        self.assertIn('输入条目数量不同', text)
+        self.assertIn('不定位具体是哪一条', text)
+
     def test_drift_does_not_hide_partial_failure_or_missing_response_evidence(self):
         report = sample()
         report['findings'].append('incomplete:run_deadline')

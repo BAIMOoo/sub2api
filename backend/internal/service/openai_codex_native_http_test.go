@@ -107,11 +107,15 @@ func TestForward_CodexExecExactPolicyDoesNotApplyToTUI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body, err := json.Marshal(map[string]any{
 		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic TUI regression",
-		"input": []any{map[string]any{
-			"type": "reasoning", "id": "rs_tui", "encrypted_content": "opaque",
-			"summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": "private"}},
-			"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": "synthetic"},
-		}},
+		"input": []any{
+			map[string]any{
+				"type": "reasoning", "id": "rs_tui", "encrypted_content": "opaque",
+				"summary": []any{}, "content": []any{map[string]any{"type": "reasoning_text", "text": "private"}},
+				"internal_chat_message_metadata_passthrough": map[string]any{"turn_id": "synthetic"},
+			},
+			map[string]any{"type": "custom_tool_call", "id": "ctc_tui", "call_id": "call_tui", "name": "exec_command", "input": "pwd"},
+			map[string]any{"type": "custom_tool_call_output", "id": "ctco_tui", "call_id": "call_tui", "output": "ok"},
+		},
 	})
 	require.NoError(t, err)
 	for _, passthrough := range []bool{false, true} {
@@ -132,20 +136,37 @@ func TestForward_CodexExecExactPolicyDoesNotApplyToTUI(t *testing.T) {
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 			_, err := svc.Forward(context.Background(), c, account, body)
 			require.NoError(t, err)
+			require.Equal(t, "codex-tui", upstream.lastReq.Header.Get("originator"))
+			require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("version"))
+			require.Equal(t, "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)", upstream.lastReq.Header.Get("user-agent"))
 			var forwarded map[string]any
 			require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
 			items := forwarded["input"].([]any)
 			var reasoning map[string]any
+			var toolCall, toolOutput map[string]any
 			for _, raw := range items {
 				item, ok := raw.(map[string]any)
-				if ok && item["type"] == "reasoning" {
+				if !ok {
+					continue
+				}
+				switch item["type"] {
+				case "reasoning":
 					reasoning = item
-					break
+				case "custom_tool_call":
+					toolCall = item
+				case "custom_tool_call_output":
+					toolOutput = item
 				}
 			}
 			require.NotNil(t, reasoning)
+			require.NotNil(t, toolCall)
+			require.NotNil(t, toolOutput)
 			require.NotContains(t, reasoning, "content")
 			require.NotContains(t, reasoning, "internal_chat_message_metadata_passthrough")
+			require.Equal(t, "ctc_tui", toolCall["id"])
+			require.Equal(t, "call_tui", toolCall["call_id"])
+			require.Equal(t, "ctco_tui", toolOutput["id"])
+			require.Equal(t, "call_tui", toolOutput["call_id"])
 		})
 	}
 }
