@@ -171,27 +171,46 @@ def difference_records(a, b, path='$', segments=()):
         if path == '$.input' and all(isinstance(item, dict) for item in a + b):
             matcher = SequenceMatcher(
                 None,
-                [canonical(item) for item in a],
-                [canonical(item) for item in b],
+                [input_item_alignment_key(item) for item in a],
+                [input_item_alignment_key(item) for item in b],
                 autojunk=False,
             )
             out = ([{'path': path + ':length', 'segments': segments, 'change_type': 'length'}]
                    if len(a) != len(b) else [])
             for tag, i1, i2, j1, j2 in matcher.get_opcodes():
                 if tag == 'equal':
+                    for offset in range(i2 - i1):
+                        native_index, gateway_index = i1 + offset, j1 + offset
+                        records = difference_records(
+                            a[native_index],
+                            b[gateway_index],
+                            path + '[' + str(native_index) + ']',
+                            segments + (native_index,),
+                        )
+                        for record in records:
+                            record['native_item_index'] = native_index
+                            record['gateway_item_index'] = gateway_index
+                        out.extend(records)
                     continue
                 paired = min(i2 - i1, j2 - j1)
                 for offset in range(paired):
-                    index = i1 + offset
-                    out.extend(difference_records(
-                        a[index], b[j1 + offset], path + '[' + str(index) + ']',
-                        segments + (index,),
-                    ))
+                    native_index, gateway_index = i1 + offset, j1 + offset
+                    records = difference_records(
+                        a[native_index], b[gateway_index],
+                        path + '[' + str(native_index) + ']',
+                        segments + (native_index,),
+                    )
+                    for record in records:
+                        record['native_item_index'] = native_index
+                        record['gateway_item_index'] = gateway_index
+                    out.extend(records)
                 for index in range(i1 + paired, i2):
                     out.append({
                         'path': path + '[' + str(index) + ']:missing',
                         'segments': segments + (index,),
                         'change_type': 'missing',
+                        'native_item_index': index,
+                        'gateway_item_index': None,
                         'native_present': True,
                         'gateway_present': False,
                     })
@@ -200,6 +219,8 @@ def difference_records(a, b, path='$', segments=()):
                         'path': path + '[' + str(index) + ']:missing',
                         'segments': segments + (index,),
                         'change_type': 'missing',
+                        'native_item_index': None,
+                        'gateway_item_index': index,
                         'native_present': False,
                         'gateway_present': True,
                     })
@@ -222,6 +243,15 @@ def json_pointer(segments):
                    for segment in segments)
 
 
+def input_item_alignment_key(item):
+    parts = [str(item.get('type', ''))]
+    for field in ('role', 'call_id', 'name'):
+        value = item.get(field)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return tuple(parts)
+
+
 def body_difference_details(native, gateway, records):
     """Attach safe item type and presence details to input-level diff paths."""
     def by_index(evidence):
@@ -235,21 +265,30 @@ def body_difference_details(native, gateway, records):
                 and segments[0] == 'input' and isinstance(segments[1], int)):
             index = segments[1]
             native_item, gateway_item = native_items.get(index), gateway_items.get(index)
+            native_present = record.get('native_present', False)
+            gateway_present = record.get('gateway_present', False)
+            source_item = gateway_item if gateway_present else native_item
             details.append({
                 'path': record['path'],
                 'json_pointer': json_pointer(segments),
+                'gateway_json_pointer': None,
                 'item_index': index,
-                'item_type': (native_item or gateway_item or {}).get('type', 'other'),
+                'item_type': (source_item or {}).get('type', 'other'),
                 'field': 'item',
-                'native_present': record.get('native_present', False),
-                'gateway_present': record.get('gateway_present', False),
+                'native_item_index': record.get('native_item_index'),
+                'gateway_item_index': record.get('gateway_item_index'),
+                'native_present': native_present,
+                'gateway_present': gateway_present,
             })
             continue
         if (len(segments) < 3 or segments[0] != 'input'
                 or not isinstance(segments[1], int)):
             continue
         index, field = segments[1], str(segments[2])
-        native_item, gateway_item = native_items.get(index), gateway_items.get(index)
+        native_index = record.get('native_item_index', index)
+        gateway_index = record.get('gateway_item_index', index)
+        native_item = native_items.get(native_index) if native_index is not None else None
+        gateway_item = gateway_items.get(gateway_index) if gateway_index is not None else None
         item_type = (native_item or gateway_item or {}).get('type', 'other')
         if record.get('change_type') == 'missing':
             native_present = record.get('native_present', False)
@@ -260,12 +299,21 @@ def body_difference_details(native, gateway, records):
         pointer_segments = (
             segments[:-1] if segments and segments[-1] in {'$hmac', 'bytes'} else segments
         )
+        gateway_segments = (
+            segments[:1] + (gateway_index,) + segments[2:]
+            if gateway_index is not None else None
+        )
+        if gateway_segments and gateway_segments[-1] in {'$hmac', 'bytes'}:
+            gateway_segments = gateway_segments[:-1]
         details.append({
             'path': record['path'],
             'json_pointer': json_pointer(pointer_segments),
+            'gateway_json_pointer': json_pointer(gateway_segments) if gateway_segments else None,
             'item_index': index,
             'item_type': item_type,
             'field': field,
+            'native_item_index': native_index,
+            'gateway_item_index': gateway_index,
             'native_present': native_present,
             'gateway_present': gateway_present,
         })

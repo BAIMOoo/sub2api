@@ -102,8 +102,11 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 			if responsesLite && openAIToolsContainWebSearch(item["tools"]) {
 				return false
 			}
-			if tools, _ := item["tools"].([]any); len(tools) > 0 {
-				callerDeclaredTools = true
+			if responsesLite {
+				tools, _ := item["tools"].([]any)
+				if len(tools) > 0 {
+					callerDeclaredTools = true
+				}
 			}
 			if additionalToolsIndex < 0 {
 				additionalToolsIndex = i
@@ -170,7 +173,7 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 			if responsesLite && gjsonToolsContainWebSearch(itemTools) {
 				return body, false, nil
 			}
-			if itemTools.IsArray() && len(itemTools.Array()) > 0 {
+			if responsesLite && itemTools.IsArray() && len(itemTools.Array()) > 0 {
 				callerDeclaredTools = true
 			}
 			if additionalToolsIndex < 0 {

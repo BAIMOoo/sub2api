@@ -93,9 +93,12 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['body_diff_details'], [{
             'path': '$.input[0].id:missing',
             'json_pointer': '/input/0/id',
+            'gateway_json_pointer': '/input/0/id',
             'item_index': 0,
             'item_type': 'reasoning',
             'field': 'id',
+            'native_item_index': 0,
+            'gateway_item_index': 0,
             'native_present': True,
             'gateway_present': False,
         }])
@@ -191,9 +194,12 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['body_diff_details'], [{
             'path': '$.input[0]:missing',
             'json_pointer': '/input/0',
+            'gateway_json_pointer': None,
             'item_index': 0,
             'item_type': 'reasoning',
             'field': 'item',
+            'native_item_index': 0,
+            'gateway_item_index': None,
             'native_present': True,
             'gateway_present': False,
         }])
@@ -221,6 +227,57 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(detail['native_present'])
         self.assertFalse(detail['gateway_present'])
         self.assertNotIn('$.input[1]:missing', result['body_diff'])
+
+    def test_body_diff_details_align_non_tail_item_insertion(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'id': 'rs_keep'}]},
+            1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [
+                {'type': 'web_search_call', 'id': 'ws_inserted'},
+                {'type': 'reasoning', 'id': 'rs_keep'},
+            ]}, 1, 'gateway')
+        result = compare_replay(native, gateway)
+        detail = next(item for item in result['body_diff_details']
+                      if item['path'] == '$.input[0]:missing')
+        self.assertEqual(detail['item_type'], 'web_search_call')
+        self.assertEqual(detail['native_item_index'], None)
+        self.assertEqual(detail['gateway_item_index'], 0)
+        self.assertEqual(detail['json_pointer'], '/input/0')
+        self.assertTrue(detail['gateway_present'])
+
+    def test_body_diff_details_align_mixed_removal_and_value_change(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [
+                {'type': 'message', 'role': 'user', 'content': 'hello'},
+                {'type': 'reasoning', 'id': 'rs_native'},
+            ]}, 1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'id': 'rs_gateway'}]},
+            1, 'gateway')
+        result = compare_replay(native, gateway)
+        removed = next(item for item in result['body_diff_details']
+                       if item['path'] == '$.input[0]:missing')
+        self.assertEqual(removed['item_type'], 'message')
+        value = next(item for item in result['body_diff_details']
+                     if item['path'].endswith('.id.$hmac:value'))
+        self.assertEqual(value['item_type'], 'reasoning')
+        self.assertEqual(value['native_item_index'], 1)
+        self.assertEqual(value['gateway_item_index'], 0)
+        self.assertEqual(value['json_pointer'], '/input/1/id')
+        self.assertEqual(value['gateway_json_pointer'], '/input/0/id')
 
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard
