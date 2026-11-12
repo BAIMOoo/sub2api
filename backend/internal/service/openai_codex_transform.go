@@ -1803,6 +1803,14 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// neither reasoning nor tool calls, they flow through the generic path
 		// below (id stripped when !PreserveReferences, encrypted_content
 		// preserved either way), which is safe and needs no special-casing.
+		//
+		// Native codex_exec HTTP requests are already accepted by the same
+		// upstream contract. Preserve their reasoning item byte-for-byte so the
+		// compatibility rewrite cannot turn an exact pass-through into drift.
+		if typ == "reasoning" && opts.NativeCodexHTTP {
+			filtered = append(filtered, m)
+			continue
+		}
 		if typ == "reasoning" {
 			newItem := make(map[string]any, len(m))
 			for key, value := range m {

@@ -42,6 +42,12 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						callID := "call_" + strings.Repeat("a", 32)
 						resultID := "ctco_" + strings.Repeat("b", 36)
 						input := []any{
+							map[string]any{
+								"type":              "reasoning",
+								"id":                "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
+								"encrypted_content": "gAAAAAB-native-encrypted-content",
+								"summary":           []any{},
+							},
 							map[string]any{"type": "custom_tool_call", "id": "ctc_item", "call_id": callID, "name": "exec_command", "input": "pwd"},
 							map[string]any{"type": "custom_tool_call_output", "id": resultID, "call_id": callID, "output": "/synthetic"},
 							map[string]any{"type": "item_reference", "id": "ctc_item"},
@@ -193,4 +199,27 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			assert.Equal(t, ref, filtered[4].(map[string]any)["id"])
 		})
 	}
+}
+
+func TestCodexNativeHTTPPreservesReasoningItemExactly(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type":              "reasoning",
+			"id":                "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
+			"encrypted_content": "gAAAAAB-enc-payload",
+			"summary":           []any{},
+		},
+	}
+
+	native := filterCodexInputWithOptions(input, codexInputFilterOptions{
+		PreserveReferences: true,
+		NativeCodexHTTP:    true,
+	})
+	require.Equal(t, input, native)
+
+	legacy := filterCodexInputWithOptions(input, codexInputFilterOptions{
+		PreserveReferences: true,
+	})
+	require.NotContains(t, legacy[0].(map[string]any), "id")
+	require.Equal(t, "gAAAAAB-enc-payload", legacy[0].(map[string]any)["encrypted_content"])
 }
