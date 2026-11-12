@@ -185,6 +185,10 @@ def json_pointer(segments):
                    for segment in segments)
 
 
+def wire_segments(segments):
+    return segments[:-1] if segments and segments[-1] in {'$hmac', 'bytes'} else segments
+
+
 def body_difference_details(native, gateway, records):
     """Attach safe item type and presence details to input-level diff paths."""
     def by_index(evidence):
@@ -194,6 +198,19 @@ def body_difference_details(native, gateway, records):
     details = []
     for record in records:
         segments = record.get('segments', ())
+        if record.get('change_type') == 'length' and segments == ('input',):
+            for index in sorted(set(native_items) ^ set(gateway_items)):
+                native_item, gateway_item = native_items.get(index), gateway_items.get(index)
+                details.append({
+                    'path': record['path'],
+                    'json_pointer': json_pointer(segments + (index,)),
+                    'item_index': index,
+                    'item_type': (native_item or gateway_item or {}).get('type', 'other'),
+                    'field': 'item',
+                    'native_present': native_item is not None,
+                    'gateway_present': gateway_item is not None,
+                })
+            continue
         if (len(segments) < 3 or segments[0] != 'input'
                 or not isinstance(segments[1], int)):
             continue
@@ -208,7 +225,7 @@ def body_difference_details(native, gateway, records):
             gateway_present = field in (gateway_item or {}).get('fields', [])
         details.append({
             'path': record['path'],
-            'json_pointer': json_pointer(segments),
+            'json_pointer': json_pointer(wire_segments(segments)),
             'item_index': index,
             'item_type': item_type,
             'field': field,

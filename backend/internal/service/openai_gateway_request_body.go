@@ -1251,11 +1251,7 @@ func extractOpenAIRequestMetaFromBody(body []byte) (model string, stream bool, p
 
 const openAIOAuthInputMetadataField = "internal_chat_message_metadata_passthrough"
 
-func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any) bool {
-	return normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody, false)
-}
-
-func normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody map[string]any, codexExecHTTP bool) bool {
+func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any, httpPolicy codexHTTPPolicy) bool {
 	if reqBody == nil {
 		return false
 	}
@@ -1273,7 +1269,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody m
 		delete(reqBody, "commands")
 		changed = true
 	}
-	if !codexExecHTTP {
+	if !httpPolicy.preservesCodexExec() {
 		// Codex can attach internal message metadata when a custom provider is
 		// named OpenAI. Legacy ChatGPT compatibility removes it because older
 		// upstreams rejected the field (#7066). Native codex_exec requests keep
@@ -1293,11 +1289,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityFieldsWithCodexExecHTTP(reqBody m
 	return changed
 }
 
-func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, error) {
-	return normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(body, false)
-}
-
-func normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(body []byte, codexExecHTTP bool) ([]byte, bool, error) {
+func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte, httpPolicy codexHTTPPolicy) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -1328,7 +1320,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(body []byte
 		normalized = next
 		changed = true
 	}
-	if !codexExecHTTP {
+	if !httpPolicy.preservesCodexExec() {
 		// Only remove the input-item field, never same-named user content.
 		input := gjson.GetBytes(normalized, "input")
 		if !input.IsArray() {
@@ -1516,10 +1508,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 	}
 	if account != nil && account.IsOpenAIOAuthLike() {
-		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(
-			normalized,
-			opts.HTTPPolicy.preservesCodexExec(),
-		)
+		oauthBody, oauthChanged, err := normalizeOpenAIOAuthResponsesCompatibilityBody(normalized, opts.HTTPPolicy)
 		if err != nil {
 			return body, false, err
 		}
@@ -1616,19 +1605,12 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 // normalizeOpenAIPassthroughOAuthBody 将透传 OAuth 请求体收敛为旧链路关键行为：
 // 1) 删除 ChatGPT internal API 不支持的顶层 Responses 参数
 // 2) store=false 3) 非 compact 保持 stream=true；compact 强制 stream=false
-func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, bool, error) {
-	return normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(body, compact, codexHTTPLegacy)
-}
-
-func normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(body []byte, compact bool, httpPolicy codexHTTPPolicy) ([]byte, bool, error) {
+func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool, httpPolicy codexHTTPPolicy) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
 
-	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBodyWithCodexExecHTTP(
-		body,
-		httpPolicy.preservesCodexExec(),
-	)
+	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body, httpPolicy)
 	if err != nil {
 		return body, false, err
 	}

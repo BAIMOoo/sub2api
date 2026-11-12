@@ -164,7 +164,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, fmt.Errorf("openai passthrough rejected before upstream: %s", rejectReason)
 		}
-		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBodyWithHTTPPolicy(
+		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(
 			body,
 			isOpenAIResponsesCompactPath(c),
 			httpPolicy,

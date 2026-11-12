@@ -26,8 +26,12 @@ func TestOAuthInputInternalMetadata(t *testing.T) {
 			out, err := json.Marshal(req)
 			return out, result.Modified, err
 		}, true},
-		{"OAuth passthrough", func(b []byte) ([]byte, bool, error) { return normalizeOpenAIPassthroughOAuthBody(b, false) }, true},
-		{"OAuth compact", func(b []byte) ([]byte, bool, error) { return normalizeOpenAIPassthroughOAuthBody(b, true) }, true},
+		{"OAuth passthrough", func(b []byte) ([]byte, bool, error) {
+			return normalizeOpenAIPassthroughOAuthBody(b, false, codexHTTPLegacy)
+		}, true},
+		{"OAuth compact", func(b []byte) ([]byte, bool, error) {
+			return normalizeOpenAIPassthroughOAuthBody(b, true, codexHTTPLegacy)
+		}, true},
 		{"OAuth websocket", func(b []byte) ([]byte, bool, error) {
 			return normalizeOpenAIResponsesWebSocketCompatibilityBody(b, &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}, false)
 		}, true},
@@ -59,25 +63,25 @@ func TestOAuthInputInternalMetadataCompatibility(t *testing.T) {
 		`{"input":[{"content":{"internal_chat_message_metadata_passthrough":true}}]}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			out, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody([]byte(body))
+			out, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody([]byte(body), codexHTTPLegacy)
 			require.NoError(t, err)
 			require.False(t, changed)
 			require.Equal(t, body, string(out))
 			var req map[string]any
 			require.NoError(t, json.Unmarshal([]byte(body), &req))
-			require.False(t, normalizeOpenAIOAuthResponsesCompatibilityFields(req))
+			require.False(t, normalizeOpenAIOAuthResponsesCompatibilityFields(req, codexHTTPLegacy))
 		})
 	}
 	// Legacy prompt aliases and later-turn payloads use the same boundary.
 	body := []byte(`{"prompt":[{"role":"user","content":"hello","internal_chat_message_metadata_passthrough":{}}],"previous_response_id":"resp_123"}`)
-	out, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body)
+	out, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(out, "input.0.internal_chat_message_metadata_passthrough").Exists())
 	require.Equal(t, "resp_123", gjson.GetBytes(out, "previous_response_id").String())
 	var req map[string]any
 	require.NoError(t, json.Unmarshal(body, &req))
-	require.True(t, normalizeOpenAIOAuthResponsesCompatibilityFields(req))
+	require.True(t, normalizeOpenAIOAuthResponsesCompatibilityFields(req, codexHTTPLegacy))
 	input, ok := req["input"].([]any)
 	require.True(t, ok)
 	require.NotContains(t, input[0], "internal_chat_message_metadata_passthrough")

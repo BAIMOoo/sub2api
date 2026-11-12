@@ -10,7 +10,7 @@ import (
 func TestNormalizeOpenAIPassthroughOAuthBody_RemovesUnsupportedUser(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","user":"user_123","metadata":{"user_id":"user_123"},"prompt_cache_retention":"24h","safety_identifier":"sid","stream_options":{"include_usage":true}}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 	for _, field := range openAIChatGPTInternalUnsupportedFields {
@@ -23,7 +23,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_RemovesUnsupportedUser(t *testing.T
 func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesCompatibilityFields(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","prompt":"hello","commands":["unsupported"],"truncation":"auto","stop_sequences":["END"],"chat_template_kwargs":{"enable_thinking":true}}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "hello", gjson.GetBytes(normalized, "input.0.content").String())
@@ -35,7 +35,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesCompatibilityFields(t *te
 func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesReasoningMode(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","input":"hello","reasoning":{"mode":"pro"}}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
@@ -45,7 +45,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_NormalizesReasoningMode(t *testing.
 func TestNormalizeOpenAIOAuthResponsesCompatibilityBody_PreservesExplicitInput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":"explicit","prompt":"legacy"}`)
 
-	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body)
+	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "explicit", gjson.GetBytes(normalized, "input").String())
@@ -185,7 +185,7 @@ func TestNormalizeOpenAIResponsesReasoningMode_NonAstraKeepsLegacyBehavior(t *te
 func TestNormalizeOpenAIPassthroughOAuthBody_AstraPreservesReasoningMode(t *testing.T) {
 	body := []byte(`{"model":"gpt-6-astra","reasoning":{"mode":"pro","effort":"max"}}`)
 
-	normalized, _, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, _, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.Equal(t, "pro", gjson.GetBytes(normalized, "reasoning.mode").String())
 	require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
@@ -296,7 +296,7 @@ func TestNormalizeOpenAIResponseFormatSchemasBody_PreservesExistingTypeValues(t 
 func TestNormalizeOpenAIPassthroughOAuthBody_CompactRemovesUnsupportedUser(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello","user":"user_123","metadata":{"user_id":"user_123"},"stream":true,"store":true}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, true)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, true, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(normalized, "user").Exists())
@@ -308,7 +308,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_CompactRemovesUnsupportedUser(t *te
 func TestNormalizeOpenAIPassthroughOAuthBody_StringInputWrappedAsArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"hello world"}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -324,7 +324,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_StringInputWrappedAsArray(t *testin
 func TestNormalizeOpenAIPassthroughOAuthBody_EmptyStringInputWrappedAsEmptyArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"  "}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -336,7 +336,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_EmptyStringInputWrappedAsEmptyArray
 func TestNormalizeOpenAIPassthroughOAuthBody_ObjectInputWrappedAsArray(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":{"type":"message","role":"user","content":"hi"}}`)
 
-	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, changed, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 	require.True(t, changed)
 
@@ -350,7 +350,7 @@ func TestNormalizeOpenAIPassthroughOAuthBody_ObjectInputWrappedAsArray(t *testin
 func TestNormalizeOpenAIPassthroughOAuthBody_ArrayInputUnchanged(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":[{"type":"message","role":"user","content":"hi"}]}`)
 
-	normalized, _, err := normalizeOpenAIPassthroughOAuthBody(body, false)
+	normalized, _, err := normalizeOpenAIPassthroughOAuthBody(body, false, codexHTTPLegacy)
 	require.NoError(t, err)
 
 	input := gjson.GetBytes(normalized, "input")

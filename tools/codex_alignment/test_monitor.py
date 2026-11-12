@@ -168,10 +168,35 @@ class EvidenceTests(unittest.TestCase):
         result = compare_replay(native, gateway)
         detail = next(item for item in result['body_diff_details']
                       if item['path'].endswith('.id.$hmac:value'))
-        self.assertEqual(detail['json_pointer'], '/input/0/id/$hmac')
+        self.assertEqual(detail['json_pointer'], '/input/0/id')
         self.assertEqual(detail['field'], 'id')
         self.assertTrue(detail['native_present'])
         self.assertTrue(detail['gateway_present'])
+
+    def test_body_diff_details_attribute_whole_item_removal(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        common = {'model': 'test-model', 'prompt_cache_key': identity}
+        native = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': [{'type': 'reasoning', 'id': 'rs_private'}]},
+            1, 'native')
+        gateway = http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity)],
+            {**common, 'input': []},
+            1, 'gateway')
+        result = compare_replay(native, gateway)
+        self.assertEqual(result['body_diff'], ['$.input:length'])
+        self.assertEqual(result['body_diff_details'], [{
+            'path': '$.input:length',
+            'json_pointer': '/input/0',
+            'item_index': 0,
+            'item_type': 'reasoning',
+            'field': 'item',
+            'native_present': True,
+            'gateway_present': False,
+        }])
 
     def test_zstd_is_bounded_and_decodes_without_content_size(self):
         import zstandard

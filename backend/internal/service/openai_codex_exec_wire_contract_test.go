@@ -21,8 +21,7 @@ import (
 
 // Captured official Linux codex exec 0.158.0 requests use fake API-key auth
 // against a loopback mock. Replay their complete JSON through both OAuth gateway
-// paths, preserving fields except account-scoped identities and the explicitly
-// rejected ChatGPT input metadata from upstream issue #7066.
+// paths, preserving fields except account-scoped identities.
 // These fixtures prove body preservation, not OAuth TLS or compression equality.
 // Do not parallelize: the test temporarily pins the process-wide identity resolver.
 func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
