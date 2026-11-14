@@ -183,7 +183,8 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 					require.Equal(t, nativeHTTPTestCanonicalUA, upstream.lastReq.Header.Get("user-agent"))
 					var forwarded map[string]any
 					require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
-					items := forwarded["input"].([]any)
+					items, ok := forwarded["input"].([]any)
+					require.True(t, ok)
 					var reasoning map[string]any
 					var toolCall, toolOutput map[string]any
 					for _, raw := range items {
@@ -222,50 +223,69 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 						require.True(t, ok)
 						require.Equal(t, "message", developer["type"])
 						require.Equal(t, "developer", developer["role"])
-						require.Equal(t, "Synthetic harness regression",
-							developer["content"].([]any)[0].(map[string]any)["text"])
-						require.Equal(t, []any{"model.base_instructions"},
-							developer["internal_chat_message_metadata_passthrough"].(map[string]any)["content_item_kinds"])
+						content, ok := developer["content"].([]any)
+						require.True(t, ok)
+						part, ok := content[0].(map[string]any)
+						require.True(t, ok)
+						require.Equal(t, "Synthetic harness regression", part["text"])
+						metadata, ok := developer["internal_chat_message_metadata_passthrough"].(map[string]any)
+						require.True(t, ok)
+						require.Equal(t, []any{"model.base_instructions"}, metadata["content_item_kinds"])
+						carrierTools, ok := carrier["tools"].([]any)
+						require.True(t, ok)
 						var names []string
-						for _, rawTool := range carrier["tools"].([]any) {
-							tool, _ := rawTool.(map[string]any)
-							names = append(names, tool["type"].(string))
+						for _, rawTool := range carrierTools {
+							tool, ok := rawTool.(map[string]any)
+							require.True(t, ok)
+							toolType, ok := tool["type"].(string)
+							require.True(t, ok)
+							names = append(names, toolType)
 						}
 						require.Contains(t, names, "web_search")
 						require.Contains(t, names, "namespace")
 						require.Contains(t, names, "custom")
 						require.NotContains(t, names, "function")
 						var namespaceTools []any
-						for _, rawTool := range carrier["tools"].([]any) {
-							tool, _ := rawTool.(map[string]any)
+						for _, rawTool := range carrierTools {
+							tool, ok := rawTool.(map[string]any)
+							require.True(t, ok)
 							if tool["type"] == "namespace" {
-								namespaceTools, _ = tool["tools"].([]any)
+								namespaceTools, ok = tool["tools"].([]any)
+								require.True(t, ok)
 								break
 							}
 						}
 						require.NotNil(t, namespaceTools)
 						var namespaceTypes []string
 						for _, rawTool := range namespaceTools {
-							tool, _ := rawTool.(map[string]any)
-							namespaceTypes = append(namespaceTypes, tool["type"].(string))
+							tool, ok := rawTool.(map[string]any)
+							require.True(t, ok)
+							toolType, ok := tool["type"].(string)
+							require.True(t, ok)
+							namespaceTypes = append(namespaceTypes, toolType)
 						}
 						require.ElementsMatch(t, []string{"function", "custom"}, namespaceTypes)
 						return
 					}
 					require.Equal(t, "Synthetic harness regression", forwarded["instructions"])
-					tools := forwarded["tools"].([]any)
+					tools, ok := forwarded["tools"].([]any)
+					require.True(t, ok)
 					var names []string
 					for _, raw := range tools {
 						if _, ok := raw.(string); ok {
 							names = append(names, "custom")
 							continue
 						}
-						tool, _ := raw.(map[string]any)
-						names = append(names, tool["type"].(string))
+						tool, ok := raw.(map[string]any)
+						require.True(t, ok)
+						toolType, ok := tool["type"].(string)
+						require.True(t, ok)
+						names = append(names, toolType)
 					}
 					require.ElementsMatch(t, []string{"function", "custom", "custom", "web_search"}, names)
 					for _, raw := range items {
-						item, _ := raw.(map[string]any)
+						item, ok := raw.(map[string]any)
+						require.True(t, ok)
 						require.NotEqual(t, "additional_tools", item["type"])
 					}
 				})
@@ -427,10 +447,15 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			filtered := filterCodexInputWithOptions(input, codexInputFilterOptions{
 				PreserveReferences: true, PreserveCallIDs: true, HTTPPolicy: policy,
 			})
-			call := filtered[0].(map[string]any)["call_id"]
-			output := filtered[1].(map[string]any)
+			callItem, ok := filtered[0].(map[string]any)
+			require.True(t, ok)
+			call := callItem["call_id"]
+			output, ok := filtered[1].(map[string]any)
+			require.True(t, ok)
 			assert.Equal(t, call, output["call_id"])
-			assert.LessOrEqual(t, len(call.(string)), 64)
+			callString, ok := call.(string)
+			require.True(t, ok)
+			assert.LessOrEqual(t, len(callString), 64)
 			_, hasID := output["id"]
 			assert.Equal(t, native, hasID)
 			assert.NotContains(t, filtered[2], "id")
@@ -439,7 +464,9 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			if native {
 				ref = "call_previous"
 			}
-			assert.Equal(t, ref, filtered[4].(map[string]any)["id"])
+			reference, ok := filtered[4].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, ref, reference["id"])
 		})
 	}
 }
@@ -463,6 +490,8 @@ func TestCodexNativeHTTPPreservesReasoningItemExactly(t *testing.T) {
 	legacy := filterCodexInputWithOptions(input, codexInputFilterOptions{
 		PreserveReferences: true,
 	})
-	require.NotContains(t, legacy[0].(map[string]any), "id")
-	require.Equal(t, "gAAAAAB-enc-payload", legacy[0].(map[string]any)["encrypted_content"])
+	legacyReasoning, ok := legacy[0].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, legacyReasoning, "id")
+	require.Equal(t, "gAAAAAB-enc-payload", legacyReasoning["encrypted_content"])
 }
