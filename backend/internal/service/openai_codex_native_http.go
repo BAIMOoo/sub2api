@@ -18,6 +18,10 @@ func (policy codexHTTPPolicy) preservesCodexExec() bool {
 	return policy == codexHTTPExec
 }
 
+// parseNativeCodexHTTPClientIdentity recognizes a Codex harness from the
+// original HTTP User-Agent independently of ForceCodexCLI and mutable outbound
+// headers. Conflicting originator/version headers intentionally do not affect
+// recognition; outbound enforcement replaces them with the canonical identity.
 func parseNativeCodexHTTPClientIdentity(c *gin.Context, account *Account) (codexOutboundIdentity, string, bool) {
 	if c == nil || c.Request == nil || account == nil || !account.UsesOpenAICodexProtocol() ||
 		GetOpenAIClientTransport(c) != OpenAIClientTransportHTTP || isOpenAICompatMessagesBridgeContext(c) {
@@ -38,16 +42,6 @@ func parseNativeCodexHTTPClientIdentity(c *gin.Context, account *Account) (codex
 		return codexOutboundIdentity{}, "", false
 	}
 	return codexOutboundIdentity{userAgent: ua, originator: originator, version: version}, pairedUA, true
-}
-
-// nativeCodexHTTPClientIdentity recognizes a Codex harness from the original
-// HTTP User-Agent independently of ForceCodexCLI and the mutable outbound
-// headers. It intentionally ignores conflicting originator/version headers:
-// recognition selects the exec body contract, while outbound enforcement will
-// replace those headers with the canonical codex_exec identity.
-func nativeCodexHTTPClientIdentity(c *gin.Context, account *Account) (codexOutboundIdentity, bool) {
-	identity, _, ok := parseNativeCodexHTTPClientIdentity(c, account)
-	return identity, ok
 }
 
 // nativeCodexHTTPIdentity additionally requires consistent originator/version
@@ -73,7 +67,7 @@ func nativeCodexHTTPIdentity(c *gin.Context, account *Account) (codexOutboundIde
 }
 
 func nativeCodexHTTPPolicy(c *gin.Context, account *Account) codexHTTPPolicy {
-	if _, ok := nativeCodexHTTPClientIdentity(c, account); ok {
+	if _, _, ok := parseNativeCodexHTTPClientIdentity(c, account); ok {
 		return codexHTTPExec
 	}
 	return codexHTTPLegacy

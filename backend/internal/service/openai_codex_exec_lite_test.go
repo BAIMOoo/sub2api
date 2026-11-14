@@ -47,20 +47,21 @@ func TestCanonicalizeCodexExecLiteRequestMovesInstructionsAndAllToolsToPrefix(t 
 	require.Equal(t, "additional_tools", carrier["type"])
 	require.Equal(t, "at_existing", carrier["id"])
 	tools := carrier["tools"].([]any)
-	require.Len(t, tools, 3)
+	require.Len(t, tools, 2)
 	functionsNamespace := tools[0].(map[string]any)
 	require.Equal(t, "namespace", functionsNamespace["type"])
 	require.Equal(t, "functions", functionsNamespace["name"])
 	functionTools := functionsNamespace["tools"].([]any)
-	require.Len(t, functionTools, 5)
+	require.Len(t, functionTools, 6)
 	require.Equal(t, "existing", functionTools[0].(map[string]any)["name"])
 	require.Equal(t, "function", functionTools[1].(map[string]any)["type"])
 	require.Equal(t, "custom", functionTools[2].(map[string]any)["type"])
 	require.Equal(t, "tool_search", functionTools[3].(map[string]any)["type"])
 	require.NotContains(t, functionTools[4].(map[string]any), "function")
 	require.Equal(t, "nested", functionTools[4].(map[string]any)["name"])
+	require.Equal(t, "custom", functionTools[5].(map[string]any)["type"])
+	require.Equal(t, "custom shorthand", functionTools[5].(map[string]any)["name"])
 	require.Equal(t, "collaboration", tools[1].(map[string]any)["name"])
-	require.Equal(t, "custom shorthand", tools[2])
 
 	instructions := input[1].(map[string]any)
 	require.Equal(t, "message", instructions["type"])
@@ -185,6 +186,38 @@ func TestCanonicalizeCodexExecLiteRequestKeepsUndocumentedFunctionFlat(t *testin
 	require.Equal(t, "function", tools[0].(map[string]any)["type"])
 }
 
+func TestCanonicalizeCodexExecLiteRequestKeepsUnnamedCustomToolFlat(t *testing.T) {
+	reqBody := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "custom"},
+		},
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hello"},
+		},
+	}
+
+	changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	tools := reqBody["input"].([]any)[0].(map[string]any)["tools"].([]any)
+	require.Len(t, tools, 1)
+	require.Equal(t, "custom", tools[0].(map[string]any)["type"])
+}
+
+func TestCanonicalizeCodexExecLiteRequestRejectsEmptyCustomShorthand(t *testing.T) {
+	reqBody := map[string]any{
+		"tools": []any{""},
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hello"},
+		},
+	}
+
+	changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+	require.ErrorContains(t, err, "custom tool must not be empty")
+	require.False(t, changed)
+}
+
 func TestCanonicalizeCodexExecLiteRequestReusesExistingFunctionsNamespace(t *testing.T) {
 	reqBody := map[string]any{
 		"tools": []any{
@@ -226,6 +259,74 @@ func TestCanonicalizeCodexExecLiteRequestReusesExistingFunctionsNamespace(t *tes
 	require.Len(t, namespaceTools, 2)
 	require.Equal(t, "existing_tool", namespaceTools[0].(map[string]any)["name"])
 	require.Equal(t, "new_tool", namespaceTools[1].(map[string]any)["name"])
+}
+
+func TestCanonicalizeCodexExecLiteRequestNormalizesFunctionsNamespaceChildren(t *testing.T) {
+	reqBody := map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "function", "name": "new_tool", "description": "New tool",
+			},
+		},
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace", "name": "functions",
+						"children": []any{
+							map[string]any{
+								"type": "function",
+								"function": map[string]any{
+									"name": "nested", "description": "Nested tool",
+								},
+							},
+						},
+					},
+				},
+			},
+			map[string]any{"type": "message", "role": "user", "content": "hello"},
+		},
+	}
+
+	changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	input := reqBody["input"].([]any)
+	namespace := input[0].(map[string]any)["tools"].([]any)[0].(map[string]any)
+	require.NotContains(t, namespace, "children")
+	namespaceTools := namespace["tools"].([]any)
+	require.Len(t, namespaceTools, 2)
+	require.NotContains(t, namespaceTools[0].(map[string]any), "function")
+	require.Equal(t, "nested", namespaceTools[0].(map[string]any)["name"])
+	require.Equal(t, "new_tool", namespaceTools[1].(map[string]any)["name"])
+}
+
+func TestCanonicalizeCodexExecLiteRequestConvertsEmptyChildrenToToolsArray(t *testing.T) {
+	reqBody := map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "additional_tools",
+				"tools": []any{
+					map[string]any{
+						"type": "namespace", "name": "functions", "children": []any{},
+					},
+				},
+			},
+		},
+	}
+
+	changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	namespace := reqBody["input"].([]any)[0].(map[string]any)["tools"].([]any)[0].(map[string]any)
+	tools, ok := namespace["tools"].([]any)
+	require.True(t, ok)
+	require.NotNil(t, tools)
+	require.Empty(t, tools)
+	require.NotContains(t, namespace, "children")
 }
 
 func TestCanonicalizeCodexExecLiteRequestMergesMovedFunctionsNamespace(t *testing.T) {

@@ -108,10 +108,14 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 	pinNativeHTTPTestIdentity(t)
 	body, err := json.Marshal(map[string]any{
 		"model": "gpt-6-astra", "stream": true, "instructions": "Synthetic harness regression",
-		"tools": []any{map[string]any{
-			"type": "function", "name": "echo", "description": "Echo input",
-			"parameters": map[string]any{"type": "object", "properties": map[string]any{}},
-		}},
+		"tools": []any{
+			map[string]any{
+				"type": "function", "name": "echo", "description": "Echo input",
+				"parameters": map[string]any{"type": "object", "properties": map[string]any{}},
+			},
+			"exec shorthand",
+			map[string]any{"type": "custom"},
+		},
 		"tool_choice": "auto",
 		"input": []any{
 			map[string]any{
@@ -229,17 +233,37 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 						}
 						require.Contains(t, names, "web_search")
 						require.Contains(t, names, "namespace")
+						require.Contains(t, names, "custom")
 						require.NotContains(t, names, "function")
+						var namespaceTools []any
+						for _, rawTool := range carrier["tools"].([]any) {
+							tool, _ := rawTool.(map[string]any)
+							if tool["type"] == "namespace" {
+								namespaceTools, _ = tool["tools"].([]any)
+								break
+							}
+						}
+						require.NotNil(t, namespaceTools)
+						var namespaceTypes []string
+						for _, rawTool := range namespaceTools {
+							tool, _ := rawTool.(map[string]any)
+							namespaceTypes = append(namespaceTypes, tool["type"].(string))
+						}
+						require.ElementsMatch(t, []string{"function", "custom"}, namespaceTypes)
 						return
 					}
 					require.Equal(t, "Synthetic harness regression", forwarded["instructions"])
 					tools := forwarded["tools"].([]any)
 					var names []string
 					for _, raw := range tools {
+						if _, ok := raw.(string); ok {
+							names = append(names, "custom")
+							continue
+						}
 						tool, _ := raw.(map[string]any)
 						names = append(names, tool["type"].(string))
 					}
-					require.ElementsMatch(t, []string{"function", "web_search"}, names)
+					require.ElementsMatch(t, []string{"function", "custom", "custom", "web_search"}, names)
 					for _, raw := range items {
 						item, _ := raw.(map[string]any)
 						require.NotEqual(t, "additional_tools", item["type"])

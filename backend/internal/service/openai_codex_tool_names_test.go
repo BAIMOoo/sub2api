@@ -134,6 +134,45 @@ func TestAliasOpenAIOAuthReservedToolNames_SessionUpdateOnlyTouchesFunctionProto
 	require.Equal(t, "900719925474099312345", gjson.GetBytes(aliased, "sequence").Raw)
 }
 
+func TestAliasOpenAIOAuthReservedToolNames_LeavesNamespaceChildren(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"namespace","name":"functions","children":[{"type":"function","name":"python"}]}]}`)
+
+	aliased, reverse, changed, err := aliasOpenAIOAuthReservedToolNamesBody(body)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Empty(t, reverse)
+	require.Equal(t, "python", gjson.GetBytes(aliased, "tools.0.children.0.name").String())
+}
+
+func TestApplyCodexOAuthTransform_AliasesLiteChildrenNamespace(t *testing.T) {
+	reqBody := map[string]any{
+		"tools": []any{
+			map[string]any{
+				"type": "namespace", "name": "functions",
+				"children": []any{
+					map[string]any{"type": "function", "name": "python"},
+				},
+			},
+		},
+		"input": "hello",
+	}
+
+	result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+		HTTPPolicy:              codexHTTPExec,
+		ResponsesLite:           true,
+		SkipDefaultInstructions: true,
+	})
+
+	require.NoError(t, result.Error)
+	require.True(t, result.Modified)
+	require.Equal(t, "python", result.ToolNameReverse[codexPythonToolAlias])
+	input := reqBody["input"].([]any)
+	carrier := input[0].(map[string]any)
+	namespace := carrier["tools"].([]any)[0].(map[string]any)
+	require.NotContains(t, namespace, "children")
+	require.Equal(t, codexPythonToolAlias, namespace["tools"].([]any)[0].(map[string]any)["name"])
+}
+
 func TestRestoreCodexToolNamesInJSON_OnlyTouchesResponseToolCallNodesAndPreservesNumbers(t *testing.T) {
 	reverse := map[string]string{codexPythonToolAlias: "python"}
 	body := []byte(`{"type":"response.completed","response":{"output":[{"type":"function_call","name":"python__sub2api"},{"type":"message","name":"python__sub2api","content":[]}]},"metadata":{"name":"python__sub2api"},"sequence":900719925474099312345}`)

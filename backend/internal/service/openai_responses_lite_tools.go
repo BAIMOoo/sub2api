@@ -17,6 +17,28 @@ func newOpenAIResponsesLiteValidationError(param, format string, args ...any) er
 	return &openAIResponsesLiteValidationError{param: param, message: fmt.Sprintf(format, args...)}
 }
 
+type openAIResponsesLiteToolKind uint8
+
+const (
+	openAIResponsesLiteToolInvalid openAIResponsesLiteToolKind = iota
+	openAIResponsesLiteToolWorkspace
+	openAIResponsesLiteToolNamespace
+	openAIResponsesLiteToolUnsupported
+)
+
+func classifyOpenAIResponsesLiteTool(tool map[string]any) openAIResponsesLiteToolKind {
+	switch strings.TrimSpace(firstNonEmptyString(tool["type"])) {
+	case "function", "custom", "tool_search":
+		return openAIResponsesLiteToolWorkspace
+	case "namespace":
+		return openAIResponsesLiteToolNamespace
+	case "":
+		return openAIResponsesLiteToolInvalid
+	default:
+		return openAIResponsesLiteToolUnsupported
+	}
+}
+
 // normalizeOpenAIResponsesLiteTools applies the Responses Lite request
 // contract: reasoning must cover all turns, and private namespace declarations
 // use the input.additional_tools carrier. Other top-level tools must belong to
@@ -64,12 +86,12 @@ func normalizeOpenAIResponsesLiteTools(reqBody map[string]any) (bool, error) {
 			return false, fmt.Errorf("responses Lite tool at index %d must be an object", index)
 		}
 		toolType := strings.TrimSpace(firstNonEmptyString(tool["type"]))
-		switch toolType {
-		case "function", "custom", "tool_search":
+		switch classifyOpenAIResponsesLiteTool(tool) {
+		case openAIResponsesLiteToolWorkspace:
 			topLevelTools = append(topLevelTools, rawTool)
-		case "namespace":
+		case openAIResponsesLiteToolNamespace:
 			namespaceTools = append(namespaceTools, rawTool)
-		case "":
+		case openAIResponsesLiteToolInvalid:
 			return false, fmt.Errorf("responses Lite tool at index %d is missing type", index)
 		default:
 			return false, fmt.Errorf("responses Lite does not support top-level tool type %q at index %d", toolType, index)

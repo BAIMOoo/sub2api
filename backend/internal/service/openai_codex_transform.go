@@ -280,6 +280,19 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if normalizeCodexTools(reqBody) {
 		result.Modified = true
 	}
+	if opts.HTTPPolicy.preservesCodexExec() && opts.ResponsesLite && !opts.IsCompact {
+		if normalizeOpenAIResponsesStringInput(reqBody) {
+			result.Modified = true
+		}
+		canonicalized, err := canonicalizeCodexExecLiteTools(reqBody)
+		if err != nil {
+			result.Error = err
+			return result
+		}
+		if canonicalized {
+			result.Modified = true
+		}
+	}
 	// Collect aliases only after prompt/functions/function_call compatibility
 	// has produced the final Responses protocol nodes. Otherwise references
 	// introduced by those migrations can retain the reserved name.
@@ -346,21 +359,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		})
 		reqBody["input"] = input
 		result.Modified = true
-	} else if inputStr, ok := reqBody["input"].(string); ok {
+	} else if normalizeOpenAIResponsesStringInput(reqBody) {
 		// ChatGPT codex endpoint requires input to be a list, not a string.
 		// Convert string input to the expected message array format.
-		trimmed := strings.TrimSpace(inputStr)
-		if trimmed != "" {
-			reqBody["input"] = []any{
-				map[string]any{
-					"type":    "message",
-					"role":    "user",
-					"content": inputStr,
-				},
-			}
-		} else {
-			reqBody["input"] = []any{}
-		}
 		result.Modified = true
 	}
 
@@ -371,6 +372,25 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	}
 
 	return result
+}
+
+func normalizeOpenAIResponsesStringInput(reqBody map[string]any) bool {
+	input, ok := reqBody["input"].(string)
+	if !ok {
+		return false
+	}
+	if strings.TrimSpace(input) == "" {
+		reqBody["input"] = []any{}
+		return true
+	}
+	reqBody["input"] = []any{
+		map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": input,
+		},
+	}
+	return true
 }
 
 func normalizeCodexToolChoice(reqBody map[string]any) bool {

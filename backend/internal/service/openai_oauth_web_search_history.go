@@ -42,7 +42,7 @@ func newOpenAIWebSearchHistoryScan() openAIWebSearchHistoryScan {
 	return openAIWebSearchHistoryScan{additionalToolsIndex: -1}
 }
 
-func (scan *openAIWebSearchHistoryScan) observeItem(
+func (scan *openAIWebSearchHistoryScan) recordItemAndReportAlreadyDeclared(
 	index int,
 	itemType string,
 	responsesLite bool,
@@ -54,7 +54,7 @@ func (scan *openAIWebSearchHistoryScan) observeItem(
 		scan.hasWebSearchCall = true
 	case openAIAdditionalToolsItemType:
 		if responsesLite && itemHasWebSearch {
-			return false
+			return true
 		}
 		if responsesLite && itemToolCount > 0 {
 			scan.callerDeclaredTools = true
@@ -63,7 +63,7 @@ func (scan *openAIWebSearchHistoryScan) observeItem(
 			scan.additionalToolsIndex = index
 		}
 	}
-	return true
+	return false
 }
 
 func isOpenAIWebSearchToolType(toolType string) bool {
@@ -116,7 +116,7 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 			continue
 		}
 		tools, _ := item["tools"].([]any)
-		if !scan.observeItem(
+		if scan.recordItemAndReportAlreadyDeclared(
 			i,
 			firstNonEmptyString(item["type"]),
 			responsesLite,
@@ -184,7 +184,7 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 		if itemTools.IsArray() {
 			itemToolCount = len(itemTools.Array())
 		}
-		if !scan.observeItem(
+		if scan.recordItemAndReportAlreadyDeclared(
 			i,
 			item.Get("type").String(),
 			responsesLite,

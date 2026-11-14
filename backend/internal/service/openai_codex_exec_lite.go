@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -63,13 +64,13 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 		existingTools = append(existingTools, itemTools...)
 	}
 
-	if !hasTopLevelTools && carrier != nil && carrierIndex == 0 && carrierCount == 1 &&
-		!codexExecLiteAdditionalToolsNeedCanonicalization(existingTools) {
-		return false, nil
-	}
-	mergedTools, err := canonicalizeCodexExecLiteAdditionalTools(existingTools, topLevelTools)
+	mergedTools, toolsChanged, err := canonicalizeCodexExecLiteAdditionalTools(existingTools, topLevelTools)
 	if err != nil {
 		return false, err
+	}
+	if !hasTopLevelTools &&
+		(carrier == nil || carrierIndex == 0 && carrierCount == 1 && !toolsChanged) {
+		return false, nil
 	}
 	delete(reqBody, "tools")
 	if carrier == nil && len(topLevelTools) == 0 {
@@ -86,7 +87,8 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 	return true, nil
 }
 
-func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]any, error) {
+func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]any, bool, error) {
+	changed := len(moved) > 0
 	allTools := make([]any, 0, len(existing)+len(moved))
 	allTools = append(allTools, existing...)
 	allTools = append(allTools, moved...)
@@ -95,8 +97,14 @@ func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]an
 	namespaceTools := make([]any, 0)
 	var functionsNamespace map[string]any
 	functionsNamespaceIndex := -1
+	functionsNamespaceCount := 0
 	for _, rawTool := range allTools {
-		if tool, ok := canonicalizeCodexExecLiteNamespaceTool(rawTool); ok {
+		tool, ok, err := canonicalizeCodexExecLiteNamespaceTool(rawTool)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			changed = true
 			if functionsNamespaceIndex < 0 {
 				functionsNamespaceIndex = len(directTools)
 			}
@@ -104,24 +112,50 @@ func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]an
 			continue
 		}
 		if tool, ok := rawTool.(map[string]any); ok && isCodexFunctionsNamespace(tool) {
+			functionsNamespaceCount++
+			if functionsNamespaceCount > 1 {
+				changed = true
+			}
+			if _, hasChildren := tool["children"]; hasChildren {
+				changed = true
+			}
 			if functionsNamespaceIndex < 0 {
 				functionsNamespaceIndex = len(directTools)
 			}
 			if functionsNamespace == nil {
 				functionsNamespace = tool
 			}
-			if rawNamespaceTools, exists := tool["tools"]; exists && rawNamespaceTools != nil {
-				toolList, ok := rawNamespaceTools.([]any)
-				if !ok {
-					return nil, fmt.Errorf("codex exec Lite functions namespace tools must be an array")
+			toolList, err := codexExecLiteFunctionsNamespaceTools(tool)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, child := range toolList {
+				normalized, ok, err := canonicalizeCodexExecLiteNamespaceTool(child)
+				if err != nil {
+					return nil, false, err
 				}
-				namespaceTools = append(namespaceTools, toolList...)
+				if ok {
+					if !reflect.DeepEqual(child, normalized) {
+						changed = true
+					}
+					child = normalized
+				}
+				namespaceTools = append(namespaceTools, child)
 			}
 			continue
 		}
 		directTools = append(directTools, rawTool)
 	}
 
+	if !changed {
+		if _, err := mergeOpenAIResponsesLiteAdditionalTools(nil, namespaceTools); err != nil {
+			return nil, false, err
+		}
+		if _, err := mergeOpenAIResponsesLiteAdditionalTools(nil, directTools); err != nil {
+			return nil, false, err
+		}
+		return allTools, false, nil
+	}
 	if functionsNamespaceIndex >= 0 {
 		if functionsNamespace == nil {
 			functionsNamespace = map[string]any{
@@ -132,25 +166,44 @@ func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]an
 		}
 		mergedNamespaceTools, err := mergeOpenAIResponsesLiteAdditionalTools(nil, namespaceTools)
 		if err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		if mergedNamespaceTools == nil {
+			mergedNamespaceTools = []any{}
 		}
 		functionsNamespace["tools"] = mergedNamespaceTools
+		delete(functionsNamespace, "children")
 		next := make([]any, 0, len(directTools)+1)
 		next = append(next, directTools[:functionsNamespaceIndex]...)
 		next = append(next, functionsNamespace)
 		next = append(next, directTools[functionsNamespaceIndex:]...)
 		directTools = next
 	}
-	return mergeOpenAIResponsesLiteAdditionalTools(nil, directTools)
+	mergedDirectTools, err := mergeOpenAIResponsesLiteAdditionalTools(nil, directTools)
+	if err != nil {
+		return nil, false, err
+	}
+	return mergedDirectTools, true, nil
 }
 
-func codexExecLiteAdditionalToolsNeedCanonicalization(tools []any) bool {
-	for _, rawTool := range tools {
-		if _, ok := canonicalizeCodexExecLiteNamespaceTool(rawTool); ok {
-			return true
-		}
+func codexExecLiteFunctionsNamespaceTools(namespace map[string]any) ([]any, error) {
+	rawTools, hasTools := namespace["tools"]
+	rawChildren, hasChildren := namespace["children"]
+	if hasTools && rawTools != nil && hasChildren && rawChildren != nil {
+		return nil, fmt.Errorf("codex exec Lite functions namespace must use exactly one of tools or children")
 	}
-	return false
+	rawList := rawTools
+	if hasChildren && rawChildren != nil {
+		rawList = rawChildren
+	}
+	if rawList == nil {
+		return nil, nil
+	}
+	toolList, ok := rawList.([]any)
+	if !ok {
+		return nil, fmt.Errorf("codex exec Lite functions namespace tools must be an array")
+	}
+	return toolList, nil
 }
 
 func isCodexFunctionsNamespace(tool map[string]any) bool {
@@ -158,12 +211,23 @@ func isCodexFunctionsNamespace(tool map[string]any) bool {
 		strings.TrimSpace(firstNonEmptyString(tool["name"])) == codexAdditionalToolsNamespaceName
 }
 
-func canonicalizeCodexExecLiteNamespaceTool(rawTool any) (any, bool) {
+func canonicalizeCodexExecLiteNamespaceTool(rawTool any) (any, bool, error) {
+	if customTool, ok := rawTool.(string); ok {
+		name := strings.TrimSpace(customTool)
+		if name == "" {
+			return nil, false, fmt.Errorf("codex exec Lite custom tool must not be empty")
+		}
+		return map[string]any{"type": "custom", "name": name}, true, nil
+	}
 	tool, ok := rawTool.(map[string]any)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
-	switch strings.TrimSpace(firstNonEmptyString(tool["type"])) {
+	if classifyOpenAIResponsesLiteTool(tool) != openAIResponsesLiteToolWorkspace {
+		return nil, false, nil
+	}
+	toolType := strings.TrimSpace(firstNonEmptyString(tool["type"]))
+	switch toolType {
 	case "function":
 		nested, hasNested := tool["function"].(map[string]any)
 		if hasNested {
@@ -180,16 +244,14 @@ func canonicalizeCodexExecLiteNamespaceTool(rawTool any) (any, bool) {
 			flattened["type"] = "function"
 			tool = flattened
 		}
-	case "custom", "tool_search":
-		return tool, true
-	default:
-		return nil, false
 	}
-	if strings.TrimSpace(firstNonEmptyString(tool["name"])) == "" ||
-		strings.TrimSpace(firstNonEmptyString(tool["description"])) == "" {
-		return nil, false
+	if toolType != "tool_search" && strings.TrimSpace(firstNonEmptyString(tool["name"])) == "" {
+		return nil, false, nil
 	}
-	return tool, true
+	if toolType == "function" && strings.TrimSpace(firstNonEmptyString(tool["description"])) == "" {
+		return nil, false, nil
+	}
+	return tool, true, nil
 }
 
 func promoteCodexInstructionsToDeveloperInput(reqBody map[string]any) bool {

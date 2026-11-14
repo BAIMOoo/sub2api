@@ -167,6 +167,18 @@ func TestNormalizeOpenAIResponsesLiteTools_KeepsSupportedTopLevelTools(t *testin
 	require.Equal(t, false, reqBody["parallel_tool_calls"])
 }
 
+func TestNormalizeOpenAIResponsesLiteTools_RejectsEmptyCustomShorthand(t *testing.T) {
+	reqBody := map[string]any{
+		"reasoning": map[string]any{"context": "all_turns"},
+		"tools":     []any{""},
+	}
+
+	changed, err := normalizeOpenAIResponsesLiteTools(reqBody)
+
+	require.ErrorContains(t, err, "custom tool at index 0 must not be empty")
+	require.False(t, changed)
+}
+
 func TestNormalizeOpenAIResponsesLiteTools_ForcesParallelToolCallsFalse(t *testing.T) {
 	tests := []struct {
 		name string
