@@ -94,18 +94,18 @@ func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]an
 	directTools := make([]any, 0, len(allTools))
 	namespaceTools := make([]any, 0)
 	var functionsNamespace map[string]any
-	functionsNamespaceAt := -1
+	functionsNamespaceIndex := -1
 	for _, rawTool := range allTools {
 		if tool, ok := canonicalizeCodexExecLiteNamespaceTool(rawTool); ok {
-			if functionsNamespaceAt < 0 {
-				functionsNamespaceAt = len(directTools)
+			if functionsNamespaceIndex < 0 {
+				functionsNamespaceIndex = len(directTools)
 			}
 			namespaceTools = append(namespaceTools, tool)
 			continue
 		}
 		if tool, ok := rawTool.(map[string]any); ok && isCodexFunctionsNamespace(tool) {
-			if functionsNamespaceAt < 0 {
-				functionsNamespaceAt = len(directTools)
+			if functionsNamespaceIndex < 0 {
+				functionsNamespaceIndex = len(directTools)
 			}
 			if functionsNamespace == nil {
 				functionsNamespace = tool
@@ -122,7 +122,7 @@ func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]an
 		directTools = append(directTools, rawTool)
 	}
 
-	if functionsNamespaceAt >= 0 {
+	if functionsNamespaceIndex >= 0 {
 		if functionsNamespace == nil {
 			functionsNamespace = map[string]any{
 				"type":        "namespace",
@@ -136,9 +136,9 @@ func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]an
 		}
 		functionsNamespace["tools"] = mergedNamespaceTools
 		next := make([]any, 0, len(directTools)+1)
-		next = append(next, directTools[:functionsNamespaceAt]...)
+		next = append(next, directTools[:functionsNamespaceIndex]...)
 		next = append(next, functionsNamespace)
-		next = append(next, directTools[functionsNamespaceAt:]...)
+		next = append(next, directTools[functionsNamespaceIndex:]...)
 		directTools = next
 	}
 	return mergeOpenAIResponsesLiteAdditionalTools(nil, directTools)
@@ -211,8 +211,7 @@ func promoteCodexInstructionsToDeveloperInput(reqBody map[string]any) bool {
 		if !ok || !isCodexExecLiteBaseInstructionsMessage(item) {
 			continue
 		}
-		if !codexMessageContainsInputText(item, instructions) &&
-			!appendCodexMessageInputText(item, instructions) {
+		if !ensureCodexMessageInputText(item, instructions) {
 			return false
 		}
 		delete(reqBody, "instructions")
@@ -261,10 +260,16 @@ func isCodexExecLiteBaseInstructionsMessage(item map[string]any) bool {
 	return false
 }
 
-func codexMessageContainsInputText(item map[string]any, text string) bool {
+func ensureCodexMessageInputText(item map[string]any, text string) bool {
 	switch content := item["content"].(type) {
 	case string:
-		return content == text
+		if content == text {
+			return true
+		}
+		item["content"] = []any{
+			map[string]any{"type": "input_text", "text": content},
+			map[string]any{"type": "input_text", "text": text},
+		}
 	case []any:
 		for _, rawPart := range content {
 			part, ok := rawPart.(map[string]any)
@@ -273,39 +278,18 @@ func codexMessageContainsInputText(item map[string]any, text string) bool {
 				return true
 			}
 		}
-	}
-	return false
-}
-
-func appendCodexMessageInputText(item map[string]any, text string) bool {
-	part := map[string]any{"type": "input_text", "text": text}
-	switch content := item["content"].(type) {
+		item["content"] = append(content, map[string]any{"type": "input_text", "text": text})
 	case nil:
-		item["content"] = []any{part}
-	case string:
-		if content == text {
-			return true
-		}
-		item["content"] = []any{
-			map[string]any{"type": "input_text", "text": content},
-			part,
-		}
-	case []any:
-		item["content"] = append(content, part)
+		item["content"] = []any{map[string]any{"type": "input_text", "text": text}}
 	default:
 		return false
 	}
-	appendCodexBaseInstructionContentKind(item)
-	return true
-}
-
-func appendCodexBaseInstructionContentKind(item map[string]any) {
 	metadata, _ := item[openAIOAuthInputMetadataField].(map[string]any)
-	if metadata == nil {
-		return
+	if metadata != nil {
+		kinds, _ := metadata["content_item_kinds"].([]any)
+		metadata["content_item_kinds"] = append(kinds, "model.base_instructions")
 	}
-	kinds, _ := metadata["content_item_kinds"].([]any)
-	metadata["content_item_kinds"] = append(kinds, "model.base_instructions")
+	return true
 }
 
 func canonicalizeCodexExecLiteBody(body []byte) ([]byte, bool, error) {

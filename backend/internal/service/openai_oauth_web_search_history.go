@@ -33,23 +33,13 @@ var openAIWebSearchHistoryTool = map[string]any{
 }
 
 type openAIWebSearchHistoryScan struct {
-	hasWebSearchCall    bool
-	callerDeclaredTools bool
-	additionalToolsAt   int
+	hasWebSearchCall     bool
+	callerDeclaredTools  bool
+	additionalToolsIndex int
 }
 
-type openAIWebSearchHistoryInjection uint8
-
-const (
-	openAIWebSearchAppendTopLevel openAIWebSearchHistoryInjection = iota
-	openAIWebSearchCreateTopLevel
-	openAIWebSearchAppendAdditional
-	openAIWebSearchCreateAdditional
-	openAIWebSearchCreateAdditionalPrefix
-)
-
 func newOpenAIWebSearchHistoryScan() openAIWebSearchHistoryScan {
-	return openAIWebSearchHistoryScan{additionalToolsAt: -1}
+	return openAIWebSearchHistoryScan{additionalToolsIndex: -1}
 }
 
 func (scan *openAIWebSearchHistoryScan) observeItem(
@@ -69,32 +59,11 @@ func (scan *openAIWebSearchHistoryScan) observeItem(
 		if responsesLite && itemToolCount > 0 {
 			scan.callerDeclaredTools = true
 		}
-		if scan.additionalToolsAt < 0 {
-			scan.additionalToolsAt = index
+		if scan.additionalToolsIndex < 0 {
+			scan.additionalToolsIndex = index
 		}
 	}
 	return true
-}
-
-func (scan openAIWebSearchHistoryScan) injectionPlan(
-	responsesLite bool,
-	hasTopLevelTools bool,
-	additionalToolsArray bool,
-) openAIWebSearchHistoryInjection {
-	if !responsesLite {
-		if hasTopLevelTools {
-			return openAIWebSearchAppendTopLevel
-		}
-		return openAIWebSearchCreateTopLevel
-	}
-	switch {
-	case scan.additionalToolsAt < 0:
-		return openAIWebSearchCreateAdditionalPrefix
-	case additionalToolsArray:
-		return openAIWebSearchAppendAdditional
-	default:
-		return openAIWebSearchCreateAdditional
-	}
 }
 
 func isOpenAIWebSearchToolType(toolType string) bool {
@@ -162,25 +131,19 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 	}
 	tools, _ := reqBody["tools"].([]any)
 	scan.callerDeclaredTools = scan.callerDeclaredTools || len(tools) > 0
-	additionalToolsArray := false
-	if scan.additionalToolsAt >= 0 {
-		item, _ := input[scan.additionalToolsAt].(map[string]any)
-		_, additionalToolsArray = item["tools"].([]any)
-	}
-	switch scan.injectionPlan(responsesLite, len(tools) > 0, additionalToolsArray) {
-	case openAIWebSearchAppendTopLevel:
+
+	switch {
+	case !responsesLite:
 		reqBody["tools"] = append(tools, cloneOpenAIWebSearchHistoryTool())
-	case openAIWebSearchCreateTopLevel:
-		reqBody["tools"] = []any{cloneOpenAIWebSearchHistoryTool()}
-	case openAIWebSearchAppendAdditional:
+	case scan.additionalToolsIndex >= 0:
 		// additionalToolsIndex is only recorded for map items.
-		item, _ := input[scan.additionalToolsAt].(map[string]any)
-		existing, _ := item["tools"].([]any)
-		item["tools"] = append(existing, cloneOpenAIWebSearchHistoryTool())
-	case openAIWebSearchCreateAdditional:
-		item, _ := input[scan.additionalToolsAt].(map[string]any)
-		item["tools"] = []any{cloneOpenAIWebSearchHistoryTool()}
-	case openAIWebSearchCreateAdditionalPrefix:
+		item, _ := input[scan.additionalToolsIndex].(map[string]any)
+		if existing, ok := item["tools"].([]any); ok {
+			item["tools"] = append(existing, cloneOpenAIWebSearchHistoryTool())
+		} else {
+			item["tools"] = []any{cloneOpenAIWebSearchHistoryTool()}
+		}
+	default:
 		// Lite declarations belong in the input prefix. A trailing compaction
 		// trigger remains last because the new item is inserted at index zero.
 		at := 0
@@ -240,23 +203,21 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 	}
 	topLevelTools := tools.IsArray() && len(tools.Array()) > 0
 	scan.callerDeclaredTools = scan.callerDeclaredTools || topLevelTools
-	additionalToolsArray := scan.additionalToolsAt >= 0 &&
-		items[scan.additionalToolsAt].Get("tools").IsArray()
 
 	var (
 		next []byte
 		err  error
 	)
-	switch scan.injectionPlan(responsesLite, topLevelTools, additionalToolsArray) {
-	case openAIWebSearchAppendTopLevel:
+	switch {
+	case !responsesLite && topLevelTools:
 		next, err = sjson.SetBytes(body, "tools.-1", cloneOpenAIWebSearchHistoryTool())
-	case openAIWebSearchCreateTopLevel:
+	case !responsesLite:
 		next, err = sjson.SetBytes(body, "tools", []any{cloneOpenAIWebSearchHistoryTool()})
-	case openAIWebSearchAppendAdditional:
-		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools.-1", scan.additionalToolsAt), cloneOpenAIWebSearchHistoryTool())
-	case openAIWebSearchCreateAdditional:
-		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools", scan.additionalToolsAt), []any{cloneOpenAIWebSearchHistoryTool()})
-	case openAIWebSearchCreateAdditionalPrefix:
+	case scan.additionalToolsIndex >= 0 && items[scan.additionalToolsIndex].Get("tools").IsArray():
+		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools.-1", scan.additionalToolsIndex), cloneOpenAIWebSearchHistoryTool())
+	case scan.additionalToolsIndex >= 0:
+		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools", scan.additionalToolsIndex), []any{cloneOpenAIWebSearchHistoryTool()})
+	default:
 		// Lite declarations belong in the input prefix.
 		next, err = insertOpenAIAdditionalToolsItemRaw(body, items, 0)
 	}
