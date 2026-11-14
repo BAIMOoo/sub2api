@@ -85,11 +85,20 @@ def field_presence_direction(contexts):
     return 'different'
 
 
+def describe_field_presence(contexts, official_only, gateway_only, different):
+    return {
+        'official_only': official_only,
+        'gateway_only': gateway_only,
+        'different': different,
+    }[field_presence_direction(contexts)]
+
+
 def notification_signature(report):
     fields = {'body_diff', 'body_diff_details', 'header_contract_diff', 'tls_diff', 'identity_failures', 'reason',
               'header_order_equal', 'compression_equal', 'provider_verified'}
     return {'findings': report.get('findings', []), 'scenarios': [
-        {'name': row['name'], 'status': row['status'], 'alignment_status': row.get('alignment_status'),
+        {'name': row['name'], 'status': row['status'],
+         'request_alignment_status': row.get('request_alignment_status'),
          'reasoning_replay_observed': row.get('reasoning_replay_observed'),
          'violations': row.get('violations', []),
          'diffs': [{k: v for k, v in item.items() if k in fields} for item in row.get('replays', [])]}
@@ -237,16 +246,15 @@ def document(report):
             match = re.search(r'\.input\[(\d+)\]', path)
             if match:
                 indexes.add(int(match.group(1)))
-        direction = field_presence_direction(context for _, context in reasoning_ids)
-        if direction == 'official_only':
-            direction = '官方 codex exec 保留该字段，当前生产请求删除该字段'
-        elif direction == 'gateway_only':
-            direction = '当前生产请求额外保留了该字段，官方 codex exec 没有'
-        else:
-            direction = '两侧都存在该字段，但内容或结构不一致'
+        explanation = describe_field_presence(
+            (context for _, context in reasoning_ids),
+            '官方 codex exec 保留该字段，当前生产请求删除该字段',
+            '当前生产请求额外保留了该字段，官方 codex exec 没有',
+            '两侧都存在该字段，但内容或结构不一致',
+        )
         explanations.append(
             '输入条目的 reasoning id 在一侧缺失：涉及第 ' +
-            '、'.join(str(index) for index in sorted(indexes)) + ' 项（从 0 开始计数）；' + direction + '；'
+            '、'.join(str(index) for index in sorted(indexes)) + ' 项（从 0 开始计数）；' + explanation + '；'
             '需要确认这是有意兼容改写，还是应当逐字节透传。')
     elif any(re.search(r'\.input\[\d+\]\.id:missing$', p) for p in paths):
         explanations.append('输入条目的 id 在一侧缺失：一个请求保留了条目标识，另一个没有；需要核对是否影响条目的保留或关联。')
@@ -254,16 +262,15 @@ def document(report):
                          for context in contexts.values()
                          if context.get('field') == 'internal_chat_message_metadata_passthrough']
     if metadata_contexts:
-        direction = field_presence_direction(context for _, context in metadata_contexts)
-        if direction == 'official_only':
-            direction = ('官方 codex exec 包含该字段，当前生产转发删除了它；'
-                         '严格对齐时应保留，除非有经过验证的上游拒绝证据。')
-        elif direction == 'gateway_only':
-            direction = ('当前生产请求额外保留了该字段，官方 codex exec 没有；'
-                         '需确认该字段从上游发起是否已被接受。')
-        else:
-            direction = '两侧都存在该字段，但内容或结构不一致。'
-        explanations.append('输入条目的内部消息元数据字段在一侧缺失：' + direction)
+        explanation = describe_field_presence(
+            (context for _, context in metadata_contexts),
+            ('官方 codex exec 包含该字段，当前生产转发删除了它；'
+             '严格对齐时应保留，除非有经过验证的上游拒绝证据。'),
+            ('当前生产请求额外保留了该字段，官方 codex exec 没有；'
+             '需确认该字段从上游发起是否已被接受。'),
+            '两侧都存在该字段，但内容或结构不一致。',
+        )
+        explanations.append('输入条目的内部消息元数据字段在一侧缺失：' + explanation)
     if any(kind == 'tls_diff' for kind, _ in details):
         explanations.append('加密连接（TLS）检查有差异或缺少证据：这项比较的是连接建立时的特征，与模型能否正常回答分别判断。')
     if any(kind == 'identity_failures' for kind, _ in details):

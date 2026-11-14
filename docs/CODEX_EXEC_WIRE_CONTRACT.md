@@ -26,7 +26,7 @@
 - compact 有独立协议约定，不能套用主 Responses 的工具搬迁与头序规则。
 - 账号与 API Key 作用域化继续处理会话标识；比较时核对格式和跨字段关联关系，鉴权值、会话值和随机材料不能作为固定字节基准。
 - 对使用 Codex OAuth 推理协议的已识别 HTTP harness 保留 input item 的 `internal_chat_message_metadata_passthrough`。2026-11-12 的生产对齐检测 `20261112T010000Z-88612991` 中，官方 `codex exec` OAuth 请求实际携带该字段并完成上游请求；TUI、Desktop 和 IDE 归一化后使用同一规则。
-- 所有可识别的 Codex HTTP harness 在 Sub2API 出站前统一归一化为 `codex_exec` 的协议形态：非 exec harness 的 UA/originator/version 使用规范 `codex_exec` 身份，reasoning、metadata、工具 ID 和工具布局采用同一套 exec 兼容规则。harness 自身的消息内容、工具集合和会话内容仍可不同。
+- 所有可识别的 Codex HTTP harness 在 Sub2API 出站前统一归一化为 `codex_exec` 的协议形态：非 exec harness 的 UA/originator/version 使用规范 `codex_exec` 身份，reasoning、metadata、工具 ID 和工具布局采用同一套 exec 兼容规则。Lite 中满足上游必填字段的 `function`、`custom`、`tool_search` 工作区工具统一承载在 `functions` namespace 内；已有 namespace 的名称与描述保留，其他 `additional_tools` 声明不丢失。缺必填字段的工具保持原样，避免为了统一布局而制造上游 400。harness 自身的消息内容、工具集合和会话内容仍可不同。
 - 上述 harness 归一化限定在 Codex OAuth 推理协议路径。非 Codex 兼容入口、OpenAI API Key 上游和 WebSocket 不属于本规则；历史 [#7066](https://github.com/Wei-Shaw/sub2api/issues/7066) 的清理规则仍适用于这些路径。
 
 ## 传输基准与配置

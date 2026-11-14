@@ -364,7 +364,7 @@ class CaptureTests(unittest.TestCase):
     def test_missing_reasoning_replay_cannot_silently_pass(self):
         row = {'status': 'pass'}
         apply_reasoning_coverage(row, 'tool', False)
-        self.assertEqual(row['alignment_status'], 'pass')
+        self.assertEqual(row['request_alignment_status'], 'pass')
         self.assertEqual(row['status'], 'unverified')
         self.assertEqual(row['reason'], 'native_reasoning_id_replay_not_observed')
         self.assertEqual(row['coverage_gaps'], ['reasoning_id_replay_not_observed'])
@@ -376,7 +376,7 @@ class CaptureTests(unittest.TestCase):
 
         drift = {'status': 'drift'}
         apply_reasoning_coverage(drift, 'tool', False)
-        self.assertEqual(drift['alignment_status'], 'drift')
+        self.assertEqual(drift['request_alignment_status'], 'drift')
         self.assertEqual(drift['status'], 'drift')
         self.assertEqual(drift['reason'], 'native_reasoning_id_replay_not_observed')
 

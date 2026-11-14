@@ -182,7 +182,7 @@ def reasoning_replay_observed(requests, scenario):
 def apply_reasoning_coverage(row, scenario, observed):
     required = scenario in {'tool', 'compact'}
     row['reasoning_replay_observed'] = observed if required else None
-    row['alignment_status'] = row['status']
+    row['request_alignment_status'] = row['status']
     if required and not observed:
         row['coverage_gaps'] = ['reasoning_id_replay_not_observed']
         row['reason'] = row.get('reason') or 'native_reasoning_id_replay_not_observed'

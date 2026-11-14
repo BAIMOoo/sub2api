@@ -9,6 +9,10 @@
 - 生产来源：`b18f7ff606a61ac87f1db1597154af845e6593f1`。
 - 最近生产检测：`20261112T010000Z-88612991`。
 
+## 范围决策
+
+2026-11-14 确认本次修复覆盖已识别的 TUI、Desktop 和 IDE HTTP harness。这样做的原因是这些入口与 `codex exec` 共用 Codex OAuth 推理协议，但旧兼容逻辑会删除生产已经验证可接受的 reasoning ID 和内部消息元数据。验收基准仍是官方 `codex exec` 抓包；其他 harness 只通过完整 Forward 回归验证出站归一化，不扩大 live 抓包范围。
+
 ## 当前生产差异
 
 | 场景 | 结果 | 差异 |

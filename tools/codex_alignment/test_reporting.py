@@ -61,7 +61,7 @@ class ReportingTests(unittest.TestCase):
     def test_reasoning_coverage_gap_is_reported_as_unverified(self):
         report = sample()
         row = report['scenarios'][0]
-        row['alignment_status'] = row['status']
+        row['request_alignment_status'] = row['status']
         row['status'] = 'unverified'
         row['reason'] = 'native_reasoning_id_replay_not_observed'
         row['coverage_gaps'] = ['reasoning_id_replay_not_observed']

@@ -32,6 +32,71 @@ var openAIWebSearchHistoryTool = map[string]any{
 	"external_web_access": false,
 }
 
+type openAIWebSearchHistoryScan struct {
+	hasWebSearchCall    bool
+	callerDeclaredTools bool
+	additionalToolsAt   int
+}
+
+type openAIWebSearchHistoryInjection uint8
+
+const (
+	openAIWebSearchAppendTopLevel openAIWebSearchHistoryInjection = iota
+	openAIWebSearchCreateTopLevel
+	openAIWebSearchAppendAdditional
+	openAIWebSearchCreateAdditional
+	openAIWebSearchCreateAdditionalPrefix
+)
+
+func newOpenAIWebSearchHistoryScan() openAIWebSearchHistoryScan {
+	return openAIWebSearchHistoryScan{additionalToolsAt: -1}
+}
+
+func (scan *openAIWebSearchHistoryScan) observeItem(
+	index int,
+	itemType string,
+	responsesLite bool,
+	itemToolCount int,
+	itemHasWebSearch bool,
+) bool {
+	switch strings.TrimSpace(itemType) {
+	case openAIWebSearchCallItemType:
+		scan.hasWebSearchCall = true
+	case openAIAdditionalToolsItemType:
+		if responsesLite && itemHasWebSearch {
+			return false
+		}
+		if responsesLite && itemToolCount > 0 {
+			scan.callerDeclaredTools = true
+		}
+		if scan.additionalToolsAt < 0 {
+			scan.additionalToolsAt = index
+		}
+	}
+	return true
+}
+
+func (scan openAIWebSearchHistoryScan) injectionPlan(
+	responsesLite bool,
+	hasTopLevelTools bool,
+	additionalToolsArray bool,
+) openAIWebSearchHistoryInjection {
+	if !responsesLite {
+		if hasTopLevelTools {
+			return openAIWebSearchAppendTopLevel
+		}
+		return openAIWebSearchCreateTopLevel
+	}
+	switch {
+	case scan.additionalToolsAt < 0:
+		return openAIWebSearchCreateAdditionalPrefix
+	case additionalToolsArray:
+		return openAIWebSearchAppendAdditional
+	default:
+		return openAIWebSearchCreateAdditional
+	}
+}
+
 func isOpenAIWebSearchToolType(toolType string) bool {
 	return strings.HasPrefix(strings.TrimSpace(toolType), "web_search")
 }
@@ -75,47 +140,47 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 	if !ok {
 		return false
 	}
-	hasWebSearchCall := false
-	callerDeclaredTools := false
-	additionalToolsIndex := -1
+	scan := newOpenAIWebSearchHistoryScan()
 	for i, rawItem := range input {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
 			continue
 		}
-		switch strings.TrimSpace(firstNonEmptyString(item["type"])) {
-		case openAIWebSearchCallItemType:
-			hasWebSearchCall = true
-		case openAIAdditionalToolsItemType:
-			if responsesLite && openAIToolsContainWebSearch(item["tools"]) {
-				return false
-			}
-			if responsesLite {
-				tools, _ := item["tools"].([]any)
-				if len(tools) > 0 {
-					callerDeclaredTools = true
-				}
-			}
-			if additionalToolsIndex < 0 {
-				additionalToolsIndex = i
-			}
+		tools, _ := item["tools"].([]any)
+		if !scan.observeItem(
+			i,
+			firstNonEmptyString(item["type"]),
+			responsesLite,
+			len(tools),
+			openAIToolsContainWebSearch(item["tools"]),
+		) {
+			return false
 		}
 	}
-	if !hasWebSearchCall || openAIToolsContainWebSearch(reqBody["tools"]) {
+	if !scan.hasWebSearchCall || openAIToolsContainWebSearch(reqBody["tools"]) {
 		return false
 	}
 	tools, _ := reqBody["tools"].([]any)
-	callerDeclaredTools = callerDeclaredTools || len(tools) > 0
-
-	switch {
-	case !responsesLite:
+	scan.callerDeclaredTools = scan.callerDeclaredTools || len(tools) > 0
+	additionalToolsArray := false
+	if scan.additionalToolsAt >= 0 {
+		item, _ := input[scan.additionalToolsAt].(map[string]any)
+		_, additionalToolsArray = item["tools"].([]any)
+	}
+	switch scan.injectionPlan(responsesLite, len(tools) > 0, additionalToolsArray) {
+	case openAIWebSearchAppendTopLevel:
 		reqBody["tools"] = append(tools, cloneOpenAIWebSearchHistoryTool())
-	case additionalToolsIndex >= 0:
+	case openAIWebSearchCreateTopLevel:
+		reqBody["tools"] = []any{cloneOpenAIWebSearchHistoryTool()}
+	case openAIWebSearchAppendAdditional:
 		// additionalToolsIndex is only recorded for map items.
-		item, _ := input[additionalToolsIndex].(map[string]any)
+		item, _ := input[scan.additionalToolsAt].(map[string]any)
 		existing, _ := item["tools"].([]any)
 		item["tools"] = append(existing, cloneOpenAIWebSearchHistoryTool())
-	default:
+	case openAIWebSearchCreateAdditional:
+		item, _ := input[scan.additionalToolsAt].(map[string]any)
+		item["tools"] = []any{cloneOpenAIWebSearchHistoryTool()}
+	case openAIWebSearchCreateAdditionalPrefix:
 		// Lite declarations belong in the input prefix. A trailing compaction
 		// trigger remains last because the new item is inserted at index zero.
 		at := 0
@@ -130,7 +195,7 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 		next = append(next, input[at:]...)
 		reqBody["input"] = next
 	}
-	if !callerDeclaredTools {
+	if !scan.callerDeclaredTools {
 		if choice, exists := reqBody["tool_choice"]; !exists || shouldPinOpenAIWebSearchHistoryToolChoice(choice) {
 			reqBody["tool_choice"] = "none"
 		}
@@ -149,27 +214,24 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 		return body, false, nil
 	}
 	items := input.Array()
-	hasWebSearchCall := false
-	callerDeclaredTools := false
-	additionalToolsIndex := -1
+	scan := newOpenAIWebSearchHistoryScan()
 	for i, item := range items {
-		switch strings.TrimSpace(item.Get("type").String()) {
-		case openAIWebSearchCallItemType:
-			hasWebSearchCall = true
-		case openAIAdditionalToolsItemType:
-			itemTools := item.Get("tools")
-			if responsesLite && gjsonToolsContainWebSearch(itemTools) {
-				return body, false, nil
-			}
-			if responsesLite && itemTools.IsArray() && len(itemTools.Array()) > 0 {
-				callerDeclaredTools = true
-			}
-			if additionalToolsIndex < 0 {
-				additionalToolsIndex = i
-			}
+		itemTools := item.Get("tools")
+		itemToolCount := 0
+		if itemTools.IsArray() {
+			itemToolCount = len(itemTools.Array())
+		}
+		if !scan.observeItem(
+			i,
+			item.Get("type").String(),
+			responsesLite,
+			itemToolCount,
+			gjsonToolsContainWebSearch(itemTools),
+		) {
+			return body, false, nil
 		}
 	}
-	if !hasWebSearchCall {
+	if !scan.hasWebSearchCall {
 		return body, false, nil
 	}
 	tools := gjson.GetBytes(body, "tools")
@@ -177,29 +239,31 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 		return body, false, nil
 	}
 	topLevelTools := tools.IsArray() && len(tools.Array()) > 0
-	callerDeclaredTools = callerDeclaredTools || topLevelTools
+	scan.callerDeclaredTools = scan.callerDeclaredTools || topLevelTools
+	additionalToolsArray := scan.additionalToolsAt >= 0 &&
+		items[scan.additionalToolsAt].Get("tools").IsArray()
 
 	var (
 		next []byte
 		err  error
 	)
-	switch {
-	case !responsesLite && topLevelTools:
+	switch scan.injectionPlan(responsesLite, topLevelTools, additionalToolsArray) {
+	case openAIWebSearchAppendTopLevel:
 		next, err = sjson.SetBytes(body, "tools.-1", cloneOpenAIWebSearchHistoryTool())
-	case !responsesLite:
+	case openAIWebSearchCreateTopLevel:
 		next, err = sjson.SetBytes(body, "tools", []any{cloneOpenAIWebSearchHistoryTool()})
-	case additionalToolsIndex >= 0 && items[additionalToolsIndex].Get("tools").IsArray():
-		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools.-1", additionalToolsIndex), cloneOpenAIWebSearchHistoryTool())
-	case additionalToolsIndex >= 0:
-		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools", additionalToolsIndex), []any{cloneOpenAIWebSearchHistoryTool()})
-	default:
+	case openAIWebSearchAppendAdditional:
+		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools.-1", scan.additionalToolsAt), cloneOpenAIWebSearchHistoryTool())
+	case openAIWebSearchCreateAdditional:
+		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools", scan.additionalToolsAt), []any{cloneOpenAIWebSearchHistoryTool()})
+	case openAIWebSearchCreateAdditionalPrefix:
 		// Lite declarations belong in the input prefix.
 		next, err = insertOpenAIAdditionalToolsItemRaw(body, items, 0)
 	}
 	if err != nil {
 		return body, false, fmt.Errorf("declare web_search tool for web_search_call history: %w", err)
 	}
-	if !callerDeclaredTools {
+	if !scan.callerDeclaredTools {
 		choice := gjson.GetBytes(next, "tool_choice")
 		if !choice.Exists() || choice.Type == gjson.Null || (choice.Type == gjson.String && shouldPinOpenAIWebSearchHistoryToolChoice(choice.String())) {
 			next, err = sjson.SetBytes(next, "tool_choice", "none")

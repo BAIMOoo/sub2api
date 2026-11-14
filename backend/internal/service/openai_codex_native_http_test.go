@@ -228,11 +228,8 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 							names = append(names, tool["type"].(string))
 						}
 						require.Contains(t, names, "web_search")
-						if passthrough {
-							require.Contains(t, names, "function")
-						} else {
-							require.Contains(t, names, "namespace")
-						}
+						require.Contains(t, names, "namespace")
+						require.NotContains(t, names, "function")
 						return
 					}
 					require.Equal(t, "Synthetic harness regression", forwarded["instructions"])
