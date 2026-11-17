@@ -148,6 +148,14 @@ def main() -> int:
     with open(args.audit, "r", encoding="utf-8") as handle:
         audit = json.load(handle)
 
+    if audit.get("error"):
+        detail = audit["error"].get("message", audit["error"])
+        sys.stderr.write(f"pnpm audit failed to produce vulnerability data: {detail}\n")
+        return 1
+    if not any(key in audit for key in ("advisories", "vulnerabilities", "metadata")):
+        sys.stderr.write("pnpm audit returned an unrecognized JSON schema\n")
+        return 1
+
     # 读取异常清单并建立索引，便于快速匹配包名 + advisory。
     exceptions = parse_exceptions(args.exceptions)
     exception_index = {}
@@ -187,6 +195,8 @@ def main() -> int:
     today = date.today()
     missing_exceptions = []
     expired_exceptions = []
+    unused_exceptions = []
+    matched_exception_keys = set()
 
     # 去重处理：同一包名 + advisory 可能在不同字段重复出现。
     seen = set()
@@ -208,6 +218,7 @@ def main() -> int:
         if exc is None:
             missing_exceptions.append((name, sev, advisory_id, title))
             continue
+        matched_exception_keys.add(key)
         if exc["severity"] and exc["severity"] != sev:
             errors.append(
                 "Exception severity mismatch: "
@@ -234,6 +245,15 @@ def main() -> int:
             errors.append(
                 f"- {name} ({sev}) [{advisory_id}] expired on {expires_on}"
             )
+
+    for key, exc in exception_index.items():
+        if key not in matched_exception_keys:
+            name, advisory_id = key
+            unused_exceptions.append((name, advisory_id))
+    if unused_exceptions:
+        errors.append("Exceptions no longer match a high/critical advisory:")
+        for name, advisory_id in unused_exceptions:
+            errors.append(f"- {name} [{advisory_id}]")
 
     if errors:
         sys.stderr.write("\n".join(errors) + "\n")

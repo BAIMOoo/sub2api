@@ -19,12 +19,17 @@ func newAliyunCaptchaTestTarget(t *testing.T, handler http.HandlerFunc) (*aliyun
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	verifier := &aliyunCaptchaVerifier{protocol: "HTTP", timeoutMillis: 2_000}
+	endpoint := strings.TrimPrefix(server.URL, "http://")
+	verifier := &aliyunCaptchaVerifier{
+		protocol:      "HTTP",
+		timeoutMillis: 2_000,
+		noProxy:       endpoint,
+	}
 	cred := service.AliyunCaptchaCredentials{
 		AccessKeyID:     "test-ak-id",
 		AccessKeySecret: "test-ak-secret",
 		SceneID:         "scene-1",
-		Endpoint:        strings.TrimPrefix(server.URL, "http://"),
+		Endpoint:        endpoint,
 	}
 	return verifier, cred
 }
@@ -78,7 +83,11 @@ func TestAliyunCaptchaVerifier_TransportError(t *testing.T) {
 	endpoint := strings.TrimPrefix(server.URL, "http://")
 	server.Close() // 立即关闭，制造连接失败
 
-	verifier := &aliyunCaptchaVerifier{protocol: "HTTP", timeoutMillis: 2_000}
+	verifier := &aliyunCaptchaVerifier{
+		protocol:      "HTTP",
+		timeoutMillis: 2_000,
+		noProxy:       endpoint,
+	}
 	cred := service.AliyunCaptchaCredentials{
 		AccessKeyID:     "test-ak-id",
 		AccessKeySecret: "test-ak-secret",

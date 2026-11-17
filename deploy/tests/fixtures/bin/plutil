@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+import json
+import sys
+
+
+def main() -> int:
+    if len(sys.argv) < 3 or sys.argv[1] != "-extract":
+        raise SystemExit("unsupported plutil invocation")
+    expression = sys.argv[2]
+    output_format = sys.argv[3]
+    value = json.load(sys.stdin)
+    for part in expression.split("."):
+        if part.isdigit():
+            value = value[int(part)]
+        else:
+            value = value[part]
+    if output_format == "json":
+        print(json.dumps(value, separators=(",", ":"), sort_keys=True))
+    elif isinstance(value, bool):
+        print("true" if value else "false")
+    else:
+        print(value)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
