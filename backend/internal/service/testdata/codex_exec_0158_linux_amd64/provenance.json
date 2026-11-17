@@ -1,0 +1,185 @@
+{
+  "schema": 1,
+  "captured_date": "2026-11-17",
+  "purpose": "fixed official codex exec 0.158.0 Linux x86_64 layered local reference",
+  "binary_version": "codex-cli 0.158.0",
+  "binary_target": "x86_64-unknown-linux-musl",
+  "distribution": "Alpine Linux 3.24.4",
+  "container_image": "python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e",
+  "amd64_image_config_digest": "sha256:d76f585fb0d5107dd47143da5e61554fd9cae656a30f3470f815cb8475769b6a",
+  "docker_platform": "linux/amd64",
+  "docker_engine_host_architecture": "aarch64",
+  "amd64_execution": "Docker Desktop amd64 emulation on Apple arm64; uname inside container reports x86_64",
+  "kernel": "6.12.76-linuxkit",
+  "network_mode": "none",
+  "hosts_override": {
+    "chatgpt.com": "127.0.0.1"
+  },
+  "listener": "127.0.0.1:80 for fake API key HTTP; 127.0.0.1:443 for separate TLS-only listener or synthetic OAuth HTTPS mock",
+  "repo_mounted_into_container": false,
+  "only_host_mount": "isolated temporary capture root",
+  "client_environment": "explicit whitelist per invocation; no host environment inheritance",
+  "real_auth_accessed": false,
+  "real_model_provider_contacted": false,
+  "client_user_agent": "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)",
+  "samples": [
+    {
+      "name": "standard",
+      "body_fixture": "standard.json",
+      "request": "http/standard.request.http",
+      "headers": "http/standard.headers.json",
+      "encoding": "http/standard.encoding.json",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only",
+      "source_run": "standard-oauth-leaf",
+      "source_record": "request-12"
+    },
+    {
+      "name": "lite",
+      "body_fixture": "lite.json",
+      "request": "http/lite.request.http",
+      "headers": "http/lite.headers.json",
+      "encoding": "http/lite.encoding.json",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only",
+      "source_run": "lite-oauth-leaf",
+      "source_record": "request-12"
+    },
+    {
+      "name": "compact-before",
+      "body_fixture": "compact-before.json",
+      "request": "http/compact-before.request.http",
+      "headers": "http/compact-before.headers.json",
+      "encoding": "http/compact-before.encoding.json",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only",
+      "source_run": "compact-oauth-leaf",
+      "source_record": "request-12"
+    },
+    {
+      "name": "compact",
+      "body_fixture": "compact.json",
+      "request": "http/compact.request.http",
+      "headers": "http/compact.headers.json",
+      "encoding": "http/compact.encoding.json",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only",
+      "source_run": "compact-oauth-leaf",
+      "source_record": "request-13"
+    },
+    {
+      "name": "compact-after",
+      "body_fixture": "compact-after.json",
+      "request": "http/compact-after.request.http",
+      "headers": "http/compact-after.headers.json",
+      "encoding": "http/compact-after.encoding.json",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only",
+      "source_run": "compact-oauth-leaf",
+      "source_record": "request-14"
+    },
+    {
+      "name": "api-key/standard",
+      "body_fixture": "api-key/standard.json",
+      "request": "api-key/http/standard.request.http",
+      "headers": "api-key/http/standard.headers.json",
+      "encoding": "api-key/http/standard.encoding.json",
+      "evidence": "fake_api_key_local_plain_http",
+      "source_run": "standard-final",
+      "source_record": "request-08"
+    },
+    {
+      "name": "api-key/lite",
+      "body_fixture": "api-key/lite.json",
+      "request": "api-key/http/lite.request.http",
+      "headers": "api-key/http/lite.headers.json",
+      "encoding": "api-key/http/lite.encoding.json",
+      "evidence": "fake_api_key_local_plain_http",
+      "source_run": "lite-final",
+      "source_record": "request-08"
+    },
+    {
+      "name": "api-key/compact-before",
+      "body_fixture": "api-key/compact-before.json",
+      "request": "api-key/http/compact-before.request.http",
+      "headers": "api-key/http/compact-before.headers.json",
+      "encoding": "api-key/http/compact-before.encoding.json",
+      "evidence": "fake_api_key_local_plain_http",
+      "source_run": "compact-final",
+      "source_record": "request-08"
+    },
+    {
+      "name": "api-key/compact",
+      "body_fixture": "api-key/compact.json",
+      "request": "api-key/http/compact.request.http",
+      "headers": "api-key/http/compact.headers.json",
+      "encoding": "api-key/http/compact.encoding.json",
+      "evidence": "fake_api_key_local_plain_http",
+      "source_run": "compact-final",
+      "source_record": "request-09"
+    },
+    {
+      "name": "api-key/compact-after",
+      "body_fixture": "api-key/compact-after.json",
+      "request": "api-key/http/compact-after.request.http",
+      "headers": "api-key/http/compact-after.headers.json",
+      "encoding": "api-key/http/compact-after.encoding.json",
+      "evidence": "fake_api_key_local_plain_http",
+      "source_run": "compact-final",
+      "source_record": "request-10"
+    }
+  ],
+  "runs": [
+    {
+      "name": "standard-oauth-leaf",
+      "returncode": 0,
+      "started_at": "2026-11-17T08:51:28.418213+00:00",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only"
+    },
+    {
+      "name": "lite-oauth-leaf",
+      "returncode": 0,
+      "started_at": "2026-11-17T08:51:36.453990+00:00",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only"
+    },
+    {
+      "name": "compact-oauth-leaf",
+      "returncode": 0,
+      "started_at": "2026-11-17T08:51:44.292566+00:00",
+      "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only"
+    },
+    {
+      "name": "standard-final",
+      "returncode": 0,
+      "started_at": "2026-11-17T08:42:03.475966+00:00",
+      "evidence": "fake_api_key_local_plain_http"
+    },
+    {
+      "name": "lite-final",
+      "returncode": 0,
+      "started_at": "2026-11-17T08:42:11.142968+00:00",
+      "evidence": "fake_api_key_local_plain_http"
+    },
+    {
+      "name": "compact-final",
+      "returncode": 0,
+      "started_at": "2026-11-17T08:42:18.509875+00:00",
+      "evidence": "fake_api_key_local_plain_http"
+    }
+  ],
+  "native_tls_samples": 18,
+  "native_http_tls_samples": 4,
+  "captures_mutated": false,
+  "fake_credential_notice": "Authorization values, account ID, JWT, and refresh strings are invented local fixture values, not credentials. Original generated dynamic UUIDs/timestamps are retained. No private TLS key is included.",
+  "layered_evidence": true,
+  "single_native_end_to_end_capture": false,
+  "compression_byte_identity_required": false,
+  "capture_harness_temporary_path": "/tmp/codex-0158-linux-amd64-dyhdkyce/capture_local.py",
+  "capture_harness_sha256": "cd68375b653e36b7222a21eafaefdfb03107249bef170e3a168b9846c2fc33c2",
+  "decoder_harness_temporary_path": "/tmp/codex-0158-linux-amd64-dyhdkyce/decode_captures.py",
+  "decoder_harness_sha256": "43349e1e644eb3ccca47893479814cab39b1bbc07ff0a95dc436132ec6bb6487",
+  "limits": [
+    "No authenticated real OAuth/PAT/SetupToken provider integration is proved.",
+    "Synthetic OAuth HTTPS uses custom CA and is not native default TLS evidence.",
+    "Native ClientHello runs stop before ServerHello; no negotiated session/application traffic.",
+    "The plain API-key bodies show layout and identity encoding only.",
+    "Compaction is the observed streaming Responses V2 path; legacy /responses/compact is unobserved.",
+    "Bundled model catalog selected after the mock returned an empty models list; no real catalog or account capability was queried.",
+    "Cookie, returned turn-state, configured terminal identities and other Linux distributions were not exercised."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "encoding": "zstd",
+  "wire_body_bytes": 16326,
+  "wire_body_sha256": "3e6491c7cf701939f7ad5c50a60be425a9f6e982a1d073970d8181e71a7489d5",
+  "decoded_body_bytes": 42812,
+  "decoded_body_sha256": "1b8d817e3f0c329e01c73cca590f25fbd7f6bd91ded303eb2c116ed785966ebe",
+  "zstd": {
+    "magic_hex": "28b52ffd",
+    "descriptor_hex": "00",
+    "header_hex": "28b52ffd0058",
+    "header_size": 6,
+    "single_segment": false,
+    "content_size": null,
+    "content_size_present": false,
+    "window_size": 2097152,
+    "dictionary_id": 0,
+    "checksum": false,
+    "blocks": [
+      {
+        "last": true,
+        "type": "compressed",
+        "size_field": 16317,
+        "header_offset": 6
+      }
+    ],
+    "frame_count": 1,
+    "trailing_bytes": 0,
+    "decoded_bytes": 42812,
+    "decoder": "python-zstandard 0.25.0",
+    "decoder_zstd_version": [
+      1,
+      5,
+      7
+    ]
+  },
+  "body_keys": [
+    "model",
+    "instructions",
+    "input",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "reasoning",
+    "store",
+    "stream",
+    "include",
+    "prompt_cache_key",
+    "text",
+    "client_metadata"
+  ],
+  "input_layout": [
+    {
+      "type": "message",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "role": "user"
+    },
+    {
+      "type": "message",
+      "role": "user"
+    },
+    {
+      "type": "function_call",
+      "role": null
+    },
+    {
+      "type": "function_call_output",
+      "role": null
+    },
+    {
+      "type": "compaction_trigger",
+      "role": null
+    }
+  ],
+  "has_compaction_trigger": true,
+  "has_compaction": false
+}

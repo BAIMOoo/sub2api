@@ -3,8 +3,17 @@ package service
 import (
 	"context"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/codexprobe"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"net/http"
+	"net/url"
+	"strings"
 )
+
+type codexHTTPTransportConfigError struct{ reason string }
+
+func (e *codexHTTPTransportConfigError) Error() string {
+	return "codex HTTP configuration incompatible: " + e.reason
+}
 
 func checkAlignmentProbeAccount(ctx context.Context, account *Account) error {
 	if codexprobe.FromContext(ctx) == nil {
@@ -27,6 +36,26 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	_, fixedCodexHTTP := codexHTTPAttemptBody(request)
+	if fixedCodexHTTP {
+		if request.URL == nil || request.URL.Scheme != "https" || request.URL.Hostname() != "chatgpt.com" {
+			return nil, &codexHTTPTransportConfigError{reason: "fixed contract requires the ChatGPT HTTPS endpoint"}
+		}
+		if proxyURL != "" {
+			proxy, err := url.Parse(proxyURL)
+			if err != nil || proxy.Host == "" {
+				return nil, &codexHTTPTransportConfigError{reason: "invalid proxy configuration"}
+			}
+			switch strings.ToLower(proxy.Scheme) {
+			case "http", "socks5", "socks5h":
+			default:
+				return nil, &codexHTTPTransportConfigError{reason: "proxy transport cannot preserve the fixed TLS fingerprint"}
+			}
+		}
+		if s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account) {
+			return nil, &codexHTTPTransportConfigError{reason: "plugin transport has no fixed-contract verification"}
+		}
+	}
 	if p := codexprobe.FromContext(request.Context()); p != nil {
 		if err := checkAlignmentProbeAccount(request.Context(), account); err != nil {
 			return nil, err
@@ -38,6 +67,11 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			_ = p.Emit("incomplete", map[string]any{"reason": "plugin_transport_not_observable"})
 			return nil, codexprobe.ErrProbe
 		}
+	}
+	if fixedCodexHTTP {
+		// Ignore legacy opt-out/custom profiles only within the explicitly marked
+		// HTTP ingress contract. Setup tokens and PAT use this same protocol.
+		return s.httpUpstream.DoWithTLS(request, proxyURL, account.ID, account.Concurrency, tlsfingerprint.OpenAICodexLinuxProfile())
 	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)

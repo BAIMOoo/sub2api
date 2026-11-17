@@ -1,0 +1,19 @@
+POST /backend-api/codex/responses HTTP/1.1
+version: 0.158.0
+x-codex-beta-features: remote_compaction_v2
+x-codex-window-id: 01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9:0
+x-codex-turn-metadata: {"installation_id":"a2cfa693-52fa-4d63-8a8b-c4f3be2f20e7","session_id":"01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9","thread_id":"01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9","agent_name":"/root","turn_id":"01a1e8b4-7d74-7c22-af5e-1c88bcda358c","window_id":"01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9:0","window_number":0,"context_window_id":"01a1e8b4-7c99-7321-b8b3-44eb159333ce","request_kind":"turn","root_turn_id":"01a1e8b4-7d74-7c22-af5e-1c88bcda358c","thread_source":"user","turn_trigger":"exec","sandbox":"seccomp","sandbox_mode":"read-only","auto_review_enabled":false,"node_repl_auto_review_required":false,"node_repl_disabled":false,"turn_started_at_unix_ms":1794905505156,"analytics_enabled":false,"model":"gpt-5.5","reasoning_effort":"medium"}
+x-codex-routing-hint: model=gpt-5.5
+x-client-request-id: 01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9
+session-id: 01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9
+thread-id: 01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9
+accept: text/event-stream
+content-encoding: zstd
+content-type: application/json
+authorization: Bearer codex-fixture-fake-access-token-not-a-secret
+chatgpt-account-id: 00000000-0000-4000-8000-000000000001
+originator: codex_exec
+user-agent: codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)
+host: chatgpt.com
+content-length: 16147
+

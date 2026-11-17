@@ -1,0 +1,57 @@
+{
+  "name": "native-http-tls-lite",
+  "model": "gpt-6-astra",
+  "auth_kind": "api_key",
+  "tls_only": true,
+  "compact_requested": false,
+  "returncode": -15,
+  "timed_out": false,
+  "stopped_after_hello": true,
+  "records": [
+    {
+      "file": "clienthello-01.bin",
+      "bytes": 1468,
+      "sha256": "35ce42c255d09a99639e6f350b066ff88e6069c5d47d58dc705ca5236f34a0f9"
+    },
+    {
+      "file": "clienthello-02.bin",
+      "bytes": 1468,
+      "sha256": "ba231576822020c4431ffac933995a58f063c4d2453815167bf95c3b798c4eda"
+    },
+    {
+      "file": "clienthello-03.bin",
+      "bytes": 1468,
+      "sha256": "7c346fba114eba3cbef3732b736ab7e3d3d3eba80026cb26102995c39b790f09"
+    },
+    {
+      "file": "clienthello-04.bin",
+      "bytes": 1468,
+      "sha256": "843c1be70f726468cfe1e25130a930976302271542d8f6b942f6b8d491a15799"
+    },
+    {
+      "file": "clienthello-05.bin",
+      "bytes": 1468,
+      "sha256": "6323f90a952bccc157f7151fbf83f9085b942b2b2076539e38862f2abda4f95f"
+    },
+    {
+      "file": "clienthello-06.bin",
+      "bytes": 1468,
+      "sha256": "6438aad16571816705dcd06384e3c7321cc2d913ecdd419e9dbc03fdcc0986ee"
+    },
+    {
+      "file": "clienthello-07.bin",
+      "bytes": 1468,
+      "sha256": "f81b2a8e5bed0d36fe28cd5cfbab82a658d30e7beeaeea429cfa2944b5caac74"
+    },
+    {
+      "file": "clienthello-08.bin",
+      "bytes": 1542,
+      "sha256": "9d81cdabb66cd12f3d72191bdeab947c0c69a98dee8da26f247d86ab8c98f2d1"
+    },
+    {
+      "file": "clienthello-09.bin",
+      "bytes": 1542,
+      "sha256": "af8ea04e4feb7f33f416d66c100863b82a93b09a0f7dc81081ee1dc639c937c8"
+    }
+  ]
+}

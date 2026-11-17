@@ -18,7 +18,38 @@ const codexRequestBodyContentEncoding = "zstd"
 var (
 	codexRequestBodyZstdOnce    sync.Once
 	codexRequestBodyZstdEncoder *zstd.Encoder
+	codexHTTPZstdPool           sync.Pool
 )
+
+// Official 0.158.0 uses streaming zstd: 2 MiB window, no content-size field,
+// dictionary or checksum. EncodeAll declares size even with SingleSegment=false.
+func encodeCodexHTTPZstd(payload []byte) ([]byte, error) {
+	var output bytes.Buffer
+	encoder, ok := codexHTTPZstdPool.Get().(*zstd.Encoder)
+	if !ok {
+		var err error
+		encoder, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault),
+			zstd.WithEncoderCRC(false), zstd.WithWindowSize(2<<20), zstd.WithEncoderConcurrency(1))
+		if err != nil {
+			return nil, err
+		}
+	}
+	encoder.Reset(&output)
+	if _, err := encoder.Write(payload); err != nil {
+		return nil, err
+	}
+	// Close alone optimizes a short stream into EncodeAll, adding a content-size
+	// declaration. Flush commits the streaming frame header before finalization.
+	if err := encoder.Flush(); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	encoder.Reset(io.Discard)
+	codexHTTPZstdPool.Put(encoder)
+	return output.Bytes(), nil
+}
 
 // codexRequestBodyZstdWriter 复用同一个 encoder：EncodeAll 支持并发调用，
 // 热路径无需加锁，也不必每请求重建窗口缓冲。
@@ -64,7 +95,15 @@ func applyCodexRequestBodyZstd(account *Account, req *http.Request) bool {
 	if err != nil || len(payload) == 0 {
 		return false
 	}
-	compressed := encoder.EncodeAll(payload, make([]byte, 0, len(payload)/2))
+	var compressed []byte
+	if _, fixed := codexHTTPAttemptBody(req); fixed {
+		compressed, err = encodeCodexHTTPZstd(payload)
+		if err != nil {
+			return false
+		}
+	} else {
+		compressed = encoder.EncodeAll(payload, make([]byte, 0, len(payload)/2))
+	}
 	req.Header.Set("content-encoding", codexRequestBodyContentEncoding)
 	req.Body = io.NopCloser(bytes.NewReader(compressed))
 	req.ContentLength = int64(len(compressed))

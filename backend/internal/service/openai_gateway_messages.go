@@ -33,14 +33,21 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	preparedBody, prepareErr := prepareCodexHTTPIngress(c, account, body)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
+	body = preparedBody
 	// 工具 Schema 清洗必须先于所有分流：下游每条路径（原生 Anthropic 直通、
 	// Chat Completions 转换、Responses 转换）都会把 tools 原样带给上游，而
 	// xAI / Moonshot 等严格校验方会因 input_schema 里的 required:null 或
 	// type:null 直接 400。
-	if sanitized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); err != nil {
-		return nil, err
-	} else if changed {
-		body = sanitized
+	if !codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		if sanitized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); err != nil {
+			return nil, err
+		} else if changed {
+			body = sanitized
+		}
 	}
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
@@ -87,6 +94,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 1. Parse Anthropic request
 	var anthropicReq apicompat.AnthropicRequest
 	if err := json.Unmarshal(body, &anthropicReq); err != nil {
+		if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			writeCodexHTTPCompatibilityError(c, err)
+		}
 		return nil, fmt.Errorf("parse anthropic request: %w", err)
 	}
 	anthropicDigestReq := cloneAnthropicRequestForDigest(&anthropicReq)
@@ -154,8 +164,19 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// 3. Convert Anthropic → Responses after compatibility-only replay guard.
 	anthropicReq.Model = upstreamModel
-	responsesReq, err := anthropicToResponses(s.cfg, &anthropicReq)
+	var responsesReq *apicompat.ResponsesRequest
+	var err error
+	if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		responsesReq, err = apicompat.AnthropicToResponsesWithOptions(&anthropicReq, configuredMinOutputTokens(s.cfg), apicompat.AnthropicToResponsesOptions{
+			PreserveCodexContent: true, OriginalRequest: body,
+		})
+	} else {
+		responsesReq, err = anthropicToResponses(s.cfg, &anthropicReq)
+	}
 	if err != nil {
+		if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			writeCodexHTTPCompatibilityError(c, err)
+		}
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
 
@@ -170,6 +191,17 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	responsesReq.Model = upstreamModel
+	if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		responsesReq.ServiceTier = gjson.GetBytes(body, "service_tier").String()
+	}
+	if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		// The compat converter's default medium verbosity/effort is not the
+		// pinned exec model default. Leave absent controls for the final builder.
+		responsesReq.Text = nil
+		if anthropicReq.Thinking == nil && anthropicReq.OutputConfig == nil {
+			responsesReq.Reasoning = nil
+		}
+	}
 	if responsesReq.Reasoning != nil {
 		responsesReq.Reasoning.Effort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, responsesReq.Reasoning.Effort)
 	}
@@ -220,11 +252,18 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		var reqBody map[string]any
-		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+		if err := decodeOpenAIJSONUseNumber(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
+		}
+		httpPolicy := codexHTTPPolicyForRequest(c, account)
+		responsesLite := false
+		if httpPolicy.preservesCodexExec() {
+			responsesLite = resolveCodexHTTPMode(c, account, upstreamModel, responsesBody).lite
 		}
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 			SkipDefaultInstructions:   true,
+			HTTPPolicy:                httpPolicy,
+			ResponsesLite:             responsesLite,
 			PreserveToolCallIDs:       true,
 			KeepSystemMessagesInInput: true,
 		})
@@ -233,29 +272,31 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			return nil, codexResult.Error
 		}
 		setCodexToolNameReverse(c, codexResult.ToolNameReverse)
-		forcedTemplateText := ""
-		if s.cfg != nil {
-			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
-		}
-		templateUpstreamModel := upstreamModel
-		if codexResult.NormalizedModel != "" {
-			templateUpstreamModel = codexResult.NormalizedModel
-		}
-		existingInstructions, _ := reqBody["instructions"].(string)
-		if strings.TrimSpace(existingInstructions) == "" {
-			existingInstructions = extractPromptLikeInstructionsFromInput(reqBody)
-		}
-		if _, err := applyForcedCodexInstructionsTemplate(reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
-			ExistingInstructions: strings.TrimSpace(existingInstructions),
-			OriginalModel:        originalModel,
-			NormalizedModel:      normalizedModel,
-			BillingModel:         billingModel,
-			UpstreamModel:        templateUpstreamModel,
-		}); err != nil {
-			return nil, err
-		}
-		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
-			appendOpenAICompatClaudeCodeTodoGuardToRequestBody(reqBody)
+		if !httpPolicy.preservesCodexExec() {
+			forcedTemplateText := ""
+			if s.cfg != nil {
+				forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+			}
+			templateUpstreamModel := upstreamModel
+			if codexResult.NormalizedModel != "" {
+				templateUpstreamModel = codexResult.NormalizedModel
+			}
+			existingInstructions, _ := reqBody["instructions"].(string)
+			if strings.TrimSpace(existingInstructions) == "" {
+				existingInstructions = extractPromptLikeInstructionsFromInput(reqBody)
+			}
+			if _, err := applyForcedCodexInstructionsTemplate(reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+				ExistingInstructions: strings.TrimSpace(existingInstructions),
+				OriginalModel:        originalModel,
+				NormalizedModel:      normalizedModel,
+				BillingModel:         billingModel,
+				UpstreamModel:        templateUpstreamModel,
+			}); err != nil {
+				return nil, err
+			}
+			if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
+				appendOpenAICompatClaudeCodeTodoGuardToRequestBody(reqBody)
+			}
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
@@ -285,7 +326,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if account.Type == AccountTypeAPIKey {
 		if trimmedKey := strings.TrimSpace(promptCacheKey); trimmedKey != "" {
 			var reqBody map[string]any
-			if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+			if err := decodeOpenAIJSONUseNumber(responsesBody, &reqBody); err != nil {
 				return nil, fmt.Errorf("unmarshal for prompt cache key injection: %w", err)
 			}
 			if existing, ok := reqBody["prompt_cache_key"].(string); !ok || strings.TrimSpace(existing) == "" {
@@ -390,8 +431,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		// buildUpstreamRequest 保留 Messages bridge 的 body/session 兼容行为，并会先
 		// 清除身份头。真正发送前恢复完整 Codex 身份，避免 ChatGPT Codex 上游因缺失
 		// originator/OpenAI-Beta 返回 404（issue #3901）。
-		ensureCodexIdentityHeaders(upstreamReq.Header)
-		enforceCodexIdentityHeaders(upstreamReq.Header)
+		if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			s.applyCodexHTTPIdentityHeaders(c, account, upstreamReq.Header)
+		} else {
+			ensureCodexIdentityHeaders(upstreamReq.Header)
+			enforceCodexIdentityHeaders(upstreamReq.Header)
+		}
 		logger.L().Debug("openai messages: upstream identity restored",
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_model", upstreamModel),

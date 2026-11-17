@@ -876,6 +876,11 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body []byte, knownSto
 }
 
 func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, account *Account, body []byte) ([]byte, bool, error) {
+	if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		// The compatibility endpoint now uses Responses V2; legacy compact's
+		// effort restriction must not downgrade a supported Responses control.
+		return body, false, nil
+	}
 	if account == nil || !account.IsOpenAIOAuthLike() || !isOpenAIResponsesCompactPath(c) {
 		return body, false, nil
 	}
@@ -1464,7 +1469,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 	changed := false
 	if account.IsOpenAIOAuthLike() {
 		var err error
-		normalized, changed, err = normalizeOpenAIResponsesLegacyIngressWithConfig(opts.Config, body)
+		normalized, changed, err = normalizeOpenAIResponsesLegacyIngressWithPolicy(opts.Config, body, opts.HTTPPolicy)
 		if err != nil {
 			return body, false, err
 		}
@@ -1525,7 +1530,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			normalized = next
 			changed = true
 		}
-		if !opts.Compact {
+		if !opts.HTTPPolicy.preservesCodexExec() && !opts.Compact {
 			webSearchBody, webSearchChanged, err := ensureOpenAIOAuthWebSearchToolForHistoryBody(normalized, responsesLite)
 			if err != nil {
 				return body, false, fmt.Errorf("normalize websocket body: %w", err)
@@ -1534,9 +1539,9 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = changed || webSearchChanged
 		}
 	}
-	needsOrphanCleanup := account != nil && account.IsOpenAIOAuthLike() &&
+	needsOrphanCleanup := !opts.HTTPPolicy.preservesCodexExec() && account != nil && account.IsOpenAIOAuthLike() &&
 		gjson.GetBytes(normalized, "input").IsArray()
-	if needsOrphanCleanup || openAIResponsesInputMayNeedTruncation(normalized) {
+	if !opts.HTTPPolicy.preservesCodexExec() && (needsOrphanCleanup || openAIResponsesInputMayNeedTruncation(normalized)) {
 		var reqBody map[string]any
 		if err := decodeOpenAIJSONUseNumber(normalized, &reqBody); err != nil {
 			return body, false, fmt.Errorf("normalize websocket Responses body: %w", err)
@@ -1583,7 +1588,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = true
 		}
 	}
-	if account != nil {
+	if account != nil && !opts.HTTPPolicy.preservesCodexExec() {
 		if schemaBody, schemaChanged, err := sanitizeOpenAIResponsesToolSchemasForPlatform(normalized, account.Platform); err != nil {
 			return body, false, fmt.Errorf("normalize websocket tool schemas: %w", err)
 		} else if schemaChanged {

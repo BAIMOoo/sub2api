@@ -620,11 +620,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			searchCounter += countGrokNativeSearchCallsInSSEDataDedup(dataBytes, streamSearchSeen)
 
 			// Correct Codex tool calls if needed (apply_patch -> edit, etc.)
-			if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
-				dataBytes = correctedData
-				data = string(correctedData)
-				line = "data: " + data
-				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
+			if !codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+				if correctedData, corrected := s.toolCorrector.CorrectToolCallsInSSEBytes(dataBytes); corrected {
+					dataBytes = correctedData
+					data = string(correctedData)
+					line = "data: " + data
+					eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
+				}
 			}
 			if imageOutput, ok := extractImageGenerationOutputFromSSEData(dataBytes, streamSeenImages); ok {
 				streamImageOutputs = append(streamImageOutputs, imageOutput)
@@ -1686,6 +1688,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
+	adapted, adaptErr := normalizeCodexHTTPCompactResponse(c, account, body)
+	if adaptErr != nil {
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, adaptErr.Error())
+	}
+	body = adapted
+
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -1760,7 +1768,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 		}
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		if !codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			body = s.correctToolCallsInResponseBody(body)
+		}
 		restoredBody, restoreErr := restoreGrokResponsesClientToolPayload(c, body)
 		if restoreErr != nil {
 			return nil, fmt.Errorf("restore Grok Responses client tool response: %w", restoreErr)
@@ -1782,6 +1792,18 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		body = []byte(bodyText)
 	}
 
+	if codexHTTPPolicyForRequest(c, account).preservesCodexExec() && (!ok || terminalType != "response.completed") {
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, "Codex response did not complete")
+	}
+
+	if ok {
+		adapted, adaptErr := normalizeCodexHTTPCompactResponse(c, account, body)
+		if adaptErr != nil {
+			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, adaptErr.Error())
+		}
+		body = adapted
+	}
+
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, usage, terminalType, false)
 	s.relayOpenAICodexTurnState(c, account, resp.Header)
@@ -1793,6 +1815,10 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			contentType = "text/event-stream"
 		}
 	}
+	if ok && codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		c.Header("Content-Type", "application/json; charset=utf-8")
+	}
+
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}

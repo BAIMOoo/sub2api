@@ -1,0 +1,6 @@
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 355
+Connection: close
+
+{"accounts": [{"id": "00000000-0000-4000-8000-000000000001", "plan_type": "plus", "workspace_backend_origin": "https://chatgpt.com", "account_routing_override": "NO_CONSTRAINT", "name": "Offline fixture", "structure": "personal"}], "account_ordering": ["00000000-0000-4000-8000-000000000001"], "default_account_id": "00000000-0000-4000-8000-000000000001"}

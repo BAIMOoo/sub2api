@@ -256,7 +256,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 
 	// 官方工具布局由 Responses Lite 模式决定，与 HTTP/WS 传输方式无关。
 	// 只在 Lite 模式兼容搬迁第三方函数工具；标准模式保留合法的顶层 tools。
-	if opts.ResponsesLite && promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
+	if !opts.HTTPPolicy.preservesCodexExec() && opts.ResponsesLite && promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
 		result.Modified = true
 	}
 
@@ -277,6 +277,12 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		result.Modified = true
 	}
 
+	if opts.HTTPPolicy.preservesCodexExec() {
+		if err := validateCodexHTTPFunctionTools(reqBody); err != nil {
+			result.Error = err
+			return result
+		}
+	}
 	if normalizeCodexTools(reqBody) {
 		result.Modified = true
 	}
@@ -305,7 +311,19 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if toolNamesChanged {
 		result.Modified = true
 	}
-	if normalizeCodexToolChoice(reqBody) {
+	if opts.HTTPPolicy.preservesCodexExec() {
+		// Only flatten the legacy function reference. A missing declaration is
+		// an upstream validation error, never permission to widen choice to auto.
+		if choice, ok := reqBody["tool_choice"].(map[string]any); ok && choice["type"] == "function" {
+			if function, ok := choice["function"].(map[string]any); ok {
+				if choice["name"] == nil {
+					choice["name"] = function["name"]
+				}
+				delete(choice, "function")
+				result.Modified = true
+			}
+		}
+	} else if normalizeCodexToolChoice(reqBody) {
 		result.Modified = true
 	}
 
@@ -333,18 +351,18 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if !opts.SkipDefaultInstructions && applyInstructions(reqBody, opts.IsCodexCLI) {
 		result.Modified = true
 	}
-	if isCodexSparkModel(normalizedModel) && applyCodexSparkImageUnsupportedInstructions(reqBody) {
+	if !opts.HTTPPolicy.preservesCodexExec() && isCodexSparkModel(normalizedModel) && applyCodexSparkImageUnsupportedInstructions(reqBody) {
 		result.Modified = true
 	}
 	// gpt-5.3-codex-spark rejects the image_generation tool upstream (HTTP 400,
 	// param=tools); Codex CLI advertises it by default, so strip it for spark.
-	if isCodexSparkModel(normalizedModel) && stripCodexSparkImageGenerationTools(reqBody) {
+	if !opts.HTTPPolicy.preservesCodexExec() && isCodexSparkModel(normalizedModel) && stripCodexSparkImageGenerationTools(reqBody) {
 		result.Modified = true
 	}
 
 	// 续链场景保留 item_reference 与 id，避免 call_id 上下文丢失。
 	if input, ok := reqBody["input"].([]any); ok {
-		if normalizedInput, modified := normalizeCodexToolRoleMessages(input); modified {
+		if normalizedInput, modified := normalizeCodexToolRoleMessagesWithPolicy(input, opts.HTTPPolicy); modified {
 			input = normalizedInput
 			result.Modified = true
 		}
@@ -353,7 +371,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			result.Modified = true
 		}
 		input = filterCodexInputWithOptions(input, codexInputFilterOptions{
-			PreserveReferences: needsToolContinuation,
+			PreserveReferences: needsToolContinuation || opts.HTTPPolicy.preservesCodexExec(),
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
 			HTTPPolicy:         opts.HTTPPolicy,
 		})
@@ -367,7 +385,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 
 	// Runs after input filtering so it sees the final replayed history. The
 	// compact endpoint has its own wire shape and is left untouched.
-	if !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
+	if !opts.HTTPPolicy.preservesCodexExec() && !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
 		result.Modified = true
 	}
 
@@ -633,7 +651,7 @@ func codexToolsContainFunctionName(rawTools any, name string) bool {
 	return false
 }
 
-func normalizeCodexToolRoleMessages(input []any) ([]any, bool) {
+func normalizeCodexToolRoleMessagesWithPolicy(input []any, policy codexHTTPPolicy) ([]any, bool) {
 	if len(input) == 0 {
 		return input, false
 	}
@@ -669,12 +687,14 @@ func normalizeCodexToolRoleMessages(input []any) ([]any, bool) {
 		}
 
 		output := extractTextFromContent(m["content"])
-		if output == "" {
+		_, losslessText := extractLosslessTextFromContent(m["content"])
+		preserveEmpty := policy.preservesCodexExec() && losslessText
+		if output == "" && !preserveEmpty {
 			if value, ok := m["output"].(string); ok {
 				output = value
 			}
 		}
-		if output == "" && m["content"] != nil {
+		if output == "" && m["content"] != nil && !preserveEmpty {
 			if b, err := json.Marshal(m["content"]); err == nil {
 				output = string(b)
 			}
@@ -1621,6 +1641,10 @@ func ensureCodexReasoningInclude(reqBody map[string]any) bool {
 	if !ok || len(reasoning) == 0 {
 		return false
 	}
+	return ensureCodexEncryptedContentInclude(reqBody)
+}
+
+func ensureCodexEncryptedContentInclude(reqBody map[string]any) bool {
 	const encrypted = "reasoning.encrypted_content"
 	switch existing := reqBody["include"].(type) {
 	case nil:

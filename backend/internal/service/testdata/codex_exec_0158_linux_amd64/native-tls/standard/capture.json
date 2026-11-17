@@ -1,0 +1,57 @@
+{
+  "name": "native-http-tls-standard",
+  "model": "gpt-5.5",
+  "auth_kind": "api_key",
+  "tls_only": true,
+  "compact_requested": false,
+  "returncode": -15,
+  "timed_out": false,
+  "stopped_after_hello": true,
+  "records": [
+    {
+      "file": "clienthello-01.bin",
+      "bytes": 1468,
+      "sha256": "3f6ebdca791095f085953ad8e1584e6642a5bad6e8875ba0128324d78d9a063d"
+    },
+    {
+      "file": "clienthello-02.bin",
+      "bytes": 1468,
+      "sha256": "75fb674f9f459247ac95bac97806040270675b7fb85afcbaece6d50923662878"
+    },
+    {
+      "file": "clienthello-03.bin",
+      "bytes": 1468,
+      "sha256": "a479dc26242bcc70f4355c9a0772bb94b8b68bab6de8e18d506974c2864a8afc"
+    },
+    {
+      "file": "clienthello-04.bin",
+      "bytes": 1468,
+      "sha256": "27a6e5ef23519ecffec813970e7e1d96e2ceed54cc833ccf12e2f8acbb3dd3ca"
+    },
+    {
+      "file": "clienthello-05.bin",
+      "bytes": 1468,
+      "sha256": "62e3adbe40d1746b2fa8efb0b8fb180ce39eda3554cb325abe405d5866b963b1"
+    },
+    {
+      "file": "clienthello-06.bin",
+      "bytes": 1468,
+      "sha256": "65adea0f94011059a66d6b118e5c49fbd629f9dea6aaeb684b3069864dbddb86"
+    },
+    {
+      "file": "clienthello-07.bin",
+      "bytes": 1468,
+      "sha256": "25d6316f752a0c7c9d301124565a416c2bf1095aa723567af82c18118295fb29"
+    },
+    {
+      "file": "clienthello-08.bin",
+      "bytes": 1542,
+      "sha256": "4a930215c8421f239b26bb0620a162db81a7b72f736153e02d6cfe9dab7d2dbb"
+    },
+    {
+      "file": "clienthello-09.bin",
+      "bytes": 1542,
+      "sha256": "68f1db7895d3c1258b4e18c7cb956130b835e0178ffdc9f7de70b7f5ebfda1c8"
+    }
+  ]
+}

@@ -73,6 +73,11 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	defaultMappedModel string,
 	compatPromptCacheTenantIsolated bool,
 ) (*OpenAIForwardResult, error) {
+	preparedBody, prepareErr := prepareCodexHTTPIngress(c, account, body)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
+	body = preparedBody
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
@@ -156,6 +161,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// 1. Parse Chat Completions request
 	var chatReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatReq); err != nil {
+		if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			writeCodexHTTPCompatibilityError(c, err)
+		}
 		return nil, fmt.Errorf("parse chat completions request: %w", err)
 	}
 	originalModel := chatReq.Model
@@ -231,8 +239,15 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		// Normal path: convert Chat Completions → Responses.
 		// ChatCompletionsToResponses always sets Stream=true (upstream always streams).
 		chatReq.Model = upstreamModel
-		responsesReq, err = chatCompletionsToResponses(s.cfg, &chatReq)
+		if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			responsesReq, err = apicompat.ChatCompletionsToResponsesWithOptions(&chatReq, configuredMinOutputTokens(s.cfg), apicompat.ChatCompletionsToResponsesOptions{PreserveCodexContent: true})
+		} else {
+			responsesReq, err = chatCompletionsToResponses(s.cfg, &chatReq)
+		}
 		if err != nil {
+			if codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+				writeCodexHTTPCompatibilityError(c, err)
+			}
 			return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 		}
 		responsesReq.Model = upstreamModel
@@ -261,12 +276,20 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 
 	if account.UsesOpenAICodexProtocol() {
 		var reqBody map[string]any
-		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+		if err := decodeOpenAIJSONUseNumber(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
+		}
+		httpPolicy := codexHTTPPolicyForRequest(c, account)
+		responsesLite := false
+		if httpPolicy.preservesCodexExec() {
+			responsesLite = resolveCodexHTTPMode(c, account, upstreamModel, responsesBody).lite
 		}
 		isJSONObjectFormat := strings.EqualFold(strings.TrimSpace(gjson.GetBytes(responsesBody, "text.format.type").String()), "json_object")
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 			SkipDefaultInstructions:             true,
+			HTTPPolicy:                          httpPolicy,
+			ResponsesLite:                       responsesLite,
+			PreserveToolCallIDs:                 httpPolicy.preservesCodexExec(),
 			OmitPromotedSystemMessagesFromInput: !isResponsesShape && !isJSONObjectFormat,
 			KeepSystemMessagesInInput:           true,
 		})
@@ -296,7 +319,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	if account.Type == AccountTypeAPIKey {
 		if trimmedKey := strings.TrimSpace(promptCacheKey); trimmedKey != "" {
 			var reqBody map[string]any
-			if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+			if err := decodeOpenAIJSONUseNumber(responsesBody, &reqBody); err != nil {
 				return nil, fmt.Errorf("unmarshal for prompt cache key injection: %w", err)
 			}
 			if existing, ok := reqBody["prompt_cache_key"].(string); !ok || strings.TrimSpace(existing) == "" {

@@ -1,0 +1,16 @@
+POST /backend-api/codex/responses HTTP/1.1
+version: 0.158.0
+x-codex-beta-features: remote_compaction_v2
+x-codex-window-id: 01a1e8ab-d9bf-71e3-a290-6af8fec2dffd:0
+x-codex-turn-metadata: {"installation_id":"c8a30bfa-a617-4d0b-8e50-2ffdb3e74eb4","session_id":"01a1e8ab-d9bf-71e3-a290-6af8fec2dffd","thread_id":"01a1e8ab-d9bf-71e3-a290-6af8fec2dffd","agent_name":"/root","turn_id":"01a1e8ab-da9f-7003-9dd1-2a4ff274e7b1","window_id":"01a1e8ab-d9bf-71e3-a290-6af8fec2dffd:0","window_number":0,"context_window_id":"01a1e8ab-d9cc-7860-8343-38cb118df440","request_kind":"compaction","root_turn_id":"01a1e8ab-da9f-7003-9dd1-2a4ff274e7b1","thread_source":"user","turn_trigger":"exec","sandbox":"seccomp","sandbox_mode":"read-only","auto_review_enabled":false,"node_repl_auto_review_required":false,"node_repl_disabled":false,"turn_started_at_unix_ms":1794904939187,"analytics_enabled":false,"compaction":{"trigger":"auto","reason":"context_limit","implementation":"responses_compaction_v2","phase":"mid_turn","strategy":"memento"}}
+x-client-request-id: 01a1e8ab-d9bf-71e3-a290-6af8fec2dffd
+session-id: 01a1e8ab-d9bf-71e3-a290-6af8fec2dffd
+thread-id: 01a1e8ab-d9bf-71e3-a290-6af8fec2dffd
+accept: text/event-stream
+content-type: application/json
+authorization: Bearer codex-fixture-fake-api-key-not-a-secret
+originator: codex_exec
+user-agent: codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)
+host: chatgpt.com
+content-length: 39665
+

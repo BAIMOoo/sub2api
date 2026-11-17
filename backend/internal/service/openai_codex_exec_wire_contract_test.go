@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,10 +15,57 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestCodexHTTPOrderedHeadersMatch0158Reference(t *testing.T) {
+	for _, name := range []string{"standard", "lite"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join("testdata", "codex_exec_0158_linux_amd64")
+			body, err := os.ReadFile(filepath.Join(root, name+".json"))
+			require.NoError(t, err)
+			rawHeaders, err := os.ReadFile(filepath.Join(root, "http", name+".headers.json"))
+			require.NoError(t, err)
+			var reference struct {
+				Headers [][2]string `json:"headers"`
+				Order   []string    `json:"header_order"`
+			}
+			require.NoError(t, json.Unmarshal(rawHeaders, &reference))
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			for _, pair := range reference.Headers {
+				c.Request.Header.Set(pair[0], pair[1])
+			}
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			account := codexBodyEncodingTestAccount(1900)
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "synthetic-token", true, gjson.GetBytes(body, "prompt_cache_key").String(), false)
+			require.NoError(t, err)
+			writer, reader := net.Pipe()
+			t.Cleanup(func() { _ = writer.Close(); _ = reader.Close() })
+			received := make(chan []byte, 1)
+			go func() { wire, _ := io.ReadAll(reader); received <- wire }()
+			ordered := tlsfingerprint.NewOrderedWriteConn(writer, tlsfingerprint.OpenAICodexLinuxProfile().HeaderOrders()...)
+			require.NoError(t, req.Write(ordered))
+			require.NoError(t, ordered.Close())
+			wire := <-received
+			headerBlock, _, ok := bytes.Cut(wire, []byte("\r\n\r\n"))
+			require.True(t, ok)
+			lines := strings.Split(string(headerBlock), "\r\n")
+			require.Equal(t, "POST /backend-api/codex/responses HTTP/1.1", lines[0])
+			var actual []string
+			for _, line := range lines[1:] {
+				key, _, ok := strings.Cut(line, ":")
+				require.True(t, ok)
+				actual = append(actual, key)
+			}
+			require.Equal(t, reference.Order, actual)
+		})
+	}
+}
 
 // Captured official Linux codex exec 0.158.0 requests use fake API-key auth
 // against a loopback mock. Replay their complete JSON through both OAuth gateway
@@ -25,6 +73,15 @@ import (
 // These fixtures prove body preservation, not OAuth TLS or compression equality.
 // Do not parallelize: the test temporarily pins the process-wide identity resolver.
 func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
+	testForwardCodexExecWireLayouts(t, "codex_exec_0158")
+}
+
+func TestForward_CodexExec0158LinuxAMD64WireLayouts(t *testing.T) {
+	testForwardCodexExecWireLayouts(t, "codex_exec_0158_linux_amd64")
+}
+
+func testForwardCodexExecWireLayouts(t *testing.T, fixtureDirectory string) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	const userAgent = "codex_exec/0.158.0 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.158.0)"
 	codexCanonicalUAMu.RLock()
@@ -42,7 +99,7 @@ func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 				if lite {
 					fixture = "lite.json"
 				}
-				body, err := os.ReadFile(filepath.Join("testdata", "codex_exec_0158", fixture))
+				body, err := os.ReadFile(filepath.Join("testdata", fixtureDirectory, fixture))
 				require.NoError(t, err)
 				var request map[string]any
 				require.NoError(t, json.Unmarshal(body, &request))
@@ -82,8 +139,8 @@ func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 				require.NotNil(t, upstream.lastReq)
 				require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
 				require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
-				require.Equal(t, userAgent, upstream.lastReq.Header.Get("user-agent"))
-				require.Equal(t, "0.158.0", upstream.lastReq.Header.Get("version"))
+				require.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("user-agent"))
+				require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
 				require.Equal(t, codexRequestBodyContentEncoding, upstream.lastReq.Header.Get("content-encoding"))
 				require.Equal(t, lite, isOpenAIResponsesLiteHeader(upstream.lastReq.Header.Get(responsesLiteHeader)))
 				var forwarded map[string]any

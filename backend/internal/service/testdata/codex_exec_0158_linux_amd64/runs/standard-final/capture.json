@@ -1,0 +1,773 @@
+{
+  "name": "standard-final",
+  "model": "gpt-5.5",
+  "auth_kind": "api_key",
+  "tls_only": false,
+  "compact_requested": false,
+  "returncode": 0,
+  "timed_out": false,
+  "stopped_after_hello": false,
+  "records": [
+    {
+      "prefix": "request-01",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "zxDe+BkS9++TKpThw9Ovtw=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"prewarm\",\"thread_source\":\"user\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-02",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "kVmd9qAxdW64VCAliR/I6g=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-03",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "gSkQK9rfGBTC5IXaHxZReQ=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-04",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "jV1gX1/RaGaCxc+wTIXy6w=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-05",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "ZRenbDv+49N11GjSHrlACg=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-06",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "Vaow16ClTLiXunRoJnpJzg=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-07",
+      "method": "GET",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "Host",
+        "Connection",
+        "Upgrade",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Key",
+        "authorization",
+        "user-agent",
+        "originator",
+        "openai-beta",
+        "x-codex-turn-metadata",
+        "version",
+        "x-codex-beta-features",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "x-codex-window-id",
+        "sec-websocket-extensions"
+      ],
+      "headers": [
+        [
+          "Host",
+          "chatgpt.com"
+        ],
+        [
+          "Connection",
+          "Upgrade"
+        ],
+        [
+          "Upgrade",
+          "websocket"
+        ],
+        [
+          "Sec-WebSocket-Version",
+          "13"
+        ],
+        [
+          "Sec-WebSocket-Key",
+          "Fa7Y095IeqKC1lLgSHRTcA=="
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "openai-beta",
+          "responses_websockets=2026-02-06"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "sec-websocket-extensions",
+          "permessage-deflate; client_max_window_bits"
+        ]
+      ],
+      "body_bytes": 0,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "prefix": "request-08",
+      "method": "POST",
+      "path": "/backend-api/codex/responses",
+      "http_version": "HTTP/1.1",
+      "header_order": [
+        "version",
+        "x-codex-beta-features",
+        "x-codex-window-id",
+        "x-codex-turn-metadata",
+        "x-client-request-id",
+        "session-id",
+        "thread-id",
+        "accept",
+        "content-type",
+        "authorization",
+        "originator",
+        "user-agent",
+        "host",
+        "content-length"
+      ],
+      "headers": [
+        [
+          "version",
+          "0.158.0"
+        ],
+        [
+          "x-codex-beta-features",
+          "remote_compaction_v2"
+        ],
+        [
+          "x-codex-window-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436:0"
+        ],
+        [
+          "x-codex-turn-metadata",
+          "{\"installation_id\":\"b3363223-e8c4-4f38-a3cd-358ed95dc7ad\",\"session_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"thread_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"window_id\":\"01a1e8ab-9ee6-7792-877a-733006c57436:0\",\"window_number\":0,\"context_window_id\":\"01a1e8ab-9ef0-7db2-844d-097593c18837\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8ab-9fc3-73f1-a177-cb28b50f887d\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794904924111,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+        ],
+        [
+          "x-client-request-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "session-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "thread-id",
+          "01a1e8ab-9ee6-7792-877a-733006c57436"
+        ],
+        [
+          "accept",
+          "text/event-stream"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "authorization",
+          "Bearer codex-fixture-fake-api-key-not-a-secret"
+        ],
+        [
+          "originator",
+          "codex_exec"
+        ],
+        [
+          "user-agent",
+          "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+        ],
+        [
+          "host",
+          "chatgpt.com"
+        ],
+        [
+          "content-length",
+          "39022"
+        ]
+      ],
+      "body_bytes": 39022,
+      "body_sha256": "f2bb6f48b772949f62c4c943ea6406775b98e14dea180d93e4a57055be2537af"
+    }
+  ]
+}

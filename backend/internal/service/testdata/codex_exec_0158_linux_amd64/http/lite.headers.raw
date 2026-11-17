@@ -1,0 +1,20 @@
+POST /backend-api/codex/responses HTTP/1.1
+version: 0.158.0
+x-codex-beta-features: remote_compaction_v2
+x-codex-window-id: 01a1e8b4-5d62-7460-a627-26f78808c7ce:0
+x-codex-turn-metadata: {"installation_id":"4f4a9e85-c94a-4edc-b346-d6a96eddf739","session_id":"01a1e8b4-5d62-7460-a627-26f78808c7ce","thread_id":"01a1e8b4-5d62-7460-a627-26f78808c7ce","agent_name":"/root","turn_id":"01a1e8b4-5f26-78b2-b0f5-fa53a319fc5c","window_id":"01a1e8b4-5d62-7460-a627-26f78808c7ce:0","window_number":0,"context_window_id":"01a1e8b4-5e2f-7403-aa2b-ea3f8a72a0f0","request_kind":"turn","root_turn_id":"01a1e8b4-5f26-78b2-b0f5-fa53a319fc5c","thread_source":"user","turn_trigger":"exec","sandbox":"seccomp","sandbox_mode":"read-only","auto_review_enabled":false,"node_repl_auto_review_required":true,"node_repl_disabled":false,"turn_started_at_unix_ms":1794905497396,"analytics_enabled":false,"model":"gpt-6-astra","reasoning_effort":"low"}
+x-openai-internal-codex-responses-lite: true
+x-codex-routing-hint: model=gpt-6-astra
+x-client-request-id: 01a1e8b4-5d62-7460-a627-26f78808c7ce
+session-id: 01a1e8b4-5d62-7460-a627-26f78808c7ce
+thread-id: 01a1e8b4-5d62-7460-a627-26f78808c7ce
+accept: text/event-stream
+content-encoding: zstd
+content-type: application/json
+authorization: Bearer codex-fixture-fake-access-token-not-a-secret
+chatgpt-account-id: 00000000-0000-4000-8000-000000000001
+originator: codex_exec
+user-agent: codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)
+host: chatgpt.com
+content-length: 23547
+

@@ -1,0 +1,143 @@
+[
+  {
+    "path": "codex-rs/features/src/lib.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/features/src/lib.rs",
+    "sha256": "2c7ff67e2582bd30a4b6f20cdfbae234adfbc4cc7fb3e2f7cae08941bbd190de",
+    "bytes": 64506,
+    "facts": [
+      {
+        "start": 369,
+        "end": 370,
+        "fact": "RemoteCompactionV2 is documented as a removed compatibility key still advertised to Responses."
+      },
+      {
+        "start": 567,
+        "end": 600,
+        "fact": "apply_map ignores remote_compaction_v2 by continuing without applying its boolean."
+      },
+      {
+        "start": 1821,
+        "end": 1826,
+        "fact": "Feature spec marks remote_compaction_v2 Removed; default_enabled false does not enable legacy behavior."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/model-provider/src/provider.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/model-provider/src/provider.rs",
+    "sha256": "18bfce97ebb493e66c456ce6d51e4b71c405a6c17f53d41bfd04563ea22d3d33",
+    "bytes": 54704,
+    "facts": [
+      {
+        "start": 37,
+        "end": 44,
+        "fact": "Only Unsupported and V2 exist in RemoteCompactionSupport; no legacy enum variant."
+      },
+      {
+        "start": 410,
+        "end": 422,
+        "fact": "Configured OpenAI provider always reports V2; no removed feature flag is consulted."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/core/src/session/turn.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/session/turn.rs",
+    "sha256": "1a435159fce55535ca57c7b2be649c52804f971835b6bac492424e921ba524c7",
+    "bytes": 122861,
+    "facts": [
+      {
+        "start": 1440,
+        "end": 1497,
+        "fact": "Automatic compaction chooses token-budget handling or V2/Unsupported; OpenAI dispatches to run_inline_remote_auto_compact_task_v2."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/core/src/tasks/compact.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/tasks/compact.rs",
+    "sha256": "1c1627c7959294525a86fbd0fd1aaee23930d38992e3bd9a1fd7b4fe2ad1d96f",
+    "bytes": 2571,
+    "facts": [
+      {
+        "start": 35,
+        "end": 67,
+        "fact": "Manual compaction uses the same provider capability, selecting remote V2 for OpenAI; unsupported providers use local summarization."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/core/src/compact_token_budget.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/compact_token_budget.rs",
+    "sha256": "a4eea7390e3284de543445d9746475f70ad9f7b45f369c0eea9450d5c445ca2a",
+    "bytes": 3544,
+    "facts": [
+      {
+        "start": 57,
+        "end": 83,
+        "fact": "Token-budget branch resets the local context window with lifecycle hooks; it is not a legacy HTTP compact client."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/core/src/compact_remote_v2_attempt.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/compact_remote_v2_attempt.rs",
+    "sha256": "a090b41ffaa8e669c3c95eff70bb62caa953fecb946bb74bfed32f9121c39ea1",
+    "bytes": 5082,
+    "facts": [
+      {
+        "start": 69,
+        "end": 87,
+        "fact": "Compaction appends CompactionTrigger to the ordinary prompt."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/core/src/compact_remote_v2.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/compact_remote_v2.rs",
+    "sha256": "b0dc8aa62fddaea2903852ab7bb989ed5e4b3a2b90ea4598890e1fbadac1c542",
+    "bytes": 48349,
+    "facts": [
+      {
+        "start": 386,
+        "end": 419,
+        "fact": "Remote V2 uses ModelClientSession::stream."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/codex-api/src/endpoint/responses.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/codex-api/src/endpoint/responses.rs",
+    "sha256": "4f2fff3da4ca3ca9fcfa40ada8e98a0229af296094e03febb4d823f32ef932c8",
+    "bytes": 4961,
+    "facts": [
+      {
+        "start": 123,
+        "end": 148,
+        "fact": "HTTP stream encodes POST /responses and applies selected request compression."
+      }
+    ]
+  },
+  {
+    "path": "codex-rs/codex-api/src/endpoint/mod.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/codex-api/src/endpoint/mod.rs",
+    "sha256": "f312aea34a8beaad0fccf46d4deafc63410c8d0228a161c4d5be2f0665a174db",
+    "bytes": 1362,
+    "facts": [
+      {
+        "start": 1,
+        "end": 34,
+        "fact": "Endpoint module/export list has Responses and no separate compact client."
+      }
+    ]
+  }
+]

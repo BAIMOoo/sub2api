@@ -1,0 +1,19 @@
+POST /backend-api/codex/responses HTTP/1.1
+version: 0.158.0
+x-codex-beta-features: remote_compaction_v2
+x-codex-window-id: 01a1e8c6-89f5-7433-bec0-c0e59ca20714:0
+x-codex-turn-metadata: {"installation_id":"7827e1b9-c95e-43ac-a290-bac327b64b2d","session_id":"01a1e8c6-89f5-7433-bec0-c0e59ca20714","thread_id":"01a1e8c6-89f5-7433-bec0-c0e59ca20714","agent_name":"/root","turn_id":"01a1e8c6-8b9d-7a03-8689-a3ed5f1fbbd0","window_id":"01a1e8c6-89f5-7433-bec0-c0e59ca20714:0","window_number":0,"context_window_id":"01a1e8c6-8ac0-78a1-af55-f08b510111a0","request_kind":"compaction","root_turn_id":"01a1e8c6-8b9d-7a03-8689-a3ed5f1fbbd0","thread_source":"user","turn_trigger":"exec","sandbox":"seccomp","sandbox_mode":"read-only","auto_review_enabled":false,"node_repl_auto_review_required":false,"node_repl_disabled":false,"turn_started_at_unix_ms":1794906688430,"analytics_enabled":false,"compaction":{"trigger":"auto","reason":"context_limit","implementation":"responses_compaction_v2","phase":"mid_turn","strategy":"memento"}}
+x-codex-routing-hint: model=gpt-5.5
+x-client-request-id: 01a1e8c6-89f5-7433-bec0-c0e59ca20714
+session-id: 01a1e8c6-89f5-7433-bec0-c0e59ca20714
+thread-id: 01a1e8c6-89f5-7433-bec0-c0e59ca20714
+accept: text/event-stream
+content-encoding: zstd
+content-type: application/json
+authorization: Bearer codex-fixture-fake-access-token-not-a-secret
+chatgpt-account-id: 00000000-0000-4000-8000-000000000001
+originator: codex_exec
+user-agent: codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)
+host: chatgpt.com
+content-length: 16329
+

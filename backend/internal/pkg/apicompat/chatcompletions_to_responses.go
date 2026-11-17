@@ -13,6 +13,14 @@ type chatMessageContent struct {
 	Parts []ChatContentPart
 }
 
+// ChatCompletionsToResponsesOptions controls channel-specific conversion.
+// The zero value preserves the legacy conversion behavior.
+type ChatCompletionsToResponsesOptions struct {
+	// PreserveCodexContent enables lossless conversion or an explicit error.
+	// Enable only after selecting an ordinary HTTP Codex upstream.
+	PreserveCodexContent bool
+}
+
 // ChatCompletionsToResponses converts a Chat Completions request into a
 // Responses API request. The upstream always streams, so Stream is forced to
 // true. store is always false and reasoning.encrypted_content is always
@@ -24,10 +32,22 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 // ChatCompletionsToResponsesWithMinOutputTokens converts a Chat Completions
 // request using the supplied max_output_tokens floor.
 func ChatCompletionsToResponsesWithMinOutputTokens(req *ChatCompletionsRequest, minOutputTokens int) (*ResponsesRequest, error) {
+	return ChatCompletionsToResponsesWithOptions(req, minOutputTokens, ChatCompletionsToResponsesOptions{})
+}
+
+// ChatCompletionsToResponsesWithOptions converts a Chat Completions request
+// using the supplied max_output_tokens floor and channel-specific options.
+func ChatCompletionsToResponsesWithOptions(req *ChatCompletionsRequest, minOutputTokens int, opts ChatCompletionsToResponsesOptions) (*ResponsesRequest, error) {
 	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, req.ReasoningEffort); err != nil {
 		return nil, err
 	}
-	input, err := convertChatMessagesToResponsesInput(req.Messages)
+	var input any
+	var err error
+	if opts.PreserveCodexContent {
+		input, err = preserveChatMessagesToResponsesInput(req.Messages)
+	} else {
+		input, err = convertChatMessagesToResponsesInput(req.Messages)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -90,14 +110,24 @@ func ChatCompletionsToResponsesWithMinOutputTokens(req *ChatCompletionsRequest, 
 	}
 
 	// tools[] and legacy functions[] → ResponsesTool[]
-	if len(req.Tools) > 0 || len(req.Functions) > 0 {
+	if opts.PreserveCodexContent {
+		out.Tools, err = preserveChatToolsToResponses(req.Tools, req.Functions)
+		if err != nil {
+			return nil, err
+		}
+	} else if len(req.Tools) > 0 || len(req.Functions) > 0 {
 		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
 	}
 
 	// tool_choice: strings and Responses-shaped objects pass through; a named
 	// Chat choice nests the name under "function" and must be flattened.
 	// Legacy function_call needs mapping.
-	if len(req.ToolChoice) > 0 {
+	if opts.PreserveCodexContent {
+		out.ToolChoice, err = preserveChatToolChoiceToResponses(req.ToolChoice, req.FunctionCall, out.Tools)
+		if err != nil {
+			return nil, err
+		}
+	} else if len(req.ToolChoice) > 0 {
 		out.ToolChoice = convertChatToolChoiceToResponses(req.ToolChoice)
 	} else if len(req.FunctionCall) > 0 {
 		tc, err := convertChatFunctionCallToToolChoice(req.FunctionCall)
@@ -108,6 +138,353 @@ func ChatCompletionsToResponsesWithMinOutputTokens(req *ChatCompletionsRequest, 
 	}
 
 	return out, nil
+}
+
+// Converter-local wire values retain explicit empty strings and image detail,
+// which the shared Responses structs cannot marshal without losing fields.
+func preserveChatMessagesToResponsesInput(msgs []ChatMessage) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(msgs))
+	legacyIDs := legacyFunctionCallIDs{msgs: msgs}
+	callNames := make(map[string]string)
+	for i, m := range msgs {
+		if m.Role == "assistant" && m.FunctionCall != nil {
+			if len(m.ToolCalls) > 0 {
+				return nil, fmt.Errorf("messages[%d]: cannot preserve both function_call and tool_calls", i)
+			}
+			m.ToolCalls = []ChatToolCall{{ID: legacyIDs.assign(m.FunctionCall.Name), Type: "function", Function: *m.FunctionCall}}
+			m.FunctionCall = nil
+		}
+		if m.Role == "function" && m.ToolCallID == "" {
+			m.ToolCallID = legacyIDs.claim(m.Name)
+		}
+		items, err := preserveChatMessageToResponsesItems(m)
+		if err != nil {
+			return nil, fmt.Errorf("messages[%d]: %w", i, err)
+		}
+		for _, tc := range m.ToolCalls {
+			if _, exists := callNames[tc.ID]; exists {
+				return nil, fmt.Errorf("messages[%d]: duplicate tool call id cannot be preserved", i)
+			}
+			callNames[tc.ID] = tc.Function.Name
+		}
+		if m.Role == "function" {
+			if name, exists := callNames[m.ToolCallID]; !exists || name != m.Name {
+				return nil, fmt.Errorf("messages[%d]: function result has no matching named call", i)
+			}
+		}
+		out = append(out, items...)
+	}
+	return out, nil
+}
+
+func preserveChatMessageToResponsesItems(m ChatMessage) ([]map[string]any, error) {
+	switch m.Role {
+	case "system", "developer", "user", "assistant", "tool", "function":
+	default:
+		return nil, fmt.Errorf("unsupported role %q", m.Role)
+	}
+	if m.ReasoningContent != "" || m.Reasoning != "" {
+		return nil, fmt.Errorf("reasoning text cannot be preserved as valid Codex reasoning replay")
+	}
+	if m.Name != "" && m.Role != "function" {
+		return nil, fmt.Errorf("message name cannot be preserved in Responses")
+	}
+	if m.FunctionCall != nil || (len(m.ToolCalls) > 0 && m.Role != "assistant") {
+		return nil, fmt.Errorf("function_call and tool_calls require an assistant message")
+	}
+	if m.ToolCallID != "" && m.Role != "tool" && m.Role != "function" {
+		return nil, fmt.Errorf("tool_call_id requires a tool or function result")
+	}
+	if m.Refusal != "" && m.Role != "assistant" {
+		return nil, fmt.Errorf("refusal requires an assistant message")
+	}
+	content, err := preserveChatContent(m.Content, m.Role)
+	if err != nil {
+		return nil, err
+	}
+	if m.Role == "tool" || m.Role == "function" {
+		if strings.TrimSpace(m.ToolCallID) == "" {
+			return nil, fmt.Errorf("%s result requires a matching tool_call_id", m.Role)
+		}
+		return []map[string]any{{"type": "function_call_output", "call_id": m.ToolCallID, "output": content}}, nil
+	}
+
+	if m.Refusal != "" {
+		var parts []map[string]any
+		switch c := content.(type) {
+		case string:
+			if len(normalizedRawJSON(m.Content)) > 0 {
+				parts = append(parts, map[string]any{"type": "output_text", "text": c})
+			}
+		case []map[string]any:
+			parts = c
+		}
+		content = append(parts, map[string]any{"type": "refusal", "refusal": m.Refusal})
+	}
+	var items []map[string]any
+	// Null/absent assistant content accompanies calls without adding a prompt.
+	// Explicit strings and arrays, including empty ones, keep their position.
+	if m.Role != "assistant" || len(normalizedRawJSON(m.Content)) > 0 || m.Refusal != "" || len(m.ToolCalls) == 0 {
+		items = append(items, map[string]any{"type": "message", "role": m.Role, "content": content})
+	}
+	for i, tc := range m.ToolCalls {
+		if tc.Type != "function" {
+			return nil, fmt.Errorf("tool_calls[%d]: unsupported type %q", i, tc.Type)
+		}
+		if strings.TrimSpace(tc.ID) == "" || strings.TrimSpace(tc.Function.Name) == "" {
+			return nil, fmt.Errorf("tool_calls[%d]: function call requires an id and name", i)
+		}
+		if tc.Index != nil {
+			return nil, fmt.Errorf("tool_calls[%d]: streaming index cannot be preserved in a request", i)
+		}
+		items = append(items, map[string]any{
+			"type": "function_call", "call_id": tc.ID,
+			"name": tc.Function.Name, "arguments": tc.Function.Arguments,
+		})
+	}
+	return items, nil
+}
+
+func preserveChatContent(raw json.RawMessage, role string) (any, error) {
+	raw = normalizedRawJSON(raw)
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text, nil
+	}
+	var rawParts []json.RawMessage
+	if err := json.Unmarshal(raw, &rawParts); err != nil {
+		return nil, fmt.Errorf("content must be a string or typed parts array")
+	}
+	parts := make([]map[string]any, 0, len(rawParts))
+	for i, rawPart := range rawParts {
+		part, err := preserveChatContentPart(rawPart, role)
+		if err != nil {
+			return nil, fmt.Errorf("content[%d]: %w", i, err)
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
+func preserveChatContentPart(raw json.RawMessage, role string) (map[string]any, error) {
+	var header struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return nil, fmt.Errorf("content part must be a typed object")
+	}
+	var field string
+	switch header.Type {
+	case "text":
+		field = "text"
+	case "refusal":
+		if role != "assistant" {
+			return nil, fmt.Errorf("refusal content requires an assistant message")
+		}
+		field = "refusal"
+	case "image_url", "file":
+		if role != "user" && role != "system" && role != "developer" {
+			return nil, fmt.Errorf("%s content cannot be preserved for role %s", header.Type, role)
+		}
+		field = header.Type
+	default:
+		return nil, fmt.Errorf("unsupported content type %q cannot be preserved", header.Type)
+	}
+	obj, err := preservedChatObject(raw, "type", field, "prompt_cache_breakpoint")
+	if err != nil {
+		return nil, err
+	}
+	part := make(map[string]any)
+	if cache, ok := obj["prompt_cache_breakpoint"]; ok {
+		part["prompt_cache_breakpoint"] = cache
+	}
+	switch header.Type {
+	case "text", "refusal":
+		text, err := preservedChatString(obj[field])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", field, err)
+		}
+		part["type"] = "input_text"
+		if role == "assistant" {
+			part["type"] = "output_text"
+		}
+		if header.Type == "refusal" {
+			part["type"] = "refusal"
+		}
+		part[field] = text
+	case "image_url":
+		image, err := preservedChatObject(obj[field], "url", "detail")
+		if err != nil {
+			return nil, fmt.Errorf("image_url: %w", err)
+		}
+		url, err := preservedChatString(image["url"])
+		if err != nil || strings.TrimSpace(url) == "" || isEmptyBase64DataURI(url) {
+			return nil, fmt.Errorf("image_url requires a nonempty image URL or data payload")
+		}
+		part["type"], part["image_url"] = "input_image", url
+		if detail, ok := image["detail"]; ok {
+			if _, err := preservedChatString(detail); err != nil {
+				return nil, fmt.Errorf("image detail: %w", err)
+			}
+			part["detail"] = detail
+		}
+	case "file":
+		file, err := preservedChatObject(obj[field], "filename", "file_data", "file_id")
+		if err != nil {
+			return nil, fmt.Errorf("file: %w", err)
+		}
+		part["type"] = "input_file"
+		hasPayload := false
+		for key, value := range file {
+			text, err := preservedChatString(value)
+			if err != nil {
+				return nil, fmt.Errorf("file.%s: %w", key, err)
+			}
+			part[key] = text
+			if (key == "file_data" || key == "file_id") && strings.TrimSpace(text) != "" {
+				hasPayload = true
+			}
+		}
+		if !hasPayload {
+			return nil, fmt.Errorf("file requires file_data or file_id")
+		}
+	}
+	return part, nil
+}
+
+// Check raw content and choice objects before rewriting them: decoding only
+// the known fields would silently discard caller-provided semantics.
+func preservedChatObject(raw json.RawMessage, fields ...string) (map[string]json.RawMessage, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, fmt.Errorf("expected an object")
+	}
+	for key := range obj {
+		allowed := false
+		for _, field := range fields {
+			if key == field {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, fmt.Errorf("unsupported field %q cannot be preserved", key)
+		}
+	}
+	return obj, nil
+}
+
+func preservedChatString(raw json.RawMessage) (string, error) {
+	var value *string
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return "", fmt.Errorf("expected a string")
+	}
+	return *value, nil
+}
+
+func preserveChatToolsToResponses(tools []ChatTool, functions []ChatFunction) ([]ResponsesTool, error) {
+	var out []ResponsesTool
+	names := make(map[string]bool)
+	add := func(f ChatFunction) error {
+		if strings.TrimSpace(f.Name) == "" {
+			return fmt.Errorf("function requires a name")
+		}
+		if names[f.Name] {
+			return fmt.Errorf("duplicate function name cannot be preserved")
+		}
+		if len(f.Parameters) > 0 {
+			var schema map[string]json.RawMessage
+			if err := json.Unmarshal(f.Parameters, &schema); err != nil || schema == nil {
+				return fmt.Errorf("function parameters must be a JSON schema object")
+			}
+		}
+		names[f.Name] = true
+		out = append(out, ResponsesTool{
+			Type: "function", Name: f.Name, Description: f.Description,
+			Parameters: f.Parameters, Strict: defaultStrictFalse(f.Strict),
+		})
+		return nil
+	}
+	for i, t := range tools {
+		if t.Type != "function" || t.Function == nil {
+			return nil, fmt.Errorf("tools[%d]: unsupported tool type %q or missing function definition", i, t.Type)
+		}
+		if len(t.AllowedXHandles) > 0 || len(t.ExcludedXHandles) > 0 || t.FromDate != "" || t.ToDate != "" || t.EnableImageUnderstanding != nil || t.EnableVideoUnderstanding != nil {
+			return nil, fmt.Errorf("tools[%d]: search options cannot be preserved on a function tool", i)
+		}
+		if err := add(*t.Function); err != nil {
+			return nil, fmt.Errorf("tools[%d]: %w", i, err)
+		}
+	}
+	for i, f := range functions {
+		if err := add(f); err != nil {
+			return nil, fmt.Errorf("functions[%d]: %w", i, err)
+		}
+	}
+	return out, nil
+}
+
+func preserveChatToolChoiceToResponses(choice, legacy json.RawMessage, tools []ResponsesTool) (json.RawMessage, error) {
+	choice, legacy = normalizedRawJSON(choice), normalizedRawJSON(legacy)
+	if len(choice) > 0 && len(legacy) > 0 {
+		return nil, fmt.Errorf("cannot preserve both tool_choice and function_call policies")
+	}
+	field := "tool_choice"
+	if len(legacy) > 0 {
+		choice, field = legacy, "function_call"
+	}
+	if len(choice) == 0 {
+		return nil, nil
+	}
+	if mode, err := preservedChatString(choice); err == nil {
+		if mode != "auto" && mode != "none" && (mode != "required" || field == "function_call") {
+			return nil, fmt.Errorf("%s: unsupported selection policy", field)
+		}
+		if mode == "required" && len(tools) == 0 {
+			return nil, fmt.Errorf("tool_choice requires a declared tool")
+		}
+		return choice, nil
+	}
+	var nameRaw json.RawMessage
+	if field == "function_call" {
+		obj, err := preservedChatObject(choice, "name")
+		if err != nil {
+			return nil, fmt.Errorf("function_call: %w", err)
+		}
+		nameRaw = obj["name"]
+	} else {
+		obj, err := preservedChatObject(choice, "type", "function", "name")
+		if err != nil {
+			return nil, fmt.Errorf("tool_choice: %w", err)
+		}
+		if typ, err := preservedChatString(obj["type"]); err != nil || typ != "function" {
+			return nil, fmt.Errorf("tool_choice: unsupported selection type")
+		}
+		nameRaw = obj["name"]
+		if nested, ok := obj["function"]; ok {
+			if nameRaw != nil {
+				return nil, fmt.Errorf("tool_choice: cannot preserve both flat and nested function names")
+			}
+			function, err := preservedChatObject(nested, "name")
+			if err != nil {
+				return nil, fmt.Errorf("tool_choice.function: %w", err)
+			}
+			nameRaw = function["name"]
+		}
+	}
+	name, err := preservedChatString(nameRaw)
+	if err != nil || strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("%s: function selection requires a name", field)
+	}
+	for _, tool := range tools {
+		if tool.Type == "function" && tool.Name == name {
+			return json.Marshal(map[string]string{"type": "function", "name": name})
+		}
+	}
+	return nil, fmt.Errorf("%s: selected function is not declared", field)
 }
 
 // convertChatMessagesToResponsesInput converts the Chat Completions messages

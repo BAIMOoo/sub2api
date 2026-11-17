@@ -1,0 +1,105 @@
+{
+  "prefix": "request-12",
+  "method": "POST",
+  "path": "/backend-api/codex/responses",
+  "http_version": "HTTP/1.1",
+  "header_order": [
+    "version",
+    "x-codex-beta-features",
+    "x-codex-window-id",
+    "x-codex-turn-metadata",
+    "x-codex-routing-hint",
+    "x-client-request-id",
+    "session-id",
+    "thread-id",
+    "accept",
+    "content-encoding",
+    "content-type",
+    "authorization",
+    "chatgpt-account-id",
+    "originator",
+    "user-agent",
+    "host",
+    "content-length"
+  ],
+  "headers": [
+    [
+      "version",
+      "0.158.0"
+    ],
+    [
+      "x-codex-beta-features",
+      "remote_compaction_v2"
+    ],
+    [
+      "x-codex-window-id",
+      "01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9:0"
+    ],
+    [
+      "x-codex-turn-metadata",
+      "{\"installation_id\":\"a2cfa693-52fa-4d63-8a8b-c4f3be2f20e7\",\"session_id\":\"01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9\",\"thread_id\":\"01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9\",\"agent_name\":\"/root\",\"turn_id\":\"01a1e8b4-7d74-7c22-af5e-1c88bcda358c\",\"window_id\":\"01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9:0\",\"window_number\":0,\"context_window_id\":\"01a1e8b4-7c99-7321-b8b3-44eb159333ce\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a1e8b4-7d74-7c22-af5e-1c88bcda358c\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"seccomp\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1794905505156,\"analytics_enabled\":false,\"model\":\"gpt-5.5\",\"reasoning_effort\":\"medium\"}"
+    ],
+    [
+      "x-codex-routing-hint",
+      "model=gpt-5.5"
+    ],
+    [
+      "x-client-request-id",
+      "01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9"
+    ],
+    [
+      "session-id",
+      "01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9"
+    ],
+    [
+      "thread-id",
+      "01a1e8b4-7be9-77b0-a7d9-3e192d19cbc9"
+    ],
+    [
+      "accept",
+      "text/event-stream"
+    ],
+    [
+      "content-encoding",
+      "zstd"
+    ],
+    [
+      "content-type",
+      "application/json"
+    ],
+    [
+      "authorization",
+      "Bearer codex-fixture-fake-access-token-not-a-secret"
+    ],
+    [
+      "chatgpt-account-id",
+      "00000000-0000-4000-8000-000000000001"
+    ],
+    [
+      "originator",
+      "codex_exec"
+    ],
+    [
+      "user-agent",
+      "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+    ],
+    [
+      "host",
+      "chatgpt.com"
+    ],
+    [
+      "content-length",
+      "16147"
+    ]
+  ],
+  "body_bytes": 16147,
+  "body_sha256": "41319280e004bd04ea8e720fb00758bdc758897a6c43dba43470ed0d4629d6d0",
+  "evidence": "synthetic_chatgpt_local_https_custom_ca_http_only",
+  "source_run": "compact-oauth-leaf",
+  "source_record": "request-12",
+  "request_sha256": "5665fe638f962b07b82a986dc6eb155b3cbc3149c1b3d2d570765cd93c2fcb5a",
+  "headers_sha256": "298338a7c4a5bfa1363c03fb5455e6c2eaff6a8d9a34198de2bed7c4631ddbb2",
+  "user_agent": "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)",
+  "auth_synthetic": true,
+  "request_mutations": "none; captured generated IDs and fake authorization retained verbatim"
+}

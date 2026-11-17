@@ -1,0 +1,142 @@
+{
+  "evidence": "native_default_tls_offer_local",
+  "legacy_version": 771,
+  "cipher_suites": [
+    4866,
+    4865,
+    4867,
+    49196,
+    49195,
+    52393,
+    49200,
+    49199,
+    52392,
+    255
+  ],
+  "compression_methods": [
+    0
+  ],
+  "extension_order": [
+    51,
+    45,
+    10,
+    43,
+    11,
+    13,
+    23,
+    35,
+    5,
+    0
+  ],
+  "extensions": {
+    "51": [
+      4588,
+      29
+    ],
+    "45": [
+      1
+    ],
+    "10": [
+      4588,
+      29,
+      23,
+      24
+    ],
+    "43": [
+      772,
+      771
+    ],
+    "11": [
+      0
+    ],
+    "13": [
+      1283,
+      1027,
+      1539,
+      2055,
+      2054,
+      2053,
+      2052,
+      1537,
+      1281,
+      1025,
+      2308,
+      2309,
+      2310
+    ]
+  },
+  "tls_record_version": 769,
+  "record_bytes": 1468,
+  "session_id_bytes": 32,
+  "server_names": [
+    {
+      "name_type": 0,
+      "name": "chatgpt.com"
+    }
+  ],
+  "extension_lengths": [
+    {
+      "type": 51,
+      "length": 1258
+    },
+    {
+      "type": 45,
+      "length": 2
+    },
+    {
+      "type": 10,
+      "length": 10
+    },
+    {
+      "type": 43,
+      "length": 5
+    },
+    {
+      "type": 11,
+      "length": 2
+    },
+    {
+      "type": 13,
+      "length": 28
+    },
+    {
+      "type": 23,
+      "length": 0
+    },
+    {
+      "type": 35,
+      "length": 0
+    },
+    {
+      "type": 5,
+      "length": 5
+    },
+    {
+      "type": 0,
+      "length": 16
+    }
+  ],
+  "key_share_lengths": [
+    {
+      "group": 4588,
+      "bytes": 1216
+    },
+    {
+      "group": 29,
+      "bytes": 32
+    }
+  ],
+  "alpn": [],
+  "grease_present": false,
+  "ja3": "771,4866-4865-4867-49196-49195-52393-49200-49199-52392-255,51-45-10-43-11-13-23-35-5-0,4588-29-23-24,0",
+  "ja3_md5": "49f98d219fb074328e2cfdaccd369c40",
+  "raw_sha256": "f81b2a8e5bed0d36fe28cd5cfbab82a658d30e7beeaeea429cfa2944b5caac74",
+  "sequence": 7,
+  "transport_branch": "websocket_pre_fallback",
+  "auth_kind": "fake_api_key",
+  "source_run": "native-http-tls-lite",
+  "custom_ca": false,
+  "tls_interception": false,
+  "http_request_sent": false,
+  "server_reply": "TCP close after complete ClientHello; no ServerHello/certificate"
+}

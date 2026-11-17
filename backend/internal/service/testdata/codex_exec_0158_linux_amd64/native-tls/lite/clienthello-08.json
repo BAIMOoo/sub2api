@@ -1,0 +1,184 @@
+{
+  "evidence": "native_default_tls_offer_local",
+  "legacy_version": 771,
+  "cipher_suites": [
+    4866,
+    4867,
+    4865,
+    49196,
+    49200,
+    159,
+    52393,
+    52392,
+    52394,
+    49195,
+    49199,
+    158,
+    49188,
+    49192,
+    107,
+    49187,
+    49191,
+    103,
+    49162,
+    49172,
+    57,
+    49161,
+    49171,
+    51,
+    157,
+    156,
+    61,
+    60,
+    53,
+    47
+  ],
+  "compression_methods": [
+    0
+  ],
+  "extension_order": [
+    65281,
+    0,
+    11,
+    10,
+    35,
+    22,
+    23,
+    13,
+    43,
+    45,
+    51
+  ],
+  "extensions": {
+    "11": [
+      0
+    ],
+    "10": [
+      4588,
+      29,
+      23,
+      30,
+      24,
+      25,
+      256,
+      257
+    ],
+    "13": [
+      2309,
+      2310,
+      2308,
+      1027,
+      1283,
+      1539,
+      2055,
+      2056,
+      2074,
+      2075,
+      2076,
+      2057,
+      2058,
+      2059,
+      2052,
+      2053,
+      2054,
+      1025,
+      1281,
+      1537,
+      771,
+      769,
+      770,
+      1026,
+      1282,
+      1538
+    ],
+    "43": [
+      772,
+      771
+    ],
+    "45": [
+      1
+    ],
+    "51": [
+      4588,
+      29
+    ]
+  },
+  "tls_record_version": 769,
+  "record_bytes": 1542,
+  "session_id_bytes": 32,
+  "server_names": [
+    {
+      "name_type": 0,
+      "name": "chatgpt.com"
+    }
+  ],
+  "extension_lengths": [
+    {
+      "type": 65281,
+      "length": 1
+    },
+    {
+      "type": 0,
+      "length": 16
+    },
+    {
+      "type": 11,
+      "length": 2
+    },
+    {
+      "type": 10,
+      "length": 18
+    },
+    {
+      "type": 35,
+      "length": 0
+    },
+    {
+      "type": 22,
+      "length": 0
+    },
+    {
+      "type": 23,
+      "length": 0
+    },
+    {
+      "type": 13,
+      "length": 54
+    },
+    {
+      "type": 43,
+      "length": 5
+    },
+    {
+      "type": 45,
+      "length": 2
+    },
+    {
+      "type": 51,
+      "length": 1258
+    }
+  ],
+  "key_share_lengths": [
+    {
+      "group": 4588,
+      "bytes": 1216
+    },
+    {
+      "group": 29,
+      "bytes": 32
+    }
+  ],
+  "alpn": [],
+  "grease_present": false,
+  "ja3": "771,4866-4867-4865-49196-49200-159-52393-52392-52394-49195-49199-158-49188-49192-107-49187-49191-103-49162-49172-57-49161-49171-51-157-156-61-60-53-47,65281-0-11-10-35-22-23-13-43-45-51,4588-29-23-30-24-25-256-257,0",
+  "ja3_md5": "0b85eb0d4981e69064e40753e4f0ac5f",
+  "raw_sha256": "9d81cdabb66cd12f3d72191bdeab947c0c69a98dee8da26f247d86ab8c98f2d1",
+  "sequence": 8,
+  "transport_branch": "http_after_fallback",
+  "auth_kind": "fake_api_key",
+  "source_run": "native-http-tls-lite",
+  "custom_ca": false,
+  "tls_interception": false,
+  "http_request_sent": false,
+  "server_reply": "TCP close after complete ClientHello; no ServerHello/certificate"
+}

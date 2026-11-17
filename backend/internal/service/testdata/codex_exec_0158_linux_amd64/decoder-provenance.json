@@ -1,0 +1,6 @@
+{
+  "filename": "zstandard-0.25.0-cp313-cp313-musllinux_1_2_x86_64.whl",
+  "sha256": "4f187a0bb61b35119d1926aee039524d1f93aaf38a9916b8c4b78ac8514a0aaf",
+  "url": "https://files.pythonhosted.org/packages/b2/e5/fbd822d5c6f427cf158316d012c5a12f233473c2f9c5fe5ab1ae5d21f3d8/zstandard-0.25.0-cp313-cp313-musllinux_1_2_x86_64.whl",
+  "purpose": "decode mocked request bodies only, never modifies native TLS"
+}

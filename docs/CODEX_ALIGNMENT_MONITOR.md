@@ -2,7 +2,7 @@
 
 ## Accepted scope
 
-Detect fork regressions after upstream merges and changes in official Codex stable releases. The live reference client is the official non-interactive `codex exec` command. Gateway behavior normalizes recognized Codex HTTP harnesses to the same exec wire conventions; live automated capture remains exec-based, while TUI/Desktop/IDE normalization is covered by full Forward regressions. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
+Detect fork regressions after upstream merges and changes in official Codex stable releases. The live reference client is the official non-interactive `codex exec` command. Gateway behavior applies fixed 0.158.0 Linux x86_64 exec wire conventions to any ordinary HTTP harness; live automated capture remains exec-based while arbitrary harnesses are covered by forwarding/conversion regressions. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
 
 The production host runs lightweight, serial probes using the owner's selected production OAuth account and fixed SOCKS exit. GitHub Actions runs the full offline regression suite. Test credentials and notification recipients are private configuration, never repository fixtures. A separate gateway probe key identifies synthetic traffic; it does not give the shared OAuth account an independent upstream allowance. Official Codex uses its own login directory, not a writable copy of the gateway's refresh-token state.
 
@@ -18,7 +18,7 @@ The production host runs lightweight, serial probes using the owner's selected p
 
 ## Evidence and comparison
 
-Keep the approved baseline immutable; discover the latest stable independently. New candidates never silently overwrite the approved baseline. The existing 0.158.0 fixtures establish body provenance only, not complete OAuth wire approval.
+Keep the approved baseline immutable; discover the latest stable independently. New candidates never silently overwrite the approved baseline. The original arm64 0.158.0 fixtures establish historical body provenance. The new `codex_exec_0158_linux_amd64` fixture directory supplies layered HTTP/compression and original-default TLS evidence. Candidate-version discovery is separate from the fixed runtime baseline and never approves or activates an upgrade.
 
 HTTP content captured through a TLS inspection proxy and a separately captured native ClientHello are independent evidence. A proxy's upstream TLS is not native TLS. In official 0.163.0, the custom-CA path explicitly chooses rustls; its handshake is not evidence of the default TLS backend. The same-transaction native direct final HTTP remains unverified until a suitable capture method is actually demonstrated.
 
@@ -26,7 +26,7 @@ Observe gateway HTTP bytes after header ordering and before TLS encryption, only
 
 Field-level body drift retains the exact JSON path and also reports the safe input-item type plus field presence. This makes an `id` or `internal_chat_message_metadata_passthrough` removal attributable without storing request values. When `input` item counts differ, the monitor reports only the count/length difference and intentionally does not identify which item changed; detailed item ownership is left to follow-up investigation. Tool-continuation and compaction scenarios require an observed `reasoning` item carrying both an ID and encrypted content before they can be treated as complete coverage; otherwise they are `unverified`, never a silent pass.
 
-Native-forwarding checks preserve the supplied request except those exceptions. Responses, Chat Completions, and enabled Messages-to-Codex bridges have separate semantic contracts; their prompts and tool sets are not expected to equal a CLI's built-in workspace prompt. Record the final model and observed standard/Lite mode rather than inferring mode from a model name.
+Ordinary HTTP forwarding through Codex accounts accepts any agent harness and preserves its task content. Responses, Chat Completions, and Messages keep the caller's prompts and tools; these are not expected to equal the CLI's built-in workspace prompt. Outbound identity/version are pinned to 0.158.0 Linux x86_64 even for native exec ingress; background version discovery must not update this channel. Select standard/Lite from final-account/model capabilities; unknown capabilities retain the request declaration (otherwise standard) and emit `alignment_status=unverified`. The mode-selection log is not full-wire approval. Record the final model and observed mode. The entire WebSocket ingress chain, including WS-to-HTTP bridges, retains its separate contract.
 
 Normal live requests run daily; tool continuation and compact scenarios rotate. Initial acceptance and official-version changes expand the normal matrix. Inject disconnects, timeouts, 401/429/5xx, account changes, and proxy failures only in an isolated mock environment.
 

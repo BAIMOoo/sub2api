@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -219,4 +220,8 @@ func TestDeriveOpenAIForwardAttemptBody_AstraCrossModeKeepsTopLevelReasoningMode
 	require.Equal(t, "gpt-6-astra", gjson.GetBytes(secondBody, "model").String())
 	require.JSONEq(t, string(canonicalSnapshot), string(canonical), "canonical forwardBody must never be mutated")
 	require.True(t, gjson.GetBytes(canonical, "input.1.encrypted_content").Exists())
+}
+
+func (u *astraProCapturedUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, concurrency)
 }

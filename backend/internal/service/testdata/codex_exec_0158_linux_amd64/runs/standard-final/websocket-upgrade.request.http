@@ -1,0 +1,19 @@
+GET /backend-api/codex/responses HTTP/1.1
+Host: chatgpt.com
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Version: 13
+Sec-WebSocket-Key: zxDe+BkS9++TKpThw9Ovtw==
+authorization: Bearer codex-fixture-fake-api-key-not-a-secret
+user-agent: codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)
+originator: codex_exec
+openai-beta: responses_websockets=2026-02-06
+x-codex-turn-metadata: {"installation_id":"b3363223-e8c4-4f38-a3cd-358ed95dc7ad","session_id":"01a1e8ab-9ee6-7792-877a-733006c57436","thread_id":"01a1e8ab-9ee6-7792-877a-733006c57436","agent_name":"/root","turn_id":"","window_id":"01a1e8ab-9ee6-7792-877a-733006c57436:0","window_number":0,"context_window_id":"01a1e8ab-9ef0-7db2-844d-097593c18837","request_kind":"prewarm","thread_source":"user","sandbox":"seccomp","sandbox_mode":"read-only","auto_review_enabled":false,"node_repl_auto_review_required":false,"node_repl_disabled":false,"analytics_enabled":false,"model":"gpt-5.5","reasoning_effort":"medium"}
+version: 0.158.0
+x-codex-beta-features: remote_compaction_v2
+x-client-request-id: 01a1e8ab-9ee6-7792-877a-733006c57436
+session-id: 01a1e8ab-9ee6-7792-877a-733006c57436
+thread-id: 01a1e8ab-9ee6-7792-877a-733006c57436
+x-codex-window-id: 01a1e8ab-9ee6-7792-877a-733006c57436:0
+sec-websocket-extensions: permessage-deflate; client_max_window_bits
+

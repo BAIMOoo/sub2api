@@ -1,0 +1,14 @@
+{
+  "platform": [
+    "Linux",
+    "codex-fixture",
+    "6.12.76-linuxkit",
+    "#1 SMP Sun Mar  8 14:41:59 UTC 2026",
+    "x86_64",
+    ""
+  ],
+  "os_release": "NAME=\"Alpine Linux\"\nID=alpine\nVERSION_ID=3.24.4\nPRETTY_NAME=\"Alpine Linux v3.24\"\nHOME_URL=\"https://alpinelinux.org/\"\nBUG_REPORT_URL=\"https://gitlab.alpinelinux.org/alpine/aports/-/issues\"\n",
+  "python": "3.13.18",
+  "codex_version": "codex-cli 0.158.0",
+  "captured_at": "2026-11-17T08:51:28.414681+00:00"
+}

@@ -1,0 +1,17 @@
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Content-Length: 971
+Connection: close
+
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_fixture_local","object":"response","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_fixture_local","call_id":"call_fixture_local","name":"get_goal","arguments":"{}"}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_fixture_local","call_id":"call_fixture_local","name":"get_goal","arguments":"{}"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_fixture_local","object":"response","status":"completed","output":[{"type":"function_call","id":"fc_fixture_local","call_id":"call_fixture_local","name":"get_goal","arguments":"{}"}],"usage":{"input_tokens":100000,"output_tokens":1,"total_tokens":100001,"input_tokens_details":{"cached_tokens":0}}}}
+

@@ -8,10 +8,44 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
+// AnthropicToResponsesOptions controls channel-specific request conversion.
+// The zero value preserves the legacy conversion behavior.
+type AnthropicToResponsesOptions struct {
+	// PreserveCodexContent preserves task content and rejects unsupported
+	// semantics, including reasoning that cannot be replayed. Enable this only
+	// after selecting a Codex HTTP upstream.
+	PreserveCodexContent bool
+	// OriginalRequest lets strict conversion validate tool fields that the
+	// shared AnthropicTool type does not retain. Supply the original body when
+	// req was decoded from an HTTP request; leave nil for typed callers.
+	OriginalRequest json.RawMessage
+}
+
+// anthropicResponsesInputItem extends the shared wire type for Codex summaries
+// and tool output content. A non-nil pointer to an empty slice emits summary: [],
+// which Codex requires even for signature-only reasoning.
+type anthropicResponsesInputItem struct {
+	ResponsesInputItem
+	Summary         *[]ResponsesSummary `json:"summary,omitempty"`
+	codexToolOutput json.RawMessage
+}
+
+func (item anthropicResponsesInputItem) MarshalJSON() ([]byte, error) {
+	type wireItem anthropicResponsesInputItem
+	if item.codexToolOutput != nil {
+		// Override the shared string-only field for Codex content arrays and
+		// empty outputs, which must not disappear through omitempty.
+		return json.Marshal(struct {
+			wireItem
+			Output json.RawMessage `json:"output"`
+		}{wireItem(item), item.codexToolOutput})
+	}
+	return json.Marshal(wireItem(item))
+}
+
 // AnthropicToResponses converts an Anthropic Messages request directly into
-// a Responses API request. This preserves fields that would be lost in a
-// Chat Completions intermediary round-trip (e.g. thinking, cache_control,
-// structured system prompts).
+// a Responses API request with the legacy compatibility rules. Use explicit
+// options when the selected channel requires strict content preservation.
 func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 	return AnthropicToResponsesWithMinOutputTokens(req, DefaultMinMaxOutputTokens)
 }
@@ -19,10 +53,21 @@ func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 // AnthropicToResponsesWithMinOutputTokens converts an Anthropic request using
 // the supplied max_output_tokens floor.
 func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTokens int) (*ResponsesRequest, error) {
+	return AnthropicToResponsesWithOptions(req, minOutputTokens, AnthropicToResponsesOptions{})
+}
+
+// AnthropicToResponsesWithOptions converts an Anthropic request using the
+// supplied max_output_tokens floor and explicit channel-specific options.
+func AnthropicToResponsesWithOptions(req *AnthropicRequest, minOutputTokens int, opts AnthropicToResponsesOptions) (*ResponsesRequest, error) {
 	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, anthropicReasoningEffort(req)); err != nil {
 		return nil, err
 	}
-	input, err := convertAnthropicToResponsesInput(req.System, req.Messages)
+	if opts.PreserveCodexContent {
+		if err := validateAnthropicCodexTools(req.Tools, opts.OriginalRequest); err != nil {
+			return nil, err
+		}
+	}
+	input, err := convertAnthropicToResponsesInput(req.System, req.Messages, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +125,13 @@ func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTok
 
 	// Convert tool_choice
 	if len(req.ToolChoice) > 0 {
+		if opts.PreserveCodexContent {
+			parallel, err := validateAnthropicCodexToolChoice(req.ToolChoice, req.Tools)
+			if err != nil {
+				return nil, err
+			}
+			out.ParallelToolCalls = &parallel
+		}
 		tc, err := convertAnthropicToolChoiceToResponses(req.ToolChoice)
 		if err != nil {
 			return nil, fmt.Errorf("convert tool_choice: %w", err)
@@ -125,8 +177,11 @@ func convertAnthropicToolChoiceToResponses(raw json.RawMessage) (json.RawMessage
 
 // convertAnthropicToResponsesInput builds the Responses API input items array
 // from the Anthropic system field and message list.
-func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMessage) ([]ResponsesInputItem, error) {
-	var out []ResponsesInputItem
+func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMessage, opts AnthropicToResponsesOptions) ([]anthropicResponsesInputItem, error) {
+	if opts.PreserveCodexContent {
+		return convertAnthropicCodexInput(system, msgs)
+	}
+	var out []anthropicResponsesInputItem
 
 	// System prompt → developer role input item. ChatGPT Codex SSE behaves like
 	// Codex CLI here: keeping Anthropic system text in input preserves the
@@ -138,11 +193,11 @@ func convertAnthropicToResponsesInput(system json.RawMessage, msgs []AnthropicMe
 		}
 		if len(sysParts) > 0 {
 			content, _ := json.Marshal(sysParts)
-			out = append(out, ResponsesInputItem{
+			out = append(out, anthropicResponsesInputItem{ResponsesInputItem: ResponsesInputItem{
 				Type:    "message",
 				Role:    "developer",
 				Content: content,
-			})
+			}})
 		}
 	}
 
@@ -186,15 +241,19 @@ func isAnthropicBillingHeaderText(text string) bool {
 
 // anthropicMsgToResponsesItems converts a single Anthropic message into one
 // or more Responses API input items.
-func anthropicMsgToResponsesItems(m AnthropicMessage) ([]ResponsesInputItem, error) {
-	switch m.Role {
-	case "user":
-		return anthropicUserToResponses(m.Content)
-	case "assistant":
+func anthropicMsgToResponsesItems(m AnthropicMessage) ([]anthropicResponsesInputItem, error) {
+	if m.Role == "assistant" {
 		return anthropicAssistantToResponses(m.Content)
-	default:
-		return anthropicUserToResponses(m.Content)
 	}
+	items, err := anthropicUserToResponses(m.Content)
+	if err != nil {
+		return nil, err
+	}
+	var out []anthropicResponsesInputItem
+	for _, item := range items {
+		out = append(out, anthropicResponsesInputItem{ResponsesInputItem: item})
+	}
+	return out, nil
 }
 
 // anthropicUserToResponses handles an Anthropic user message. Content can be a
@@ -270,7 +329,7 @@ func anthropicUserToResponses(raw json.RawMessage) ([]ResponsesInputItem, error)
 // thinking blocks with signature → reasoning items (encrypted_content) so
 // multi-turn Grok/Codex prompt cache can reuse prior reasoning prefixes.
 // thinking without signature remains ignored (not accepted as plain text input).
-func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, error) {
+func anthropicAssistantToResponses(raw json.RawMessage) ([]anthropicResponsesInputItem, error) {
 	// Try plain string.
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
@@ -279,7 +338,9 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 		if err != nil {
 			return nil, err
 		}
-		return []ResponsesInputItem{{Type: "message", Role: "assistant", Content: partsJSON}}, nil
+		return []anthropicResponsesInputItem{{ResponsesInputItem: ResponsesInputItem{
+			Type: "message", Role: "assistant", Content: partsJSON,
+		}}}, nil
 	}
 
 	var blocks []AnthropicContentBlock
@@ -287,7 +348,7 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 		return nil, err
 	}
 
-	var items []ResponsesInputItem
+	var items []anthropicResponsesInputItem
 
 	// Preserve turn order: reasoning → assistant text → tool calls. xAI/Codex
 	// multi-turn cache and tool continuations expect reasoning before the
@@ -297,15 +358,16 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 			continue
 		}
 		sig := strings.TrimSpace(b.Signature)
-		// Only replay provider ciphertext. Skip GPT/Codex-style gAAAA blobs and
-		// empty placeholders — xAI returns 400 on decrypt for foreign signatures.
+		// Other providers cannot decrypt Codex ciphertext. Codex HTTP replay
+		// uses the separate strict content conversion below.
 		if sig == "" || strings.HasPrefix(sig, "gAAAA") {
 			continue
 		}
-		items = append(items, ResponsesInputItem{
+		item := anthropicResponsesInputItem{ResponsesInputItem: ResponsesInputItem{
 			Type:             "reasoning",
 			EncryptedContent: sig,
-		})
+		}}
+		items = append(items, item)
 	}
 
 	// Text content → assistant message with output_text content parts.
@@ -316,7 +378,9 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, ResponsesInputItem{Type: "message", Role: "assistant", Content: partsJSON})
+		items = append(items, anthropicResponsesInputItem{ResponsesInputItem: ResponsesInputItem{
+			Type: "message", Role: "assistant", Content: partsJSON,
+		}})
 	}
 
 	// tool_use → function_call items.
@@ -329,15 +393,430 @@ func anthropicAssistantToResponses(raw json.RawMessage) ([]ResponsesInputItem, e
 			args = string(b.Input)
 		}
 		fcID := toResponsesCallID(b.ID)
-		items = append(items, ResponsesInputItem{
+		items = append(items, anthropicResponsesInputItem{ResponsesInputItem: ResponsesInputItem{
 			Type:      "function_call",
 			CallID:    fcID,
 			Name:      b.Name,
 			Arguments: args,
-		})
+		}})
 	}
 
 	return items, nil
+}
+
+// Strict conversion keeps block order and strings intact. Unknown content is
+// rejected before the legacy converters can flatten, filter or default it.
+type anthropicCodexContentPart struct {
+	Type     string  `json:"type"`
+	Text     *string `json:"text,omitempty"`
+	ImageURL string  `json:"image_url,omitempty"`
+}
+
+func anthropicCodexContentError(path, reason string) error {
+	return fmt.Errorf("codex content incompatible: %s: %s", path, reason)
+}
+
+func anthropicCodexObject(raw json.RawMessage, path string) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil, anthropicCodexContentError(path, "expected an object")
+	}
+	return fields, nil
+}
+
+func anthropicCodexFields(fields map[string]json.RawMessage, path string, allowed ...string) error {
+	for key := range fields {
+		found := false
+		for _, name := range allowed {
+			if key == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return anthropicCodexContentError(path+"."+key, "unsupported field")
+		}
+	}
+	return nil
+}
+
+func anthropicCodexString(fields map[string]json.RawMessage, key, path string, nonblank bool) (string, error) {
+	var value *string
+	if err := json.Unmarshal(fields[key], &value); err != nil || value == nil {
+		return "", anthropicCodexContentError(path+"."+key, "expected a string")
+	}
+	if nonblank && strings.TrimSpace(*value) == "" {
+		return "", anthropicCodexContentError(path+"."+key, "expected a nonblank string")
+	}
+	return *value, nil
+}
+
+func anthropicCodexBlocks(raw json.RawMessage, path string) ([]json.RawMessage, error) {
+	var text *string
+	if err := json.Unmarshal(raw, &text); err == nil && text != nil {
+		block, err := json.Marshal(AnthropicContentBlock{Type: "text", Text: *text})
+		return []json.RawMessage{block}, err
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil || blocks == nil {
+		return nil, anthropicCodexContentError(path, "expected a string or content block array")
+	}
+	return blocks, nil
+}
+
+func anthropicCodexPart(fields map[string]json.RawMessage, typ, path string, images bool) (anthropicCodexContentPart, error) {
+	var part anthropicCodexContentPart
+	switch typ {
+	case "text":
+		if err := anthropicCodexFields(fields, path, "type", "text", "cache_control"); err != nil {
+			return part, err
+		}
+		text, err := anthropicCodexString(fields, "text", path, false)
+		return anthropicCodexContentPart{Type: "input_text", Text: &text}, err
+	case "image":
+		if !images {
+			return part, anthropicCodexContentError(path, "image content is not supported in this role")
+		}
+		if err := anthropicCodexFields(fields, path, "type", "source", "cache_control"); err != nil {
+			return part, err
+		}
+		sourcePath := path + ".source"
+		source, err := anthropicCodexObject(fields["source"], sourcePath)
+		if err != nil {
+			return part, err
+		}
+		sourceType, err := anthropicCodexString(source, "type", sourcePath, true)
+		if err != nil {
+			return part, err
+		}
+		part.Type = "input_image"
+		switch sourceType {
+		case "base64":
+			if err := anthropicCodexFields(source, sourcePath, "type", "media_type", "data"); err != nil {
+				return part, err
+			}
+			mediaType, err := anthropicCodexString(source, "media_type", sourcePath, true)
+			if err != nil {
+				return part, err
+			}
+			if !strings.HasPrefix(mediaType, "image/") {
+				return part, anthropicCodexContentError(sourcePath+".media_type", "expected an image media type")
+			}
+			data, err := anthropicCodexString(source, "data", sourcePath, true)
+			part.ImageURL = "data:" + mediaType + ";base64," + data
+			return part, err
+		case "url":
+			if err := anthropicCodexFields(source, sourcePath, "type", "url"); err != nil {
+				return part, err
+			}
+			part.ImageURL, err = anthropicCodexString(source, "url", sourcePath, true)
+			return part, err
+		default:
+			return part, anthropicCodexContentError(sourcePath+".type", "unsupported image source")
+		}
+	default:
+		return part, anthropicCodexContentError(path, "unsupported content block type")
+	}
+}
+
+func anthropicCodexParts(raw json.RawMessage, path string, images bool) ([]anthropicCodexContentPart, error) {
+	blocks, err := anthropicCodexBlocks(raw, path)
+	if err != nil {
+		return nil, err
+	}
+	parts := make([]anthropicCodexContentPart, 0, len(blocks))
+	for i, raw := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, i)
+		fields, err := anthropicCodexObject(raw, blockPath)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := anthropicCodexString(fields, "type", blockPath, true)
+		if err != nil {
+			return nil, err
+		}
+		part, err := anthropicCodexPart(fields, typ, blockPath, images)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
+func convertAnthropicCodexInput(system json.RawMessage, msgs []AnthropicMessage) ([]anthropicResponsesInputItem, error) {
+	var out []anthropicResponsesInputItem
+	if len(system) > 0 {
+		parts, err := anthropicCodexParts(system, "system", false)
+		if err != nil {
+			return nil, err
+		}
+		content, err := json.Marshal(parts)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, anthropicResponsesInputItem{ResponsesInputItem: ResponsesInputItem{
+			Type: "message", Role: "developer", Content: content,
+		}})
+	}
+	for i, msg := range msgs {
+		path := fmt.Sprintf("messages[%d]", i)
+		if msg.Role != "user" && msg.Role != "assistant" {
+			return nil, anthropicCodexContentError(path+".role", "unsupported message role")
+		}
+		items, err := anthropicCodexMessage(msg, path+".content")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+	}
+	return out, nil
+}
+
+func anthropicCodexMessage(msg AnthropicMessage, path string) ([]anthropicResponsesInputItem, error) {
+	blocks, err := anthropicCodexBlocks(msg.Content, path)
+	if err != nil {
+		return nil, err
+	}
+	var items []anthropicResponsesInputItem
+	var parts []anthropicCodexContentPart
+	flush := func() error {
+		if len(parts) == 0 {
+			return nil
+		}
+		content, err := json.Marshal(parts)
+		if err != nil {
+			return err
+		}
+		items = append(items, anthropicResponsesInputItem{ResponsesInputItem: ResponsesInputItem{
+			Type: "message", Role: msg.Role, Content: content,
+		}})
+		parts = nil
+		return nil
+	}
+	for i, raw := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, i)
+		fields, err := anthropicCodexObject(raw, blockPath)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := anthropicCodexString(fields, "type", blockPath, true)
+		if err != nil {
+			return nil, err
+		}
+		if typ == "text" || typ == "image" {
+			part, err := anthropicCodexPart(fields, typ, blockPath, msg.Role == "user")
+			if err != nil {
+				return nil, err
+			}
+			if msg.Role == "assistant" {
+				part.Type = "output_text"
+			}
+			parts = append(parts, part)
+			continue
+		}
+		if err := flush(); err != nil {
+			return nil, err
+		}
+		item := anthropicResponsesInputItem{}
+		switch {
+		case typ == "thinking" && msg.Role == "assistant":
+			if err := anthropicCodexFields(fields, blockPath, "type", "thinking", "signature", "cache_control"); err != nil {
+				return nil, err
+			}
+			item.Type = "reasoning"
+			item.EncryptedContent, err = anthropicCodexString(fields, "signature", blockPath, true)
+			if err != nil {
+				return nil, err
+			}
+			summary := []ResponsesSummary{}
+			if _, exists := fields["thinking"]; exists {
+				thinking, err := anthropicCodexString(fields, "thinking", blockPath, false)
+				if err != nil {
+					return nil, err
+				}
+				if thinking != "" {
+					summary = append(summary, ResponsesSummary{Type: "summary_text", Text: thinking})
+				}
+			}
+			item.Summary = &summary
+		case typ == "tool_use" && msg.Role == "assistant":
+			if err := anthropicCodexFields(fields, blockPath, "type", "id", "name", "input", "cache_control"); err != nil {
+				return nil, err
+			}
+			item.Type = "function_call"
+			item.CallID, err = anthropicCodexString(fields, "id", blockPath, true)
+			if err != nil {
+				return nil, err
+			}
+			item.Name, err = anthropicCodexString(fields, "name", blockPath, true)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := anthropicCodexObject(fields["input"], blockPath+".input"); err != nil {
+				return nil, err
+			}
+			item.Arguments = string(fields["input"])
+		case typ == "tool_result" && msg.Role == "user":
+			if err := anthropicCodexFields(fields, blockPath, "type", "tool_use_id", "content", "is_error", "cache_control"); err != nil {
+				return nil, err
+			}
+			item.Type = "function_call_output"
+			item.CallID, err = anthropicCodexString(fields, "tool_use_id", blockPath, true)
+			if err != nil {
+				return nil, err
+			}
+			item.codexToolOutput, err = anthropicCodexToolOutput(fields, blockPath)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, anthropicCodexContentError(blockPath, "unsupported content block type for this role")
+		}
+		items = append(items, item)
+	}
+	if err := flush(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func anthropicCodexToolOutput(fields map[string]json.RawMessage, path string) (json.RawMessage, error) {
+	content, exists := fields["content"]
+	if !exists {
+		content = json.RawMessage(`""`)
+	}
+	var isError bool
+	if raw, exists := fields["is_error"]; exists {
+		var value *bool
+		if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+			return nil, anthropicCodexContentError(path+".is_error", "expected a boolean")
+		}
+		isError = *value
+	}
+	var text *string
+	if err := json.Unmarshal(content, &text); err == nil && text != nil && !isError {
+		return json.Marshal(*text)
+	}
+	parts, err := anthropicCodexParts(content, path+".content", true)
+	if err != nil {
+		return nil, err
+	}
+	if isError {
+		// Responses has no tool error flag. Carry the caller's status in its
+		// own output part, leaving task strings and images unchanged.
+		status := `{"is_error":true}`
+		parts = append([]anthropicCodexContentPart{{Type: "input_text", Text: &status}}, parts...)
+	}
+	return json.Marshal(parts)
+}
+
+func validateAnthropicCodexTools(tools []AnthropicTool, original json.RawMessage) error {
+	if len(original) > 0 {
+		request, err := anthropicCodexObject(original, "request")
+		if err != nil {
+			return err
+		}
+		if raw, exists := request["tools"]; exists {
+			var definitions []json.RawMessage
+			if err := json.Unmarshal(raw, &definitions); err != nil || definitions == nil {
+				return anthropicCodexContentError("tools", "expected an array")
+			}
+			for i, raw := range definitions {
+				path := fmt.Sprintf("tools[%d]", i)
+				fields, err := anthropicCodexObject(raw, path)
+				if err != nil {
+					return err
+				}
+				if err := anthropicCodexFields(fields, path, "type", "name", "description", "input_schema", "cache_control"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	names := make(map[string]bool, len(tools))
+	for i, tool := range tools {
+		path := fmt.Sprintf("tools[%d]", i)
+		if tool.Type != "" && tool.Type != "custom" {
+			return anthropicCodexContentError(path+".type", "unsupported tool type")
+		}
+		if strings.TrimSpace(tool.Name) == "" || names[tool.Name] {
+			return anthropicCodexContentError(path+".name", "expected a nonblank, unique tool name")
+		}
+		names[tool.Name] = true
+		schemaPath := path + ".input_schema"
+		schema, err := anthropicCodexObject(tool.InputSchema, schemaPath)
+		if err != nil {
+			return err
+		}
+		typ, err := anthropicCodexString(schema, "type", schemaPath, true)
+		if err != nil {
+			return err
+		}
+		if typ != "object" {
+			return anthropicCodexContentError(schemaPath+".type", "expected an object schema")
+		}
+		if raw, exists := schema["properties"]; exists {
+			if _, err := anthropicCodexObject(raw, schemaPath+".properties"); err != nil {
+				return err
+			}
+		}
+		if raw, exists := schema["required"]; exists {
+			var required []*string
+			if err := json.Unmarshal(raw, &required); err != nil || required == nil {
+				return anthropicCodexContentError(schemaPath+".required", "expected an array of strings")
+			}
+			for _, name := range required {
+				if name == nil {
+					return anthropicCodexContentError(schemaPath+".required", "expected an array of strings")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateAnthropicCodexToolChoice(raw json.RawMessage, tools []AnthropicTool) (bool, error) {
+	const path = "tool_choice"
+	fields, err := anthropicCodexObject(raw, path)
+	if err != nil {
+		return false, err
+	}
+	if err := anthropicCodexFields(fields, path, "type", "name", "disable_parallel_tool_use"); err != nil {
+		return false, err
+	}
+	typ, err := anthropicCodexString(fields, "type", path, true)
+	if err != nil {
+		return false, err
+	}
+	switch typ {
+	case "auto", "any", "none":
+		if _, exists := fields["name"]; exists {
+			return false, anthropicCodexContentError(path+".name", "name requires a named tool choice")
+		}
+	case "tool":
+		name, err := anthropicCodexString(fields, "name", path, true)
+		if err != nil {
+			return false, err
+		}
+		found := false
+		for _, tool := range tools {
+			found = found || tool.Name == name
+		}
+		if !found {
+			return false, anthropicCodexContentError(path+".name", "tool is not declared")
+		}
+	default:
+		return false, anthropicCodexContentError(path+".type", "unsupported tool choice")
+	}
+	if raw, exists := fields["disable_parallel_tool_use"]; exists {
+		var disabled *bool
+		if err := json.Unmarshal(raw, &disabled); err != nil || disabled == nil {
+			return false, anthropicCodexContentError(path+".disable_parallel_tool_use", "expected a boolean")
+		}
+		return !*disabled, nil
+	}
+	return true, nil
 }
 
 // toResponsesCallID preserves Anthropic tool IDs as Responses call_id values.

@@ -118,6 +118,18 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 	if isClientCanceledTransportError(ctx, err) {
 		return err
 	}
+	var contractErr *codexHTTPTransportConfigError
+	if errors.As(err, &contractErr) {
+		setOpsUpstreamError(c, http.StatusBadGateway, contractErr.Error(), "")
+		if strings.HasSuffix(c.Request.URL.Path, "/messages") {
+			writeAnthropicError(c, http.StatusBadGateway, "api_error", contractErr.Error())
+		} else {
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
+				"type": "configuration_error", "message": contractErr.Error(),
+			}})
+		}
+		return err
+	}
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

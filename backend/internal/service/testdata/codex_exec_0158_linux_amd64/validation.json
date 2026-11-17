@@ -1,0 +1,72 @@
+{
+  "verified_at": "2026-11-17T09:04:40.412243+00:00",
+  "sample_count": 10,
+  "independent_zstd_decoder": "Homebrew zstd CLI; all five synthetic OAuth frames decoded and matched exact saved bytes",
+  "native_http_tls_samples": 4,
+  "tls_profile_arrays_match": true,
+  "observed_header_sequences_match": true,
+  "real_credentials": "No real credentials were provided to any capture; only the two explicitly fake Authorization values are permitted by validation.",
+  "private_keys_in_fixture": false,
+  "samples": [
+    {
+      "sample": "standard",
+      "request_sha256": "8322c170696d43cd03e178c053fcb079d82e708d39b01b1385a276cc6dd495cc",
+      "body_fixture_sha256": "12f1a43d85b084aa422625c697956e4d9c45fee28aee693bdf4239fe8fbc6bf2",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "lite",
+      "request_sha256": "ed06298199e205bacaa66bdaf77960c359e800db99fc311162de77206889ec19",
+      "body_fixture_sha256": "f2089bd3ea714b4258d7f7286a444d5099875a5e6492654c1f7451c9238a2689",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "compact-before",
+      "request_sha256": "5665fe638f962b07b82a986dc6eb155b3cbc3149c1b3d2d570765cd93c2fcb5a",
+      "body_fixture_sha256": "8f83604ecb954e4f5d8d12add9068b60319d8484258067c0952795a110c5fe0a",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "compact",
+      "request_sha256": "c009b17d3dd00f35aee84f310feedb476aaec84171e6d008b40f1fd3667b4b6e",
+      "body_fixture_sha256": "1070f3101428d899cc95da303b1e3f67f268cea10c5c67a33ee129563c4f5625",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "compact-after",
+      "request_sha256": "c6765a0335d2468830f3803d00460ef394b4a0ff2c677e1ddebdad3b0dd28faf",
+      "body_fixture_sha256": "fd09eab98faba2e0522fa58487cd759d9ca348e18b1c2e6b5442a582464a3bd6",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "api-key/standard",
+      "request_sha256": "fce52fe4489643020d5e8e79ba7160307631cabefcf1b4a7f3683e2cca784a79",
+      "body_fixture_sha256": "67aad3bda0c4e8726c5a427f9d72dbfb855825216c3bd056a9b60bc07fcf2992",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "api-key/lite",
+      "request_sha256": "427b3b7f991805e44b970b1e0ee5787984db858221b8005991da563c0643ed97",
+      "body_fixture_sha256": "91d53585527f7ed9cd02713631bd7f3110bf83fd242a4e8fbc2ff733bc88a759",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "api-key/compact-before",
+      "request_sha256": "163de731daf27ccfcb298347f4ba6f9c78a6d89728feac23ca6fa7ad8dcbb49a",
+      "body_fixture_sha256": "0ca360b42544e1d904dc670eb848db4e452fcf41d49cf87f37650d4e58623054",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "api-key/compact",
+      "request_sha256": "421f3bc400d1ed58a1b1a2b667179d0f228a2dbc11df49d810915a2cf4b4bc12",
+      "body_fixture_sha256": "43314a3b4f1b97124a792f459db1148c0b358ac8310a118b6e314d1880bb15cc",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    },
+    {
+      "sample": "api-key/compact-after",
+      "request_sha256": "e539b0d8dec2888983989bb43e25823a89615e28cdbce31a9478f2e73e20ff6d",
+      "body_fixture_sha256": "c98ab9f7943c431f54adafff04b5fc0a267082134531c3ca60414e78517b89af",
+      "headers_wire_body_decoded_body_and_identity_associations_verified": true
+    }
+  ]
+}

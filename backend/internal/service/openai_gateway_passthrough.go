@@ -137,22 +137,32 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 ) (*OpenAIForwardResult, error) {
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
-	httpPolicy := nativeCodexHTTPPolicy(c, account)
+	httpPolicy := codexHTTPPolicyForRequest(c, account)
+	finalModel := reqModel
+	if httpPolicy.preservesCodexExec() {
+		_, finalModel = resolveOpenAIForwardMappedModels(account, reqModel, isOpenAIResponsesCompactPath(c))
+	}
 	if isOpenAIResponsesCompactPath(c) {
-		compactMappedModel := s.resolveOpenAICompactFallbackModel(account, reqModel)
-		if compactMappedModel != "" && compactMappedModel != reqModel {
-			nextBody, setErr := sjson.SetBytes(body, "model", compactMappedModel)
-			if setErr != nil {
-				return nil, fmt.Errorf("set compact passthrough model: %w", setErr)
-			}
-			body = nextBody
-			upstreamPassthroughModel = compactMappedModel
-			attemptImageIntentInvalidated = true
+		if compactModel := s.resolveOpenAICompactFallbackModel(account, reqModel); compactModel != "" {
+			finalModel = compactModel
 		}
+	}
+	if finalModel != reqModel {
+		nextBody, err := sjson.SetBytes(body, "model", finalModel)
+		if err != nil {
+			return nil, fmt.Errorf("set passthrough model: %w", err)
+		}
+		body = nextBody
+		upstreamPassthroughModel = finalModel
+		attemptImageIntentInvalidated = true
+	}
+	responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
+	if httpPolicy.preservesCodexExec() {
+		responsesLite = resolveCodexHTTPMode(c, account, finalModel, body).lite
 	}
 
 	if account != nil && account.UsesOpenAICodexProtocol() {
-		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
+		if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" && !httpPolicy.preservesCodexExec() {
 			rejectMsg := "OpenAI codex passthrough requires a non-empty instructions field"
 			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
 			logOpenAIPassthroughInstructionsRejected(ctx, c, account, reqModel, rejectReason, body)
@@ -166,7 +176,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(
 			body,
-			isOpenAIResponsesCompactPath(c),
+			isOpenAIResponsesCompactPath(c) && !httpPolicy.preservesCodexExec(),
 			httpPolicy,
 		)
 		if err != nil {
@@ -175,17 +185,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
-		if httpPolicy.preservesCodexExec() && !isOpenAIResponsesCompactPath(c) &&
-			isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
-			canonicalBody, canonical, canonicalErr := canonicalizeCodexExecLiteBody(body)
-			if canonicalErr != nil {
-				return nil, canonicalErr
-			}
-			if canonical {
-				body = canonicalBody
-			}
+		if !httpPolicy.preservesCodexExec() {
+			reqStream = gjson.GetBytes(body, "stream").Bool()
 		}
-		reqStream = gjson.GetBytes(body, "stream").Bool()
+		if isOpenAIResponsesCompactPath(c) && httpPolicy.preservesCodexExec() {
+			reqStream = false
+		}
 
 		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 		if scopeErr != nil {
@@ -219,11 +224,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 	if account != nil && account.IsOpenAI() {
-		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
 		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesCompatibilityBodyWithOptions(body, account, openAIResponsesCompatibilityOptions{
 			Config:        s.cfg,
 			ResponsesLite: responsesLite,
-			Compact:       isOpenAIResponsesCompactPath(c),
+			Compact:       isOpenAIResponsesCompactPath(c) && !httpPolicy.preservesCodexExec(),
 			HTTPPolicy:    httpPolicy,
 		})
 		if normalizeErr != nil {
@@ -385,6 +389,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, buildErr
 		}
 
+		if sentBody, aligned := codexHTTPAttemptBody(upstreamReq); aligned {
+			body = sentBody
+			rejectedFieldRetryState.remember(body)
+		}
+
 		upstreamStart := time.Now()
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
@@ -399,7 +408,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			probeBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
+			if retryBody, reason, changed, retryErr := normalizeCodexHTTPRejectedFieldRetryBody(httpPolicy, resp.StatusCode, body, probeBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize passthrough rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
 				body = retryBody
@@ -615,16 +624,23 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 			targetURL = buildOpenAIResponsesURLForPlatform(account.Platform, validatedURL)
 		}
 	}
-	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	if !codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	}
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	body, httpMode, err := normalizeCodexHTTPBody(c, account, body)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req = withCodexHTTPAttempt(req, c, account, body)
 
 	// 透传客户端请求头（安全白名单）。
 	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
@@ -669,12 +685,12 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, req.Header, account); err != nil {
 			return nil, fmt.Errorf("resolve chatgpt account headers: %w", err)
 		}
-		if isOpenAIResponsesCompactPath(c) {
+		if isOpenAIResponsesCompactPath(c) && !codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
 			req.Header.Set("accept", "application/json")
 			if req.Header.Get("version") == "" {
 				req.Header.Set("version", CodexCanonicalClientVersion())
 			}
-		} else if req.Header.Get("accept") == "" {
+		} else if req.Header.Get("accept") == "" || codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
 			req.Header.Set("accept", "text/event-stream")
 		}
 		if req.Header.Get("originator") == "" {
@@ -711,12 +727,12 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// 会话隔离之后、终态身份收口之前）。HTTP 出站只写官方头名
 	// （不发 x-codex-installation-id / 下划线 session_id）。
 	applyStagedCodexFingerprintHeadersHTTP(c, account, req.Header)
-	// 与转换路径共用 HTTP 身份策略，原生身份与管理员覆盖有明确优先级。
+	// 与转换路径共用服务端 HTTP 身份策略。
 	if account.UsesOpenAICodexProtocol() {
 		s.applyCodexHTTPIdentityHeaders(c, account, req.Header)
 	}
 
-	if req.Header.Get("content-type") == "" {
+	if req.Header.Get("content-type") == "" || codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
 		req.Header.Set("content-type", "application/json")
 	}
 
@@ -733,11 +749,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")
 
-	if err := applyMappedGPT55LiteCompatibility(req, account, body); err != nil {
+	if err := finalizeCodexHTTPRequest(c, account, req, body, httpMode); err != nil {
 		return nil, err
 	}
-	// 正文编码对齐官方 HTTP 形态：chatgpt.com Codex 后端收 zstd。
-	applyCodexRequestBodyZstd(account, req)
 	return req, nil
 }
 
@@ -2322,7 +2336,8 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// Some upstreams (e.g. other sub2api instances) may return SSE even when
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
-	if isEventStreamResponse(resp.Header) {
+	if isEventStreamResponse(resp.Header) ||
+		(codexHTTPPolicyForRequest(c, account).preservesCodexExec() && bodyHasSSEFraming(body)) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
@@ -2358,6 +2373,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
 	}
+	adapted, adaptErr := normalizeCodexHTTPCompactResponse(c, account, body)
+	if adaptErr != nil {
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, adaptErr.Error())
+	}
+	body = adapted
+
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -2412,7 +2433,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 		}
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		if !codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+			body = s.correctToolCallsInResponseBody(body)
+		}
 		restoredBody, restoreErr := restoreOpenAIResponsesNamespacePayload(c, body)
 		if restoreErr != nil {
 			return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", restoreErr)
@@ -2426,6 +2449,18 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		body = []byte(bodyText)
 	}
 
+	if codexHTTPPolicyForRequest(c, account).preservesCodexExec() && (!ok || terminalType != "response.completed") {
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, "Codex response did not complete")
+	}
+
+	if ok {
+		adapted, adaptErr := normalizeCodexHTTPCompactResponse(c, account, body)
+		if adaptErr != nil {
+			return nil, s.writeOpenAINonStreamingProtocolError(resp, c, adaptErr.Error())
+		}
+		body = adapted
+	}
+
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	logOpenAISuccessMissingUsage(c.Request.Context(), c, account, resp, usage, terminalType, false)
 
@@ -2436,6 +2471,10 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			contentType = "text/event-stream"
 		}
 	}
+	if ok && codexHTTPPolicyForRequest(c, account).preservesCodexExec() {
+		c.Header("Content-Type", "application/json; charset=utf-8")
+	}
+
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}

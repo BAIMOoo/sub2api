@@ -1,0 +1,111 @@
+{
+  "version": "0.158.0",
+  "scope": "ordinary Responses builder, including observed Responses V2 compaction; excludes legacy /responses/compact",
+  "source_tag": "rust-v0.158.0",
+  "constants": {
+    "tool_choice": "auto",
+    "store": false,
+    "stream": true,
+    "include": [
+      "reasoning.encrypted_content"
+    ]
+  },
+  "always_constructed_nonconstant_fields": [
+    "model",
+    "input",
+    "parallel_tool_calls",
+    "reasoning",
+    "prompt_cache_key",
+    "client_metadata"
+  ],
+  "standard_without_caller_instructions_or_tools": {
+    "instructions": "omitted if supplied base instructions are empty",
+    "tools": [],
+    "parallel_tool_calls": true,
+    "note": "source-derived empty supplied content, not an empty-tool CLI capture"
+  },
+  "lite_without_caller_instructions_or_tools": {
+    "instructions": "top-level omitted; no developer instruction item when empty",
+    "tools": "top-level omitted",
+    "additional_tools": {
+      "type": "additional_tools",
+      "role": "developer",
+      "tools": [],
+      "id": "derived from thread and supplied tool JSON; fixture ID is not a default"
+    },
+    "parallel_tool_calls": false,
+    "note": "source-derived empty supplied content; preserve existing caller input, do not inject built-in prompts/tools"
+  },
+  "parallel_source": {
+    "normal_exec": "core/src/session/turn.rs:1561 sets true",
+    "builder": "core/src/client.rs:1005 emits prompt.parallel_tool_calls && !use_responses_lite",
+    "generic_prompt_default": "core/src/client_common.rs:49 is false; not normal exec"
+  },
+  "verified_model_defaults": {
+    "gpt-5.5": {
+      "mode": "standard",
+      "parallel_tool_calls": true,
+      "reasoning": {
+        "effort": "medium"
+      },
+      "text": {
+        "verbosity": "low"
+      }
+    },
+    "gpt-6-astra": {
+      "mode": "lite",
+      "parallel_tool_calls": false,
+      "reasoning": {
+        "effort": "low",
+        "context": "all_turns"
+      },
+      "text": {
+        "verbosity": "low"
+      }
+    }
+  },
+  "reasoning_rules": [
+    "Always Some(Reasoning) in this builder; optional inner members are omitted when absent.",
+    "Effort is configured value or model default, then resolved by model.",
+    "Summary requires support and a non-None summary setting; absent in these captures.",
+    "Context omitted for standard; all_turns for Lite."
+  ],
+  "text_rules": [
+    "Use supported configured verbosity, else model default.",
+    "Omit entire text when both verbosity and output schema are absent.",
+    "Output schema comes from caller; no default schema is injected."
+  ],
+  "conditional_fields": [
+    "instructions",
+    "tools",
+    "text",
+    "stream_options",
+    "service_tier"
+  ],
+  "omitted_by_builder": [
+    "access_programs"
+  ],
+  "compaction": {
+    "observed_endpoint": "/backend-api/codex/responses",
+    "input_trigger": {
+      "type": "compaction_trigger"
+    },
+    "synthetic_oauth_content_encoding": "zstd",
+    "fake_api_key_content_encoding": "absent (identity)",
+    "legacy_responses_compact_observed": false,
+    "legacy_responses_compact_encoding": "unverified"
+  },
+  "evidence": [
+    "standard.json",
+    "lite.json",
+    "compact.json",
+    "http/compact.encoding.json",
+    "api-key/http/compact.encoding.json",
+    "source-references.json"
+  ],
+  "limits": [
+    "No permission to inject official agent instructions/tools follows from complete-body fixtures.",
+    "No universal reasoning/text defaults established for unknown models.",
+    "Scoped session/turn identities and metadata must not be copied literally from fixtures."
+  ]
+}

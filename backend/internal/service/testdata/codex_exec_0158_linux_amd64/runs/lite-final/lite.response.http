@@ -1,0 +1,20 @@
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Content-Length: 1217
+Connection: close
+
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_fixture_local","object":"response","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_fixture_local","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_fixture_local","output_index":0,"content_index":0,"delta":"OK"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_fixture_local","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_fixture_local","object":"response","status":"completed","output":[{"id":"msg_fixture_local","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6,"input_tokens_details":{"cached_tokens":0}}}}
+

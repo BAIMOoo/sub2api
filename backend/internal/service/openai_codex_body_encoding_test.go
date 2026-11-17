@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +15,34 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCodexHTTPZstdMatchesOfficial0158Frame(t *testing.T) {
+	for _, name := range []string{"standard", "lite", "compact"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join("testdata", "codex_exec_0158_linux_amd64", "http")
+			reference, err := os.ReadFile(filepath.Join(root, name+".body.bin"))
+			require.NoError(t, err)
+			payload, err := os.ReadFile(filepath.Join(root, name+".decoded.json"))
+			require.NoError(t, err)
+			encoded, err := encodeCodexHTTPZstd(payload)
+			require.NoError(t, err)
+			var expected, actual zstd.Header
+			require.NoError(t, expected.Decode(reference))
+			require.NoError(t, actual.Decode(encoded))
+			require.Equal(t, expected.SingleSegment, actual.SingleSegment)
+			require.Equal(t, expected.WindowSize, actual.WindowSize)
+			require.Equal(t, expected.HasFCS, actual.HasFCS)
+			require.Equal(t, expected.HasCheckSum, actual.HasCheckSum)
+			require.Equal(t, expected.DictionaryID, actual.DictionaryID)
+			decoder, err := zstd.NewReader(nil)
+			require.NoError(t, err)
+			defer decoder.Close()
+			decoded, err := decoder.DecodeAll(encoded, nil)
+			require.NoError(t, err)
+			require.Equal(t, payload, decoded)
+		})
+	}
+}
 
 // readCodexUpstreamBody 返回测试替身捕获到的出站正文副本：Codex 协议请求体是
 // zstd 编码的官方形态，断言前解开才能继续按 JSON 语义比较。

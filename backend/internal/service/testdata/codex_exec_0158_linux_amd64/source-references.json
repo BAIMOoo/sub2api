@@ -1,0 +1,222 @@
+[
+  {
+    "path": "codex-rs/core/src/client.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/client.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/core/src/client.rs",
+    "sha256": "360f2b1c4c8e9053ac6de965e4ba66d94eb2fd8aa89d4d69de9249821af76ef9",
+    "bytes": 118661,
+    "line_ranges": {
+      "reasoning": [
+        873,
+        891
+      ],
+      "body_builder": [
+        895,
+        1016
+      ],
+      "compression_selection": [
+        1627,
+        1637
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/codex-api/src/common.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/codex-api/src/common.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/codex-api/src/common.rs",
+    "sha256": "688e3a00bd8764308285ec90b9ab70862014bf4caf0af9a129fef84e7e47e5ef",
+    "bytes": 13862,
+    "line_ranges": {
+      "reasoning_members": [
+        157,
+        166
+      ],
+      "serialization": [
+        278,
+        302
+      ],
+      "text_omission": [
+        392,
+        409
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/core/src/session/turn.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/session/turn.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/core/src/session/turn.rs",
+    "sha256": "1a435159fce55535ca57c7b2be649c52804f971835b6bac492424e921ba524c7",
+    "bytes": 122861,
+    "line_ranges": {
+      "normal_exec_parallel_true": [
+        1552,
+        1565
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/core/src/client_common.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/client_common.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/core/src/client_common.rs",
+    "sha256": "3cd5bded9103e4a4e60eb49c482616c6456f7b8702df87d36ee75d27f8d54473",
+    "bytes": 4739,
+    "line_ranges": {
+      "generic_prompt_default": [
+        44,
+        55
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/core/src/compact_remote_v2_attempt.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/compact_remote_v2_attempt.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/core/src/compact_remote_v2_attempt.rs",
+    "sha256": "a090b41ffaa8e669c3c95eff70bb62caa953fecb946bb74bfed32f9121c39ea1",
+    "bytes": 5082,
+    "line_ranges": {
+      "compaction_prompt": [
+        69,
+        87
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/core/src/compact_remote_v2.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/compact_remote_v2.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/core/src/compact_remote_v2.rs",
+    "sha256": "b0dc8aa62fddaea2903852ab7bb989ed5e4b3a2b90ea4598890e1fbadac1c542",
+    "bytes": 48349,
+    "line_ranges": {
+      "compaction_uses_response_stream": [
+        386,
+        419
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/features/src/lib.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/features/src/lib.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/features/src/lib.rs",
+    "sha256": "2c7ff67e2582bd30a4b6f20cdfbae234adfbc4cc7fb3e2f7cae08941bbd190de",
+    "bytes": 64506,
+    "line_ranges": {
+      "compression_enabled_by_default": [
+        1272,
+        1275
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/codex-api/src/endpoint/responses.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/codex-api/src/endpoint/responses.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/codex-api/src/endpoint/responses.rs",
+    "sha256": "4f2fff3da4ca3ca9fcfa40ada8e98a0229af296094e03febb4d823f32ef932c8",
+    "bytes": 4961,
+    "line_ranges": {
+      "compression_to_transport": [
+        123,
+        143
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/models-manager/models.json",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/models-manager/models.json",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/models-manager/models.json",
+    "sha256": "a5e25107506f0934cb62144c093c72bf8c7fa5de1436f4aa02fe54769d789618",
+    "bytes": 405645,
+    "line_ranges": {
+      "lite_slug": [
+        4,
+        4
+      ],
+      "lite_verbosity": [
+        6,
+        7
+      ],
+      "lite_mode": [
+        23,
+        23
+      ],
+      "lite_reasoning": [
+        41,
+        41
+      ],
+      "lite_summary_support": [
+        174,
+        174
+      ],
+      "standard_slug": [
+        1172,
+        1172
+      ],
+      "standard_verbosity": [
+        1174,
+        1175
+      ],
+      "standard_mode": [
+        1191,
+        1191
+      ],
+      "standard_reasoning": [
+        1209,
+        1209
+      ],
+      "standard_summary_support": [
+        1294,
+        1294
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/model-provider/src/workspace_routing.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/model-provider/src/workspace_routing.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/model-provider/src/workspace_routing.rs",
+    "sha256": "655591ae381d4725eb101155c91669cd776d627252972ec987ae18314b33b2ab",
+    "bytes": 3690,
+    "line_ranges": {
+      "https_requirement": [
+        40,
+        64
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/backend-client/src/types.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/backend-client/src/types.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/backend-client/src/types.rs",
+    "sha256": "e456b3b88e993b0db6bddb798de42a15f5e47a60d492556cbecdaf0a7230787b",
+    "bytes": 20796,
+    "line_ranges": {
+      "mock_account_shape": [
+        129,
+        222
+      ]
+    }
+  },
+  {
+    "path": "codex-rs/protocol/src/auth.rs",
+    "tag": "rust-v0.158.0",
+    "url": "https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/protocol/src/auth.rs",
+    "raw_url": "https://raw.githubusercontent.com/openai/codex/rust-v0.158.0/codex-rs/protocol/src/auth.rs",
+    "sha256": "0ab901e92eaaa9ac87d1aa5ba94c1bdc72696e922062f318e2c8e308462a3856",
+    "bytes": 8690,
+    "line_ranges": {
+      "backend_auth_modes": [
+        50,
+        63
+      ]
+    }
+  }
+]

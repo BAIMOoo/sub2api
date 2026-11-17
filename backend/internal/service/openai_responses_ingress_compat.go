@@ -18,6 +18,10 @@ func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 }
 
 func normalizeOpenAIResponsesLegacyIngressWithConfig(cfg *config.Config, body []byte) ([]byte, bool, error) {
+	return normalizeOpenAIResponsesLegacyIngressWithPolicy(cfg, body, codexHTTPLegacy)
+}
+
+func normalizeOpenAIResponsesLegacyIngressWithPolicy(cfg *config.Config, body []byte, policy codexHTTPPolicy) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -48,7 +52,7 @@ func normalizeOpenAIResponsesLegacyIngressWithConfig(cfg *config.Config, body []
 	if hasMessages {
 		messages, messagesAreArray := messagesValue.([]any)
 		if messagesAreArray && len(messages) > 0 {
-			legacy, err := convertLegacyResponsesMessages(cfg, body)
+			legacy, err := convertLegacyResponsesMessagesWithPolicy(cfg, body, policy)
 			if err != nil {
 				return body, false, err
 			}
@@ -58,7 +62,9 @@ func normalizeOpenAIResponsesLegacyIngressWithConfig(cfg *config.Config, body []
 			if !hasNativeInput {
 				request["input"] = legacy.input
 				applyLegacyResponsesTopLevelFields(request, legacy)
-				delete(request, "previous_response_id")
+				if !policy.preservesCodexExec() {
+					delete(request, "previous_response_id")
+				}
 			}
 		}
 		// messages is not a Responses field. When native input is present but the
@@ -110,13 +116,19 @@ type convertedLegacyResponsesMessages struct {
 	hasReasoningEffort bool
 }
 
-func convertLegacyResponsesMessages(cfg *config.Config, body []byte) (convertedLegacyResponsesMessages, error) {
+func convertLegacyResponsesMessagesWithPolicy(cfg *config.Config, body []byte, policy codexHTTPPolicy) (convertedLegacyResponsesMessages, error) {
 	var converted convertedLegacyResponsesMessages
 	var chatRequest apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatRequest); err != nil {
 		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
-	responsesRequest, err := chatCompletionsToResponses(cfg, &chatRequest)
+	var responsesRequest *apicompat.ResponsesRequest
+	var err error
+	if policy.preservesCodexExec() {
+		responsesRequest, err = apicompat.ChatCompletionsToResponsesWithOptions(&chatRequest, configuredMinOutputTokens(cfg), apicompat.ChatCompletionsToResponsesOptions{PreserveCodexContent: true})
+	} else {
+		responsesRequest, err = chatCompletionsToResponses(cfg, &chatRequest)
+	}
 	if err != nil {
 		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
@@ -128,6 +140,9 @@ func convertLegacyResponsesMessages(cfg *config.Config, body []byte) (convertedL
 	}
 
 	converted.instructions = strings.TrimSpace(responsesRequest.Instructions)
+	if policy.preservesCodexExec() {
+		converted.instructions = responsesRequest.Instructions
+	}
 	converted.maxOutputTokens = responsesRequest.MaxOutputTokens
 	converted.temperature = responsesRequest.Temperature
 	converted.topP = responsesRequest.TopP

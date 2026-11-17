@@ -1,0 +1,53 @@
+{
+  "encoding": "identity (Content-Encoding absent)",
+  "wire_body_bytes": 64193,
+  "wire_body_sha256": "3ea4cd1b14b34674766a513f60aedeb69a127d779d14de6427ba40fc0991b47f",
+  "decoded_body_bytes": 64193,
+  "decoded_body_sha256": "3ea4cd1b14b34674766a513f60aedeb69a127d779d14de6427ba40fc0991b47f",
+  "zstd": null,
+  "body_keys": [
+    "model",
+    "input",
+    "tool_choice",
+    "parallel_tool_calls",
+    "reasoning",
+    "store",
+    "stream",
+    "include",
+    "prompt_cache_key",
+    "text",
+    "client_metadata"
+  ],
+  "input_layout": [
+    {
+      "type": "additional_tools",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "role": "developer"
+    },
+    {
+      "type": "message",
+      "role": "user"
+    },
+    {
+      "type": "message",
+      "role": "user"
+    }
+  ],
+  "has_compaction_trigger": false,
+  "has_compaction": false
+}

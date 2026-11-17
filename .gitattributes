@@ -20,3 +20,8 @@ backend/migrations/*.sql text eol=lf
 
 # Dockerfile
 Dockerfile text eol=lf
+
+# Immutable packet captures: preserve CRLF headers and original entity bytes.
+backend/internal/service/testdata/codex_exec_0158_linux_amd64/**/*.raw binary
+backend/internal/service/testdata/codex_exec_0158_linux_amd64/**/*.http binary
+backend/internal/service/testdata/codex_exec_0158_linux_amd64/**/*.bin binary

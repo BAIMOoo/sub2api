@@ -67,7 +67,7 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						contentType := "text/event-stream"
 						if compact {
 							path += "/compact"
-							responseBody = `{"id":"cmp_test","object":"response.compaction","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`
+							responseBody = `{"id":"cmp_test","object":"response.compaction","output":[{"type":"compaction","encrypted_content":"synthetic-summary"}],"usage":{"input_tokens":1,"output_tokens":1}}`
 							contentType = "application/json"
 						}
 						c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -84,18 +84,27 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						account := codexBodyEncodingTestAccount(158)
 						account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
 						account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+						setCodexHTTPTestMode(account, "gpt-6-astra", lite)
 						svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 						_, err = svc.Forward(context.Background(), c, account, body)
 						require.NoError(t, err)
 						require.NotNil(t, upstream.lastReq)
-						assert.Equal(t, ua, upstream.lastReq.Header.Get("User-Agent"))
-						assert.Equal(t, version, upstream.lastReq.Header.Get("version"))
+						assert.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
+						assert.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
 						assert.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
 						// Compatibility may prepend a tool declaration; the history itself must survive.
 						var forwarded []any
 						require.NoError(t, json.Unmarshal([]byte(gjson.GetBytes(upstream.lastBody, "input").Raw), &forwarded))
 						require.GreaterOrEqual(t, len(forwarded), len(input))
-						assert.Equal(t, input, forwarded[len(forwarded)-len(input):])
+						start := 0
+						for i, raw := range forwarded {
+							if item, ok := raw.(map[string]any); ok && item["type"] == "reasoning" {
+								start = i
+								break
+							}
+						}
+						require.GreaterOrEqual(t, len(forwarded), start+len(input))
+						assert.Equal(t, input, forwarded[start:start+len(input)])
 					})
 				}
 			}
@@ -103,7 +112,7 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 	}
 }
 
-func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
+func TestForward_NormalizesAnyHarnessToCodexExec(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pinNativeHTTPTestIdentity(t)
 	body, err := json.Marshal(map[string]any{
@@ -134,6 +143,9 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 		userAgent  string
 		originator string
 	}{
+		{name: "arbitrary agent", userAgent: "my-agent/1.0"},
+		{name: "missing identity"},
+		{name: "native older exec", userAgent: "codex_exec/0.158.0 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.158.0)", originator: "codex_exec"},
 		{
 			name:       "tui",
 			userAgent:  "codex-tui/0.163.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.163.0)",
@@ -175,12 +187,13 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 					account := codexBodyEncodingTestAccount(158)
 					account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
 					account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+					setCodexHTTPTestMode(account, "gpt-6-astra", lite)
 					svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 					_, err := svc.Forward(context.Background(), c, account, body)
 					require.NoError(t, err)
 					require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
-					require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("version"))
-					require.Equal(t, nativeHTTPTestCanonicalUA, upstream.lastReq.Header.Get("user-agent"))
+					require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
+					require.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("user-agent"))
 					var forwarded map[string]any
 					require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
 					items, ok := forwarded["input"].([]any)
@@ -241,7 +254,7 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 							require.True(t, ok)
 							names = append(names, toolType)
 						}
-						require.Contains(t, names, "web_search")
+						require.NotContains(t, names, "web_search")
 						require.Contains(t, names, "namespace")
 						require.Contains(t, names, "custom")
 						require.NotContains(t, names, "function")
@@ -282,7 +295,7 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 						require.True(t, ok)
 						names = append(names, toolType)
 					}
-					require.ElementsMatch(t, []string{"function", "custom", "custom", "web_search"}, names)
+					require.ElementsMatch(t, []string{"function", "custom", "custom"}, names)
 					for _, raw := range items {
 						item, ok := raw.(map[string]any)
 						require.True(t, ok)
@@ -301,11 +314,11 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 	const overrideUA = "codex-tui/0.150.0 (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; 0.150.0)"
 	for _, tc := range []struct {
 		name, ua, originator, version, override string
-		force, ws, duplicate, preserve          bool
+		force, ws, duplicate                    bool
 	}{
-		{name: "native", ua: nativeUA, originator: "codex_exec", version: "0.158.0", preserve: true},
-		{name: "missing_version", ua: nativeUA, originator: "codex_exec", preserve: true},
-		{name: "missing_originator", ua: nativeUA, version: "0.158.0", preserve: true},
+		{name: "native", ua: nativeUA, originator: "codex_exec", version: "0.158.0"},
+		{name: "missing_version", ua: nativeUA, originator: "codex_exec"},
+		{name: "missing_originator", ua: nativeUA, version: "0.158.0"},
 		{name: "missing_ua", originator: "codex_exec", version: "0.158.0"},
 		{name: "third_party", ua: "third-party/1.0", originator: "codex_exec", version: "0.158.0"},
 		{name: "mismatched_originator", ua: nativeUA, originator: "codex-tui", version: "0.158.0"},
@@ -319,6 +332,7 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 		{name: "account_override", ua: nativeUA, originator: "codex_exec", version: "0.158.0", override: overrideUA},
 		{name: "force_overrides_account", ua: nativeUA, originator: "codex_exec", version: "0.158.0", override: overrideUA, force: true},
 		{name: "ws_unchanged", ua: nativeUA, originator: "codex_exec", version: "0.158.0", ws: true},
+		{name: "ws_override_unchanged", ua: nativeUA, originator: "codex_exec", version: "0.158.0", ws: true, override: overrideUA},
 	} {
 		for _, passthrough := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/passthrough=%v", tc.name, passthrough), func(t *testing.T) {
@@ -347,10 +361,11 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 					req, err = svc.buildUpstreamRequest(context.Background(), c, account, body, "test-token", true, "", true)
 				}
 				require.NoError(t, err)
-				expectedUA, expectedVersion, expectedOriginator := nativeHTTPTestCanonicalUA, "0.163.0", "codex_exec"
-				if tc.preserve {
-					expectedUA, expectedVersion = nativeUA, "0.158.0"
-				} else if tc.override != "" && !tc.force {
+				expectedUA, expectedVersion, expectedOriginator := codexExecHTTPUserAgent(), codexExecHTTPVersion, "codex_exec"
+				if tc.ws {
+					expectedUA, expectedVersion = nativeHTTPTestCanonicalUA, "0.163.0"
+				}
+				if tc.ws && tc.override != "" && !tc.force {
 					expectedUA = strings.ReplaceAll(overrideUA, "0.150.0", "0.163.0")
 					expectedOriginator = "codex-tui"
 				}
@@ -405,7 +420,7 @@ func TestCodexHTTPPolicyNormalizesNativeHarnesses(t *testing.T) {
 			c.Request.Header.Set("originator", tc.originator)
 			c.Request.Header.Set("version", "0.163.0")
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			assert.Equal(t, tc.expected, nativeCodexHTTPPolicy(c, codexBodyEncodingTestAccount(158)))
+			assert.Equal(t, tc.expected, codexHTTPPolicyForRequest(c, codexBodyEncodingTestAccount(158)))
 		})
 	}
 }
@@ -419,7 +434,7 @@ func TestCodexHTTPPolicyKeepsAPIKeyTransportSeparate(t *testing.T) {
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 	account := codexBodyEncodingTestAccount(158)
 	account.Type = AccountTypeAPIKey
-	assert.Equal(t, codexHTTPLegacy, nativeCodexHTTPPolicy(c, account))
+	assert.Equal(t, codexHTTPLegacy, codexHTTPPolicyForRequest(c, account))
 }
 
 func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {

@@ -1,0 +1,6 @@
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+Content-Length: 60
+Connection: close
+
+{"error":{"message":"Offline fixture forces HTTP fallback"}}

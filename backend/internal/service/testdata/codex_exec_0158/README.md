@@ -28,11 +28,11 @@ on Alpine/aarch64. WebSocket parity is outside this work's scope.
 
 The HTTP forwarding test now deliberately configures a different canonical
 identity (0.163.0 / xterm-256color) from the incoming native identity
-(0.158.0 / unknown), and requires the incoming identity to survive. These header
+(0.158.0 / unknown), and requires the pinned 0.158.0 Linux amd64 identity on egress, independent of that resolver. These header
 test values are separate from the captured body provenance above.
 
-The gateway scopes session identities. Recognized Codex HTTP harnesses on the
-ChatGPT/Codex OAuth protocol path are normalized to the `codex_exec` wire
+The gateway scopes session identities. Any ordinary HTTP harness on the
+ChatGPT/Codex account protocol path are normalized to the `codex_exec` wire
 contract, including input-item
 `internal_chat_message_metadata_passthrough`. Live alignment run
 `20261112T010000Z-88612991` observed official OAuth requests carrying this field
@@ -40,9 +40,13 @@ and completing successfully upstream. Native fixture tests compare the complete
 official body. Full Forward harness regressions separately cover TUI, Desktop,
 IDE, and overridden-originator identities in standard and Lite modes, including
 instruction placement, the canonical tool carrier, reasoning/metadata, and
-native IDs. Non-Codex compatibility paths, OpenAI API-key upstreams, and
-WebSocket retain their separate contracts, including the legacy cleanup based
+native IDs. OpenAI API-key and third-party upstreams, and the entire
+WebSocket ingress chain (including HTTP bridges), retain their separate contracts, including the legacy cleanup based
 on https://github.com/Wei-Shaw/sub2api/issues/7066.
 
 Official layout source:
 https://github.com/openai/codex/blob/rust-v0.158.0/codex-rs/core/src/client.rs#L912
+
+The current fixed environment and layered transport evidence are in the sibling
+`codex_exec_0158_linux_amd64` directory. These original arm64 body fixtures remain
+unchanged historical regression inputs.
