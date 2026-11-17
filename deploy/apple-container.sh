@@ -398,12 +398,22 @@ validate_ipv4_address() {
     done
 }
 
+file_owner_uid() {
+    stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1"
+}
+
+file_mode() {
+    local mode
+    mode="$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")" || return 1
+    printf '%s\n' "${mode}"
+}
+
 validate_env_file_security() {
     local owner mode permissions
 
     [[ -f "${ENV_FILE}" ]] || die "Environment file not found: ${ENV_FILE}. Run '$0 init' first."
-    owner="$(stat -f '%u' "${ENV_FILE}")" || die "Unable to read owner for ${ENV_FILE}."
-    mode="$(stat -f '%Lp' "${ENV_FILE}")" || die "Unable to read permissions for ${ENV_FILE}."
+    owner="$(file_owner_uid "${ENV_FILE}")" || die "Unable to read owner for ${ENV_FILE}."
+    mode="$(file_mode "${ENV_FILE}")" || die "Unable to read permissions for ${ENV_FILE}."
     [[ "${owner}" == "${EUID}" ]] || die "Environment file must be owned by the current user: ${ENV_FILE}"
     [[ "${mode}" =~ ^[0-7]+$ ]] || die "Unable to parse permissions for ${ENV_FILE}: ${mode}"
     permissions=$((8#${mode}))
