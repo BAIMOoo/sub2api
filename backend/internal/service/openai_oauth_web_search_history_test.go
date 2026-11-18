@@ -150,3 +150,17 @@ func TestEnsureOpenAIOAuthWebSearchToolForHistoryDoesNotShareToolMap(t *testing.
 	require.Equal(t, false, secondTool["external_web_access"])
 	require.Equal(t, false, openAIWebSearchHistoryTool["external_web_access"])
 }
+
+func TestOAuthLiteSearchHistoryUsesIngressLayout(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	in := []byte(openAIWebSearchHistoryCompactionBody)
+	httpBody, _, err := normalizeOpenAIResponsesCompatibilityBodyWithOptions(in, account, openAIResponsesCompatibilityOptions{ResponsesLite: true, HTTPPolicy: codexHTTPExec})
+	require.NoError(t, err)
+	wsBody, _, err := normalizeOpenAIResponsesWebSocketCompatibilityBodyWithConfig(nil, in, account, true)
+	require.NoError(t, err)
+	require.Equal(t, "additional_tools", gjson.GetBytes(httpBody, "input.0.type").String())
+	wsItems := gjson.GetBytes(wsBody, "input").Array()
+	require.Len(t, wsItems, len(gjson.GetBytes(in, "input").Array())+1)
+	require.Equal(t, "message", wsItems[0].Get("type").String())
+	require.Equal(t, "additional_tools", wsItems[len(wsItems)-1].Get("type").String())
+}

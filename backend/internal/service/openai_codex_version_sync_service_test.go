@@ -532,6 +532,22 @@ func TestGetOpenAICodexCanonicalUserAgentOutboundIdentity(t *testing.T) {
 				require.Equal(t, wantUA, identity.userAgent)
 				require.Equal(t, wantOriginator, identity.originator)
 				require.Equal(t, version.want, identity.version)
+
+				// Exercise upstream's configured-versus-sent contract on the WS policy,
+				// including independent defaults when the panel UA is absent/invalid.
+				wantWS := wantUA
+				wantWSOrigin := wantOriginator
+				if ua.client == "" {
+					wantWS = "codex_cli_rs/" + version.want + " (Ubuntu 22.4.0; x86_64) xterm-256color"
+					wantWSOrigin = openai.CodexCLIOriginator
+				}
+				configured := svc.codexCanonicalUAFor(context.Background(), upstreamWSWire)
+				require.Equal(t, wantWS, configured)
+				wantWSOrigin, wantWS, _ = openai.NormalizeCodexClientIdentityToCLI(wantWSOrigin, wantWS)
+				ws := upstreamWSWire.resolve("", configured)
+				require.Equal(t, wantWS, ws.userAgent)
+				require.Equal(t, wantWSOrigin, ws.originator)
+				require.Equal(t, version.want, ws.version)
 			})
 		}
 	}

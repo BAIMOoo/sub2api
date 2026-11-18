@@ -49,7 +49,7 @@ const codexOfficialClientFamilyPrefix = "codex "
 // 或在 bump context/codex 时同步补入本集合。
 var codexOfficialClientOriginators = map[string]bool{
 	"codex_cli_rs":          true, // CLI 默认 DEFAULT_ORIGINATOR
-	"codex-tui":             true, // 交互式 TUI（连字符，真实流量占比最高）
+	CodexTUIOriginator:      true, // 交互式 TUI（连字符，真实流量占比最高）
 	"codex_vscode":          true, // VSCode/Cursor 扩展
 	"codex_vscode_copilot":  true, // 扩展 GitHub Copilot 集成模式
 	"codex_app":             true, // 历史保留
@@ -259,18 +259,41 @@ func canonicalizeCodexOriginator(name string) string {
 	return name
 }
 
-// CodexCLIOriginator 是 codex-rs 客户端库层的默认 originator，保留用于兼容识别。
+// CodexCLIOriginator 是 codex-rs 客户端的默认 originator。
 const CodexCLIOriginator = "codex_cli_rs"
 
-// CodexDefaultOriginator 是网关默认使用的 Codex CLI（非交互 exec）originator。
-//
-// 实测（2026-09-28，Linux 上 `codex exec` 经中间人采集）：真实的 exec 入口会把
-// originator 覆盖成 `codex_exec`，UA 首段与尾注也随之变成
-// `codex_exec/<ver> (…) (codex_exec; <ver>)`；`codex_cli_rs` 只是未覆盖时的库层默认值，
-// 没有哪个真实客户端会发 `codex_cli_rs/… (codex_exec; …)` 这种首尾不同源的组合。
-// exec 走 HTTP Responses API，与本网关的出站传输形态自洽；交互式 TUI 的 originator 是
-// codex-tui，但其以 WebSocket 为主、且 WS 失败时不会回退 HTTP，故不作为默认身份。
+// CodexTUIOriginator 是交互式 Codex TUI 使用的 originator。
+const CodexTUIOriginator = "codex-tui"
+
+// CodexDefaultOriginator is the fork’s existing HTTP default. WebSocket uses the upstream CLI default.
 const CodexDefaultOriginator = "codex_exec"
+
+// NormalizeCodexClientIdentityToCLI 将已配对的 TUI 身份归一为 CLI 身份。
+// sub2api 历史默认 UA 使用 codex-tui；上游仓库的 #5198 记录了该身份会收到
+// server_is_overloaded，而相同请求改用 codex_cli_rs 可以成功。归一化必须同时改写
+// originator 和 User-Agent 首段，避免触发 #3901 的身份配对校验。
+//
+// 版本、操作系统、架构和终端指纹保持不变；尾部 `(name; version)` 客户端标识组
+// 属于 TUI 身份时移除，因为真实 CLI UA 不携带该组。
+func NormalizeCodexClientIdentityToCLI(originator, userAgent string) (string, string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(originator), CodexTUIOriginator) {
+		return originator, userAgent, false
+	}
+
+	ua := strings.TrimSpace(userAgent)
+	slash := strings.IndexByte(ua, '/')
+	if slash <= 0 {
+		return CodexCLIOriginator, ua, true
+	}
+
+	rest := ua[slash:]
+	if trailer := codexUATrailerName(ua); trailer != "" && IsCodexOfficialClientOriginator(trailer) {
+		if open := strings.LastIndex(rest, "("); open > 0 {
+			rest = strings.TrimRight(rest[:open], " ")
+		}
+	}
+	return CodexCLIOriginator, CodexCLIOriginator + rest, true
+}
 
 // CodexUserAgentVersion 提取 Codex UA 的完整版本段，即 `{client}/{version} (...` 中的 version。
 // 与 ParseCodexEngineVersion 的区别：后者只取三段数字用于引擎版本比较（会丢掉 -alpha.4

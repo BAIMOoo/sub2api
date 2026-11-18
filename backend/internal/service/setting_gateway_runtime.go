@@ -98,7 +98,7 @@ const antigravityUserAgentVersionErrorTTL = 5 * time.Second
 const antigravityUserAgentVersionDBTimeout = 5 * time.Second
 
 // DefaultOpenAICodexUserAgent 是 OpenAI Codex 默认 User-Agent，用于规避浏览器 UA 的质询。
-// 默认采用 codex-tui 身份，版本段随 codexCLIVersion 一起更新。
+// 默认采用 codex_cli_rs 身份，避免历史 codex-tui 出口触发 sub2api 的身份风控指纹。
 const DefaultOpenAICodexUserAgent = codexCLIUserAgent
 
 // cachedOpenAICodexUserAgent 缓存 OpenAI Codex UA（进程内缓存，60s TTL）
@@ -290,9 +290,17 @@ func (s *SettingService) GetAntigravityUserAgentVersion(ctx context.Context) str
 // GetOpenAICodexUserAgent 返回 OpenAI Codex 上游请求使用的 User-Agent。
 // 后台设置优先；为空时回退到内置默认值。
 func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
-	fallback := DefaultOpenAICodexUserAgent
+	if ua := s.configuredCodexUserAgent(ctx); ua != "" {
+		return ua
+	}
+	return DefaultOpenAICodexUserAgent
+}
+
+// Cache the setting itself: an empty value and an explicitly configured HTTP
+// default are different on WebSocket. Never cache a transport's fallback here.
+func (s *SettingService) configuredCodexUserAgent(ctx context.Context) string {
 	if s == nil || s.settingRepo == nil {
-		return fallback
+		return ""
 	}
 	if cached, ok := s.openAICodexUACache.Load().(*cachedOpenAICodexUserAgent); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
@@ -315,16 +323,13 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 		if err != nil && !errors.Is(err, ErrSettingNotFound) {
 			slog.Warn("failed to get openai codex user agent setting", "error", err)
 			s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
-				value:     fallback,
+				value:     "",
 				expiresAt: time.Now().Add(openAICodexUserAgentErrorTTL).UnixNano(),
 			})
-			return fallback, nil
+			return "", nil
 		}
 		// Preserve invalid header bytes for canonical identity validation.
 		ua := strings.Trim(value, " \t")
-		if ua == "" {
-			ua = fallback
-		}
 		s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
 			value:     ua,
 			expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
@@ -334,12 +339,12 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 	if ua, ok := result.(string); ok && ua != "" {
 		return ua
 	}
-	return fallback
+	return ""
 }
 
 // GetOpenAICodexClientVersion 返回出站声明的 Codex 客户端版本号。
 // 优先级：管理员在面板覆写的版本 → 自动同步到的官方最新稳定版 → 内置常量。
-// 上游在容量紧张时按客户端身份分优先级降载，陈旧版本会被优先丢弃，故该值需保持跟随官方发布；
+// 上游会按客户端身份进行风控分层，陈旧版本可能被优先丢弃，故该值需保持跟随官方发布；
 // 自动同步让运维不必为了跟版本而发新版本。
 func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string {
 	fallback := codexCLIVersion
@@ -500,25 +505,26 @@ func (s *SettingService) InvalidateClaudeCodeClientVersionCache() {
 }
 
 // GetOpenAICodexCanonicalUserAgent 返回出站规范 Codex User-Agent。
-// 未填面板 UA 时按当前生效的客户端版本号拼出标准 Codex TUI UA。
+// 未填面板 UA 时按当前生效的客户端版本号拼出标准 Codex CLI UA。
 //
 // 面板 UA 只贡献客户端名与 OS / 架构 / 终端指纹，版本段一律用生效版本重建：该输入框是
 // 唯一能改 UA 后缀的地方，但它填写于某个历史版本，逐字沿用会把出站身份永久钉死在陈旧
-// 版本上并绕过自动同步——而陈旧身份正是上游优先降载的那一侧。
+// 版本上并绕过自动同步——而陈旧身份正是上游风控更严格的那一侧。
 // 需要固定版本请填「Codex 客户端版本号」并关闭自动同步。
 func (s *SettingService) GetOpenAICodexCanonicalUserAgent(ctx context.Context) string {
-	if s == nil {
-		return codexCLIUserAgent
-	}
+	return s.codexCanonicalUAFor(ctx, forkHTTPWire)
+}
+
+func (s *SettingService) codexCanonicalUAFor(ctx context.Context, policy codexWirePolicy) string {
 	version := s.GetOpenAICodexClientVersion(ctx)
-	ua := s.GetOpenAICodexUserAgent(ctx)
+	ua := s.configuredCodexUserAgent(ctx)
 	if _, pairedUA, ok := openai.PairCodexClientIdentity(ua); ok {
 		if rebuilt := openai.SetCodexUserAgentVersion(pairedUA, version); rebuilt != "" {
 			return rebuilt
 		}
 	}
-	// Invalid fingerprints must not discard the independently resolved version.
-	return buildCodexCLIUserAgent(version)
+	// Invalid settings must not discard the independently resolved version.
+	return policy.defaultUA(version)
 }
 
 var legacyClaudeCodeCodexWhitelistEntry = openai.AllowedClientEntry{

@@ -64,6 +64,10 @@ const usageLogsEffectiveRequestedModelIndex = "idx_usage_logs_effective_requeste
 const usageLogsEffectiveUpstreamModelIndex = "idx_usage_logs_effective_upstream_model_created"
 const usageLogsUpstreamRequestIDIndexMigration = "233_add_usage_log_upstream_request_id_index_notx.sql"
 const usageLogsUpstreamRequestIDIndex = "idx_usage_logs_upstream_request_id"
+const forkCookieStoreMigration = "241_openai_upstream_cookies.sql"
+const geminiImageGroupMigration = "246_enable_gemini_image_generation_groups.sql"
+const usageLogsAPIKeyCostIndexMigration = "249_add_usage_logs_api_key_cost_index_notx.sql"
+const usageLogsAPIKeyCostIndex = "idx_usage_logs_api_key_created_cost"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -179,6 +183,9 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	}
 	sort.Strings(files) // 确保按文件名顺序执行迁移
 
+	// A marker already in the ledger (not one newly applied in this run) identifies
+	// a fork upgrade. Fresh databases retain upstream backfill semantics.
+	upgradingInstalledFork := false
 	for _, name := range files {
 		// 读取迁移文件内容
 		contentBytes, err := fs.ReadFile(fsys, name)
@@ -200,6 +207,9 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 		var existing string
 		rowErr := lockConn.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE filename = $1", name).Scan(&existing)
 		if rowErr == nil {
+			if name == forkCookieStoreMigration {
+				upgradingInstalledFork = true
+			}
 			// 迁移已应用，验证校验和是否匹配
 			if existing != checksum {
 				// 兼容特定历史误改场景（仅白名单规则），其余仍保持严格不可变约束。
@@ -261,8 +271,9 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 			return fmt.Errorf("begin migration %s: %w", name, err)
 		}
 
-		// 执行迁移 SQL
-		if _, err := tx.ExecContext(ctx, content); err != nil {
+		// Keep the canonical SQL and its checksum. On upgrades, reconcile this one
+		// permission backfill before commit so a concurrent reader never sees a grant.
+		if err := execMigrationPreservingGroupFlags(ctx, tx, content, upgradingInstalledFork && name == geminiImageGroupMigration); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
@@ -290,6 +301,33 @@ type migrationConnection interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+// execMigrationPreservingGroupFlags optionally protects explicit group settings during
+// migration 246. The table lock serializes the short snapshot/backfill/restore with
+// admin writes; lock failure rolls back instead of overwriting a concurrent decision.
+func execMigrationPreservingGroupFlags(ctx context.Context, tx *sql.Tx, content string, preserve bool) error {
+	if preserve {
+		const snapshot = `SET LOCAL lock_timeout = '5s';
+LOCK TABLE groups IN SHARE ROW EXCLUSIVE MODE;
+CREATE TEMP TABLE sub2api_246_disabled_image_groups ON COMMIT DROP AS
+SELECT id FROM groups WHERE platform IN ('gemini', 'antigravity') AND allow_image_generation = false;`
+		if _, err := tx.ExecContext(ctx, snapshot); err != nil {
+			return fmt.Errorf("save existing group image settings: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, content); err != nil {
+		return err
+	}
+	if preserve {
+		const restore = `UPDATE groups g SET allow_image_generation = false
+FROM pg_temp.sub2api_246_disabled_image_groups saved
+WHERE saved.id = g.id AND g.allow_image_generation = true;`
+		if _, err := tx.ExecContext(ctx, restore); err != nil {
+			return fmt.Errorf("restore existing group image settings: %w", err)
+		}
+	}
+	return nil
+}
+
 func prepareNonTransactionalMigration(ctx context.Context, db migrationConnection, name string) error {
 	switch name {
 	case paymentOrdersOutTradeNoUniqueMigration:
@@ -309,6 +347,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 		return nil
 	case usageLogsUpstreamRequestIDIndexMigration:
 		return dropInvalidIndexIfPresent(ctx, db, usageLogsUpstreamRequestIDIndex)
+	case usageLogsAPIKeyCostIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, usageLogsAPIKeyCostIndex)
 	default:
 		return nil
 	}

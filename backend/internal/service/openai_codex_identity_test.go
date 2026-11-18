@@ -169,14 +169,19 @@ func TestEnforceCodexIdentityHeadersWithAccountOverrideUA(t *testing.T) {
 		})
 		t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
 
+		const override = "codex-tui/0.125.0 (Mac OS X 14.0; arm64) iTerm"
 		h := make(http.Header)
 		h.Set("originator", "codex_cli_rs")
-
-		enforceCodexIdentityHeadersWithUA(h, "codex-tui/0.125.0 (Mac OS X 14.0; arm64) iTerm")
-
+		ws := h.Clone()
+		enforceCodexIdentityHeadersWithUA(h, override)
 		require.Equal(t, "codex-tui", h.Get("originator"))
 		require.Equal(t, "codex-tui/0.200.1 (Mac OS X 14.0; arm64) iTerm", h.Get("user-agent"))
 		require.Equal(t, "0.200.1", h.Get("version"))
+
+		upstreamWSWire.enforce(ws, override, codexCanonicalUserAgent())
+		require.Equal(t, openai.CodexCLIOriginator, ws.Get("originator"))
+		require.Equal(t, "codex_cli_rs/0.200.1 (Mac OS X 14.0; arm64) iTerm", ws.Get("user-agent"))
+		require.Equal(t, "0.200.1", ws.Get("version"))
 	})
 }
 

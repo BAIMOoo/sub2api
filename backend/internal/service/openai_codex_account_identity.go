@@ -51,6 +51,15 @@ func codexAccountIdentitySource(c *gin.Context, fallback *Account) *Account {
 	return fallback
 }
 
+// codexClientSessionID returns the client's own session header, before any
+// outbound rewrite.
+func codexClientSessionID(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	return extractClientSessionID(c.Request.Header)
+}
+
 // codexAccountIdentityNamespace returns a stable, credential-scoped namespace.
 // Multiple local rows that use the same ChatGPT account intentionally share the
 // same namespace. Setup tokens use an irreversible bearer fingerprint because
@@ -96,6 +105,10 @@ func isolateOpenAIUpstreamSessionID(apiKeyID int64, account *Account, raw string
 }
 
 func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw string) string {
+	return forkHTTPWire.scopeID(account, apiKeyID, kind, raw)
+}
+
+func (p codexWirePolicy) scopeID(account *Account, apiKeyID int64, kind, raw string) string {
 	raw = strings.TrimSpace(raw)
 	namespace := codexAccountIdentityNamespace(account)
 	if raw == "" || namespace == "" {
@@ -113,7 +126,7 @@ func scopeCodexAccountIdentityValue(account *Account, apiKeyID int64, kind, raw 
 	// 否则「v4 会话 id」本身就是官方形态里不存在的信号。时间戳沿用原值，
 	// 因此同一输入永远得到同一结果，且时间线与客户端原值一致。
 	// installation_id 是客户端自带的设备标识（官方为普通 v4），维持派生 v4。
-	if kind != codexIdentityKindInstallation {
+	if p == forkHTTPWire && kind != codexIdentityKindInstallation {
 		if v7, ok := deriveStableCodexIdentityUUIDv7(seed, raw); ok {
 			return v7
 		}
@@ -274,31 +287,29 @@ func applyCodexSessionIdentityHeaders(headers http.Header, fallbackSessionID str
 	headers.Set("x-codex-window-id", base+windowSuffix)
 }
 
-var codexAccountIdentityFields = []struct {
-	name string
-	kind string
-}{
-	{name: "installation_id", kind: codexIdentityKindInstallation},
-	{name: "x-codex-installation-id", kind: codexIdentityKindInstallation},
-	// 官方客户端的会话标识是"同值关系"：session-id = thread-id = x-client-request-id，
-	// 且 x-codex-window-id / window_id = "<同一 UUID>:<窗口序号>"。共用同一 kind 才能在
-	// 作用域化之后仍保持这种相等关系（同 kind + 同原值 → 同派生值）。
-	{name: "session_id", kind: "session"},
-	{name: "session-id", kind: "session"},
-	{name: "thread_id", kind: "session"},
-	{name: "thread-id", kind: "session"},
-	{name: "window_id", kind: "session"},
-	{name: "x-codex-window-id", kind: "session"},
-	{name: "x-client-request-id", kind: "session"},
-	{name: "turn_id", kind: "turn"},
-	{name: "turn-id", kind: "turn"},
-	// 官方 turn_id 与 root_turn_id 是同值关系（同一回合 UUID v7，见实测 body 与
-	// x-codex-turn-metadata）。纳入同一 kind 才能保证作用域化后仍相等。
-	{name: "root_turn_id", kind: "turn"},
-	{name: "root-turn-id", kind: "turn"},
+// WS keeps upstream's per-field namespaces. HTTP preserves the fork's
+// relationships between session/thread/window IDs and scopes root turn IDs.
+var codexAccountIdentityFields = [...]struct{ name, httpKind, wsKind string }{
+	{"installation_id", "installation", "installation"}, {"x-codex-installation-id", "installation", "installation"},
+	{"session_id", "session", "session"}, {"session-id", "session", "session"},
+	{"thread_id", "session", "thread"}, {"thread-id", "session", "thread"},
+	{"window_id", "session", "window"}, {"x-codex-window-id", "session", "window"},
+	{"x-client-request-id", "session", "request"},
+	{"turn_id", "turn", "turn"}, {"turn-id", "turn", "turn"},
+	{"root_turn_id", "turn", ""}, {"root-turn-id", "turn", ""},
 }
 
-func applyCodexAccountIdentityFields(values map[string]any, account *Account, apiKeyID int64) bool {
+func (p codexWirePolicy) scopeField(account *Account, apiKeyID int64, httpKind, wsKind, raw string) string {
+	if p == upstreamWSWire {
+		if wsKind == "" {
+			return raw
+		}
+		return p.scopeID(account, apiKeyID, wsKind, raw)
+	}
+	return scopeCodexAccountIdentityValueKeepSuffix(account, apiKeyID, httpKind, raw)
+}
+
+func (p codexWirePolicy) scopeFields(values map[string]any, account *Account, apiKeyID int64) bool {
 	if values == nil || codexAccountIdentityNamespace(account) == "" {
 		return false
 	}
@@ -308,7 +319,7 @@ func applyCodexAccountIdentityFields(values map[string]any, account *Account, ap
 		if !ok || strings.TrimSpace(raw) == "" {
 			continue
 		}
-		next := scopeCodexAccountIdentityValueKeepSuffix(account, apiKeyID, field.kind, raw)
+		next := p.scopeField(account, apiKeyID, field.httpKind, field.wsKind, raw)
 		if next != raw {
 			values[field.name] = next
 			changed = true
@@ -317,7 +328,7 @@ func applyCodexAccountIdentityFields(values map[string]any, account *Account, ap
 	return changed
 }
 
-func applyCodexAccountIdentityEmbeddedMetadata(values map[string]any, account *Account, apiKeyID int64) bool {
+func (p codexWirePolicy) scopeEmbeddedMetadata(values map[string]any, account *Account, apiKeyID int64) bool {
 	raw, ok := values[openAIWSTurnMetadataHeader].(string)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
@@ -326,7 +337,7 @@ func applyCodexAccountIdentityEmbeddedMetadata(values map[string]any, account *A
 	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
 		return false
 	}
-	if !applyCodexAccountIdentityFields(metadata, account, apiKeyID) {
+	if !p.scopeFields(metadata, account, apiKeyID) {
 		return false
 	}
 	rebuilt, err := marshalCodexTurnMetadata(metadata)
@@ -337,7 +348,21 @@ func applyCodexAccountIdentityEmbeddedMetadata(values map[string]any, account *A
 	return true
 }
 
-func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, account *Account, apiKeyID int64) bool {
+// codexPromptCacheKeyKind scopes a prompt_cache_key that names the client's
+// session in the session namespace, so it stays equal to the scoped session.
+// Codex derives the key from its session-id header, which matches
+// client_metadata.session_id except on an ephemeral fork such as thread/sample:
+// the fork names itself in the metadata but keeps its parent's header and key.
+func codexPromptCacheKeyKind(promptCacheKey, bodySessionID, clientSessionID string) string {
+	for _, sessionID := range []string{bodySessionID, clientSessionID} {
+		if strings.TrimSpace(sessionID) != "" && promptCacheKey == sessionID {
+			return "session"
+		}
+	}
+	return "prompt-cache"
+}
+
+func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, account *Account, apiKeyID int64, clientSessionID string) bool {
 	if requestBody == nil || codexAccountIdentityNamespace(account) == "" {
 		return false
 	}
@@ -346,18 +371,15 @@ func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, acco
 	originalBodySessionID := ""
 	if clientMetadata != nil {
 		originalBodySessionID, _ = clientMetadata["session_id"].(string)
-		if applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID) {
+		if forkHTTPWire.scopeFields(clientMetadata, account, apiKeyID) {
 			changed = true
 		}
-		if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
+		if forkHTTPWire.scopeEmbeddedMetadata(clientMetadata, account, apiKeyID) {
 			changed = true
 		}
 	}
 	if raw, ok := requestBody["prompt_cache_key"].(string); ok && strings.TrimSpace(raw) != "" {
-		kind := "prompt-cache"
-		if strings.TrimSpace(originalBodySessionID) != "" && raw == originalBodySessionID {
-			kind = "session"
-		}
+		kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionID)
 		next := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
 		if next != raw {
 			requestBody["prompt_cache_key"] = next
@@ -370,7 +392,11 @@ func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, acco
 // applyCodexAccountIdentityClientMetadataRaw scopes only the small identity
 // subobjects with gjson/sjson. The passthrough hot path never unmarshals the
 // potentially multi-megabyte request body.
-func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, apiKeyID int64) ([]byte, bool, error) {
+func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, apiKeyID int64, clientSessionID string) ([]byte, bool, error) {
+	return forkHTTPWire.scopeMetadataRaw(body, account, apiKeyID, clientSessionID)
+}
+
+func (p codexWirePolicy) scopeMetadataRaw(body []byte, account *Account, apiKeyID int64, clientSessionID string) ([]byte, bool, error) {
 	if len(body) == 0 || codexAccountIdentityNamespace(account) == "" {
 		return body, false, nil
 	}
@@ -388,8 +414,8 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 			return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
 		}
 		originalBodySessionID, _ = clientMetadata["session_id"].(string)
-		metadataChanged := applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID)
-		if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
+		metadataChanged := p.scopeFields(clientMetadata, account, apiKeyID)
+		if p.scopeEmbeddedMetadata(clientMetadata, account, apiKeyID) {
 			metadataChanged = true
 		}
 		if metadataChanged {
@@ -407,11 +433,8 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 	}
 	if promptCacheKey := gjson.GetBytes(body, "prompt_cache_key"); promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" {
 		raw := promptCacheKey.String()
-		kind := "prompt-cache"
-		if strings.TrimSpace(originalBodySessionID) != "" && raw == originalBodySessionID {
-			kind = "session"
-		}
-		scoped := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
+		kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionID)
+		scoped := p.scopeID(account, apiKeyID, kind, raw)
 		if scoped != raw {
 			rewritten, err := sjson.SetBytes(next, "prompt_cache_key", scoped)
 			if err != nil {
@@ -425,6 +448,10 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 }
 
 func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, apiKeyID int64) {
+	forkHTTPWire.scopeHeaders(headers, account, apiKeyID)
+}
+
+func (p codexWirePolicy) scopeHeaders(headers http.Header, account *Account, apiKeyID int64) {
 	if headers == nil || codexAccountIdentityNamespace(account) == "" {
 		return
 	}
@@ -436,12 +463,12 @@ func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, api
 		}
 		raw := strings.TrimSpace(headers.Get(field.name))
 		if raw != "" {
-			headers.Set(field.name, scopeCodexAccountIdentityValueKeepSuffix(account, apiKeyID, field.kind, raw))
+			headers.Set(field.name, p.scopeField(account, apiKeyID, field.httpKind, field.wsKind, raw))
 		}
 	}
 	if raw := strings.TrimSpace(headers.Get(openAIWSTurnMetadataHeader)); raw != "" {
 		metadata := map[string]any{}
-		if err := json.Unmarshal([]byte(raw), &metadata); err == nil && metadata != nil && applyCodexAccountIdentityFields(metadata, account, apiKeyID) {
+		if err := json.Unmarshal([]byte(raw), &metadata); err == nil && metadata != nil && p.scopeFields(metadata, account, apiKeyID) {
 			if rebuilt, err := marshalCodexTurnMetadata(metadata); err == nil {
 				headers.Set(openAIWSTurnMetadataHeader, string(rebuilt))
 			}

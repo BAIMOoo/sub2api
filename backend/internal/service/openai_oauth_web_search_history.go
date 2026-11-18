@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -38,6 +39,15 @@ type openAIWebSearchHistoryScan struct {
 	additionalToolsIndex int
 }
 
+// HTTP keeps the fork's Lite prefix convention. WS follows the upstream
+// request layout from the first frame, regardless of connection pooling.
+type webSearchHistoryLayout uint8
+
+const (
+	webSearchHistoryHTTP webSearchHistoryLayout = iota
+	webSearchHistoryWS
+)
+
 func newOpenAIWebSearchHistoryScan() openAIWebSearchHistoryScan {
 	return openAIWebSearchHistoryScan{additionalToolsIndex: -1}
 }
@@ -45,7 +55,7 @@ func newOpenAIWebSearchHistoryScan() openAIWebSearchHistoryScan {
 func (scan *openAIWebSearchHistoryScan) recordItemAndReportAlreadyDeclared(
 	index int,
 	itemType string,
-	responsesLite bool,
+	considerInputTools bool,
 	itemToolCount int,
 	itemHasWebSearch bool,
 ) bool {
@@ -53,10 +63,10 @@ func (scan *openAIWebSearchHistoryScan) recordItemAndReportAlreadyDeclared(
 	case openAIWebSearchCallItemType:
 		scan.hasWebSearchCall = true
 	case openAIAdditionalToolsItemType:
-		if responsesLite && itemHasWebSearch {
+		if considerInputTools && itemHasWebSearch {
 			return true
 		}
-		if responsesLite && itemToolCount > 0 {
+		if considerInputTools && itemToolCount > 0 {
 			scan.callerDeclaredTools = true
 		}
 		if scan.additionalToolsIndex < 0 {
@@ -76,8 +86,9 @@ func openAIToolsContainWebSearch(rawTools any) bool {
 		return false
 	}
 	for _, rawTool := range tools {
-		tool, ok := rawTool.(map[string]any)
-		if ok && isOpenAIWebSearchToolType(firstNonEmptyString(tool["type"])) {
+		tool, _ := rawTool.(map[string]any)
+		kind, _ := tool["type"].(string)
+		if isOpenAIWebSearchToolType(kind) {
 			return true
 		}
 	}
@@ -116,9 +127,10 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 			continue
 		}
 		tools, _ := item["tools"].([]any)
+		kind, _ := item["type"].(string)
 		if scan.recordItemAndReportAlreadyDeclared(
 			i,
-			firstNonEmptyString(item["type"]),
+			kind,
 			responsesLite,
 			len(tools),
 			openAIToolsContainWebSearch(item["tools"]),
@@ -166,9 +178,12 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 	return true
 }
 
-// ensureOpenAIOAuthWebSearchToolForHistoryBody is the raw-body variant used by
-// the passthrough and WebSocket paths; it avoids decoding the whole body.
+// ensureOpenAIOAuthWebSearchToolForHistoryBody uses the fork's HTTP layout.
 func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite bool) ([]byte, bool, error) {
+	return declareWebSearchForHistory(body, responsesLite, webSearchHistoryHTTP)
+}
+
+func declareWebSearchForHistory(body []byte, responsesLite bool, layout webSearchHistoryLayout) ([]byte, bool, error) {
 	if len(body) == 0 || !bytes.Contains(body, []byte(openAIWebSearchCallItemType)) {
 		return body, false, nil
 	}
@@ -187,7 +202,7 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 		if scan.recordItemAndReportAlreadyDeclared(
 			i,
 			item.Get("type").String(),
-			responsesLite,
+			responsesLite || layout == webSearchHistoryWS,
 			itemToolCount,
 			gjsonToolsContainWebSearch(itemTools),
 		) {
@@ -218,8 +233,16 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 	case scan.additionalToolsIndex >= 0:
 		next, err = sjson.SetBytes(body, fmt.Sprintf("input.%d.tools", scan.additionalToolsIndex), []any{cloneOpenAIWebSearchHistoryTool()})
 	default:
-		// Lite declarations belong in the input prefix.
-		next, err = insertOpenAIAdditionalToolsItemRaw(body, items, 0)
+		// WS appends the synthesized declaration but keeps a final compaction
+		// trigger last. Neither transport moves existing items.
+		at := 0
+		if layout == webSearchHistoryWS {
+			at = len(items)
+			if at > 0 && strings.TrimSpace(items[at-1].Get("type").String()) == "compaction_trigger" {
+				at--
+			}
+		}
+		next, err = insertOpenAIAdditionalToolsItemRaw(body, items, at)
 	}
 	if err != nil {
 		return body, false, fmt.Errorf("declare web_search tool for web_search_call history: %w", err)
@@ -237,7 +260,9 @@ func ensureOpenAIOAuthWebSearchToolForHistoryBody(body []byte, responsesLite boo
 }
 
 func insertOpenAIAdditionalToolsItemRaw(body []byte, items []gjson.Result, at int) ([]byte, error) {
-	additional, err := marshalOpenAIUpstreamJSON(map[string]any{
+	// Only this synthetic declaration is encoded; caller-supplied items below
+	// retain their original JSON bytes.
+	additional, err := json.Marshal(map[string]any{
 		"type":  openAIAdditionalToolsItemType,
 		"role":  openAIAdditionalToolsDefaultRole,
 		"tools": []any{cloneOpenAIWebSearchHistoryTool()},

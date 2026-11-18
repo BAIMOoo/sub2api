@@ -56,3 +56,9 @@ go test -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
 这些测试锁定 HTTP 的已知结构与传输约定。完整验收还需要固定版本、模型、平台和配置，以相同输入采集官方 exec 与网关实际发送的 OAuth HTTP 请求，比较解压后的正文、有序请求头、TLS 握手及续轮状态。WebSocket 不属于本次验收范围。
 
 `openai_codex_native_http_test.go` 使用合成工具记录，覆盖两版客户端、标准/Lite、转换/透传和 compact，核对身份、工具配对及引用。规范身份故意与入站身份不同，避免测试通过固定相同 UA 隐藏覆盖问题。合成 ID 不代表从生产 HMAC 恢复的原文。
+
+## 此次上游合并的边界（2026-11-18）
+
+- HTTP 延续原 fork 的行为：有效原生 exec 请求仍可保留自己的版本；网关版本仍按手动配置、同步值、内置值的顺序选择。`0.158.0` 是夹具版本，**不是**所有出口的版本。全体客户端统一声明固定身份/版本的提案留出，不在本次合并内。
+- HTTP 的工具、续聊、Standard/Lite、compact、账号和会话隔离继续按原约定验收。普通 API Key 和其他供应商的协议不变。
+- WebSocket（含 WS 转 HTTP）按锁定的上游版本独立验收，不套用 fork 的原生 HTTP、安装标识或正文压缩规则。
