@@ -148,23 +148,22 @@ func TestOpenAIGatewayService_OAuthPassthrough_MissingInstructionsForwardedWitho
 	require.Equal(t, gjson.Null, sseResponseInstructions(t, rec.Body.String(), "response.completed").Type)
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_InjectedCodexInstructionsEchoRestored(t *testing.T) {
-	upstream := instructionsEchoUpstream(`"` + instructionsEchoMarker + `"`)
+func TestOpenAIGatewayService_OAuthPassthrough_DoesNotInjectCodexInstructions(t *testing.T) {
+	upstream := instructionsEchoUpstream("null")
 	result, rec, err := instructionsEchoForward(t, instructionsEchoOAuthAccount(true), upstream,
 		`{"model":"gpt-5.3-codex","stream":true,"input":[{"type":"message","role":"user","content":"Hi"}]}`)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.NotEmpty(t, gjson.GetBytes(upstream.lastBody, "instructions").String())
-	require.NotContains(t, rec.Body.String(), instructionsEchoMarker)
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 	require.Equal(t, gjson.Null, sseResponseInstructions(t, rec.Body.String(), "response.created").Type)
 	require.Equal(t, gjson.Null, sseResponseInstructions(t, rec.Body.String(), "response.completed").Type)
 
-	nonStreamUpstream := instructionsEchoUpstream(`"` + instructionsEchoMarker + `"`)
+	nonStreamUpstream := instructionsEchoUpstream("null")
 	result, rec, err = instructionsEchoForward(t, instructionsEchoOAuthAccount(true), nonStreamUpstream,
 		`{"model":"gpt-5.3-codex","stream":false,"input":[{"type":"message","role":"user","content":"Hi"}]}`)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.NotContains(t, rec.Body.String(), instructionsEchoMarker)
+	require.False(t, gjson.GetBytes(nonStreamUpstream.lastBody, "instructions").Exists())
 	instructions := gjson.Get(rec.Body.String(), "instructions")
 	require.True(t, instructions.Exists())
 	require.Equal(t, gjson.Null, instructions.Type)

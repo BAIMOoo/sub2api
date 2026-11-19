@@ -137,7 +137,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 ) (*OpenAIForwardResult, error) {
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
-	httpPolicy := nativeCodexHTTPPolicy(c, account)
+	httpPolicy := codexHTTPPolicyForRequest(c, account)
 	if isOpenAIResponsesCompactPath(c) {
 		compactMappedModel := s.resolveOpenAICompactFallbackModel(account, reqModel)
 		if compactMappedModel != "" && compactMappedModel != reqModel {
@@ -160,7 +160,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				}
 				body = nextBody
 			}
-		} else if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); rejectReason != "" {
+		} else if rejectReason := detectOpenAIPassthroughInstructionsRejectReason(reqModel, body); !httpPolicy.usesFixedExecContract() && rejectReason != "" {
 			rejectMsg := "OpenAI codex passthrough requires a non-empty instructions field"
 			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
 			logOpenAIPassthroughInstructionsRejected(ctx, c, account, reqModel, rejectReason, body)
@@ -174,7 +174,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		normalizedBody, normalized, err := normalizeOpenAIPassthroughOAuthBody(
 			body,
-			isOpenAIResponsesCompactPath(c),
+			isOpenAIResponsesCompactPath(c) && !httpPolicy.usesFixedExecContract(),
 			httpPolicy,
 		)
 		if err != nil {
@@ -182,16 +182,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		if normalized {
 			body = normalizedBody
-		}
-		if httpPolicy.preservesCodexExec() && !isOpenAIResponsesCompactPath(c) &&
-			isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) {
-			canonicalBody, canonical, canonicalErr := canonicalizeCodexExecLiteBody(body)
-			if canonicalErr != nil {
-				return nil, canonicalErr
-			}
-			if canonical {
-				body = canonicalBody
-			}
 		}
 		// 上游 ChatGPT internal API 要求 stream=true，但下游响应形态必须遵循
 		// 客户端原始的 stream 标志：stream=false 时由非流式分支把上游 SSE
@@ -245,7 +235,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
-		if account.IsOpenAIOAuthLike() {
+		if account.IsOpenAIOAuthLike() && !httpPolicy.usesFixedExecContract() {
 			aliasedBody, reverse, aliased, aliasErr := aliasOpenAIOAuthReservedToolNamesBody(body)
 			if aliasErr != nil {
 				return nil, aliasErr
@@ -619,6 +609,10 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	body, httpMode, err := normalizeCodexHTTPModeBody(c, account, body)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -744,7 +738,7 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")
 
-	if err := applyMappedGPT55LiteCompatibility(req, account, body); err != nil {
+	if err := applyCodexHTTPMode(c, account, req, body, httpMode); err != nil {
 		return nil, err
 	}
 	return req, nil

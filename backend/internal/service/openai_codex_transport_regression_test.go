@@ -63,8 +63,8 @@ func TestCodexNativeHTTPAndWSBridgeUseIndependentWireContracts(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = req.Body.Close() })
 			if ingress == OpenAIClientTransportHTTP {
-				require.Equal(t, clientUA, req.UserAgent())
-				require.Equal(t, clientVersion, req.Header.Get("version"))
+				require.Equal(t, codexExecHTTPUserAgent(), req.UserAgent())
+				require.Equal(t, codexExecHTTPVersion, req.Header.Get("version"))
 				require.Equal(t, "zstd", req.Header.Get("content-encoding"))
 				require.Empty(t, req.Header.Get("x-codex-installation-id"))
 				require.Empty(t, req.Header.Get("session_id"))

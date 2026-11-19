@@ -84,12 +84,13 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						account := codexBodyEncodingTestAccount(158)
 						account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
 						account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+						setCodexHTTPTestMode(account, "gpt-6-astra", lite)
 						svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 						_, err = svc.Forward(context.Background(), c, account, body)
 						require.NoError(t, err)
 						require.NotNil(t, upstream.lastReq)
-						assert.Equal(t, ua, upstream.lastReq.Header.Get("User-Agent"))
-						assert.Equal(t, version, upstream.lastReq.Header.Get("version"))
+						assert.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
+						assert.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
 						assert.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
 						// Compatibility may prepend a tool declaration; the history itself must survive.
 						var forwarded []any
@@ -175,12 +176,13 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 					account := codexBodyEncodingTestAccount(158)
 					account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
 					account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+					setCodexHTTPTestMode(account, "gpt-6-astra", lite)
 					svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 					_, err := svc.Forward(context.Background(), c, account, body)
 					require.NoError(t, err)
 					require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
-					require.Equal(t, "0.163.0", upstream.lastReq.Header.Get("version"))
-					require.Equal(t, nativeHTTPTestCanonicalUA, upstream.lastReq.Header.Get("user-agent"))
+					require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
+					require.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("user-agent"))
 					var forwarded map[string]any
 					require.NoError(t, json.Unmarshal(upstream.lastBody, &forwarded))
 					items, ok := forwarded["input"].([]any)
@@ -347,10 +349,13 @@ func TestCodexNativeHTTPIdentityBoundaries(t *testing.T) {
 					req, err = svc.buildUpstreamRequest(context.Background(), c, account, body, "test-token", true, "", true)
 				}
 				require.NoError(t, err)
-				expectedUA, expectedVersion, expectedOriginator := nativeHTTPTestCanonicalUA, "0.163.0", "codex_exec"
-				if tc.preserve {
+				expectedUA, expectedVersion, expectedOriginator := codexExecHTTPUserAgent(), codexExecHTTPVersion, "codex_exec"
+				if tc.ws {
+					expectedUA, expectedVersion = nativeHTTPTestCanonicalUA, "0.163.0"
+				}
+				if tc.ws && tc.preserve {
 					expectedUA, expectedVersion = nativeUA, "0.158.0"
-				} else if tc.override != "" && !tc.force {
+				} else if tc.ws && tc.override != "" && !tc.force {
 					expectedUA = strings.ReplaceAll(overrideUA, "0.150.0", "0.163.0")
 					expectedOriginator = "codex-tui"
 				}
@@ -405,7 +410,7 @@ func TestCodexHTTPPolicyNormalizesNativeHarnesses(t *testing.T) {
 			c.Request.Header.Set("originator", tc.originator)
 			c.Request.Header.Set("version", "0.163.0")
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			assert.Equal(t, tc.expected, nativeCodexHTTPPolicy(c, codexBodyEncodingTestAccount(158)))
+			assert.Equal(t, tc.expected, codexHTTPPolicyForRequest(c, codexBodyEncodingTestAccount(158)))
 		})
 	}
 }
@@ -419,7 +424,7 @@ func TestCodexHTTPPolicyKeepsAPIKeyTransportSeparate(t *testing.T) {
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 	account := codexBodyEncodingTestAccount(158)
 	account.Type = AccountTypeAPIKey
-	assert.Equal(t, codexHTTPLegacy, nativeCodexHTTPPolicy(c, account))
+	assert.Equal(t, codexHTTPLegacy, codexHTTPPolicyForRequest(c, account))
 }
 
 func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {

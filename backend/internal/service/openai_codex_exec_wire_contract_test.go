@@ -75,6 +75,7 @@ func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 				account := codexBodyEncodingTestAccount(158)
 				account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
 				account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+				setCodexHTTPTestMode(account, gjson.GetBytes(body, "model").String(), lite)
 				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 				result, err := svc.Forward(context.Background(), c, account, body)
 				require.NoError(t, err)
@@ -82,8 +83,8 @@ func TestForward_CodexExec0158NativeWireLayouts(t *testing.T) {
 				require.NotNil(t, upstream.lastReq)
 				require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
 				require.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
-				require.Equal(t, userAgent, upstream.lastReq.Header.Get("user-agent"))
-				require.Equal(t, "0.158.0", upstream.lastReq.Header.Get("version"))
+				require.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("user-agent"))
+				require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
 				require.Equal(t, codexRequestBodyContentEncoding, upstream.lastReq.Header.Get("content-encoding"))
 				require.Equal(t, lite, isOpenAIResponsesLiteHeader(upstream.lastReq.Header.Get(responsesLiteHeader)))
 				var forwarded map[string]any

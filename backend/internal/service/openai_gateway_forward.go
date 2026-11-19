@@ -92,7 +92,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 	responsesLite := account.IsOpenAI() && isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader))
-	if responsesLite {
+	if responsesLite && !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
 		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
 			param := "tools"
@@ -197,10 +197,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
-	httpPolicy := nativeCodexHTTPPolicy(c, account)
-	normalizeAsExec := httpPolicy.preservesCodexExec()
+	httpPolicy := codexHTTPPolicyForRequest(c, account)
+	normalizeAsExec := httpPolicy.usesFixedExecContract()
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
-		if !httpPolicy.preservesCodexExec() {
+		if !httpPolicy.usesFixedExecContract() {
 			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
 			if reasoningErr != nil {
 				return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
@@ -527,6 +527,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	if httpPolicy.usesFixedExecContract() {
+		responsesLite = resolveCodexHTTPMode(c, account, upstreamModel, body).lite
+	}
 	if account.UsesOpenAICodexProtocol() {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
@@ -542,9 +545,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if compatMessagesBridge {
 			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
 				IsCodexCLI:                          isCodexCLI,
-				IsCompact:                           isCompactRequest,
+				IsCompact:                           isCompactRequest && !normalizeAsExec,
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 true,
+				HTTPPolicy:                          httpPolicy,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				KeepSystemMessagesInInput:           true,
 				ResponsesLite:                       responsesLite,
@@ -553,7 +557,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
 				IsCodexCLI:                          isCodexCLI,
-				IsCompact:                           isCompactRequest,
+				IsCompact:                           isCompactRequest && !normalizeAsExec,
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 normalizeAsExec,
 				HTTPPolicy:                          httpPolicy,
@@ -742,20 +746,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, decodeErr
 		}
 		if truncateOpenAIResponsesInputText(decoded) {
-			markDecodedModified()
-		}
-	}
-
-	if httpPolicy.preservesCodexExec() && responsesLite && !isCompactRequest {
-		decoded, decodeErr := ensureReqBody()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		canonical, canonicalErr := canonicalizeCodexExecLiteRequest(decoded)
-		if canonicalErr != nil {
-			return nil, canonicalErr
-		}
-		if canonical {
 			markDecodedModified()
 		}
 	}
@@ -1457,6 +1447,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	body, httpMode, err := normalizeCodexHTTPModeBody(c, account, body)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -1574,7 +1568,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 
-	if err := applyMappedGPT55LiteCompatibility(req, account, body); err != nil {
+	if err := applyCodexHTTPMode(c, account, req, body, httpMode); err != nil {
 		return nil, err
 	}
 	// 正文编码对齐官方 HTTP 形态：chatgpt.com Codex 后端收 zstd。

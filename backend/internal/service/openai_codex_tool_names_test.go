@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -144,8 +147,9 @@ func TestAliasOpenAIOAuthReservedToolNames_LeavesNamespaceChildren(t *testing.T)
 	require.Equal(t, "python", gjson.GetBytes(aliased, "tools.0.children.0.name").String())
 }
 
-func TestApplyCodexOAuthTransform_AliasesLiteChildrenNamespace(t *testing.T) {
+func TestCodexHTTPModeBody_AliasesLiteChildrenNamespace(t *testing.T) {
 	reqBody := map[string]any{
+		"model": "gpt-5.5",
 		"tools": []any{
 			map[string]any{
 				"type": "namespace", "name": "functions",
@@ -157,16 +161,20 @@ func TestApplyCodexOAuthTransform_AliasesLiteChildrenNamespace(t *testing.T) {
 		"input": "hello",
 	}
 
-	result := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
-		HTTPPolicy:              codexHTTPExec,
-		ResponsesLite:           true,
-		SkipDefaultInstructions: true,
-	})
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	account := codexBodyEncodingTestAccount(530)
+	setCodexHTTPTestMode(account, "gpt-5.5", true)
 
-	require.NoError(t, result.Error)
-	require.True(t, result.Modified)
-	require.Equal(t, "python", result.ToolNameReverse[codexPythonToolAlias])
-	input, ok := reqBody["input"].([]any)
+	normalized, _, err := normalizeCodexHTTPModeBody(c, account, body)
+	require.NoError(t, err)
+	require.Equal(t, "python", codexToolNameReverseFromContext(c)[codexPythonToolAlias])
+	var forwarded map[string]any
+	require.NoError(t, json.Unmarshal(normalized, &forwarded))
+	input, ok := forwarded["input"].([]any)
 	require.True(t, ok)
 	carrier, ok := input[0].(map[string]any)
 	require.True(t, ok)

@@ -264,7 +264,8 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 
 	// 官方工具布局由 Responses Lite 模式决定，与 HTTP/WS 传输方式无关。
 	// 只在 Lite 模式兼容搬迁第三方函数工具；标准模式保留合法的顶层 tools。
-	if opts.ResponsesLite && promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
+	if !opts.HTTPPolicy.usesFixedExecContract() && opts.ResponsesLite &&
+		promoteTopLevelToolsToAdditionalTools(reqBody, opts.IsCompact) {
 		result.Modified = true
 	}
 
@@ -288,30 +289,19 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if normalizeCodexTools(reqBody) {
 		result.Modified = true
 	}
-	if opts.HTTPPolicy.preservesCodexExec() && opts.ResponsesLite && !opts.IsCompact {
-		if normalizeOpenAIResponsesStringInput(reqBody) {
-			result.Modified = true
-		}
-		canonicalized, err := canonicalizeCodexExecLiteTools(reqBody)
+	// Fixed HTTP aliases reserved names after final Standard/Lite layout so
+	// namespace children are covered too. Other transports keep the legacy
+	// transform-time mapping.
+	if !opts.HTTPPolicy.usesFixedExecContract() {
+		toolNameReverse, toolNamesChanged, err := aliasOpenAIOAuthReservedToolNames(reqBody)
 		if err != nil {
 			result.Error = err
 			return result
 		}
-		if canonicalized {
+		result.ToolNameReverse = toolNameReverse
+		if toolNamesChanged {
 			result.Modified = true
 		}
-	}
-	// Collect aliases only after prompt/functions/function_call compatibility
-	// has produced the final Responses protocol nodes. Otherwise references
-	// introduced by those migrations can retain the reserved name.
-	toolNameReverse, toolNamesChanged, err := aliasOpenAIOAuthReservedToolNames(reqBody)
-	if err != nil {
-		result.Error = err
-		return result
-	}
-	result.ToolNameReverse = toolNameReverse
-	if toolNamesChanged {
-		result.Modified = true
 	}
 	if normalizeCodexToolChoice(reqBody) {
 		result.Modified = true
@@ -1874,10 +1864,10 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 	filtered := make([]any, 0, len(input))
 	referenceIDMappings := codexItemReferenceIDMappings(input, opts.PreserveCallIDs)
 	var additionalToolsIDMappings map[string]string
-	if !opts.HTTPPolicy.preservesCodexExec() {
+	if !opts.HTTPPolicy.usesFixedExecContract() {
 		additionalToolsIDMappings = codexAdditionalToolsIDMappings(input)
 	}
-	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.HTTPPolicy.preservesCodexExec()}
+	idOptions := openAIResponsesInputIDOptions{NativeCodexHTTP: opts.HTTPPolicy.usesFixedExecContract()}
 	inputItemIDs := codexInputItemIDs(input, idOptions)
 	inputCallIDs := codexInputCallIDs(input)
 	for _, item := range input {
@@ -1913,7 +1903,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// Native codex_exec HTTP requests are already accepted by the same
 		// upstream contract. Preserve their reasoning item byte-for-byte so the
 		// compatibility rewrite cannot turn an exact pass-through into drift.
-		if typ == "reasoning" && opts.HTTPPolicy.preservesCodexExec() {
+		if typ == "reasoning" && opts.HTTPPolicy.usesFixedExecContract() {
 			filtered = append(filtered, m)
 			continue
 		}
@@ -1959,7 +1949,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 				if !referencesExistingItem {
 					if normalizedID, mapped := referenceIDMappings[trimmedID]; mapped {
 						newItem["id"] = normalizedID
-					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.HTTPPolicy.preservesCodexExec() {
+					} else if _, hasSameTurnCall := inputCallIDs[trimmedID]; !hasSameTurnCall && !opts.HTTPPolicy.usesFixedExecContract() {
 						// A bare call_* reference is a legacy function-call identifier.
 						// Normalize it even when its call item lives in an earlier turn.
 						newItem["id"] = normalizeCodexCallID(trimmedID)

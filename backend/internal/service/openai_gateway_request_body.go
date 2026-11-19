@@ -1456,7 +1456,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityFields(reqBody map[string]any, ht
 		delete(reqBody, "commands")
 		changed = true
 	}
-	if !httpPolicy.preservesCodexExec() {
+	if !httpPolicy.usesFixedExecContract() {
 		// Codex can attach internal message metadata when a custom provider is
 		// named OpenAI. Legacy ChatGPT compatibility removes it because older
 		// upstreams rejected the field (#7066). Native codex_exec requests keep
@@ -1507,7 +1507,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte, httpPolicy code
 		normalized = next
 		changed = true
 	}
-	if httpPolicy.preservesCodexExec() {
+	if httpPolicy.usesFixedExecContract() {
 		return normalized, changed, nil
 	}
 
@@ -1676,7 +1676,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			return body, false, err
 		}
 		// Preserve opaque client tool declaration IDs and their references on native HTTP.
-		if !opts.HTTPPolicy.preservesCodexExec() {
+		if !opts.HTTPPolicy.usesFixedExecContract() {
 			if next, idsChanged, err := normalizeCodexAdditionalToolsIDsBody(normalized); err != nil {
 				return body, false, err
 			} else if idsChanged {
@@ -1685,7 +1685,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			}
 		}
 	}
-	if !opts.HTTPPolicy.preservesCodexExec() {
+	if !opts.HTTPPolicy.usesFixedExecContract() {
 		if next, normalizedReasoningContent, err := normalizeOpenAIResponsesReasoningContentReplay(normalized); err != nil {
 			return body, false, err
 		} else if normalizedReasoningContent {
@@ -1708,7 +1708,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 	}
 	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDsWithOptions(normalized, openAIResponsesInputIDOptions{
-		NativeCodexHTTP: opts.HTTPPolicy.preservesCodexExec(),
+		NativeCodexHTTP: opts.HTTPPolicy.usesFixedExecContract(),
 	}); err != nil {
 		return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
 	} else if idsChanged {
@@ -1941,7 +1941,7 @@ func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 }
 
 func (s *OpenAIGatewayService) useUpstreamInstructionsCompat(policy codexHTTPPolicy) bool {
-	return !policy.preservesCodexExec() && s.cfg != nil && s.cfg.Gateway.OpenAIUpstreamInstructionsCompat
+	return !policy.usesFixedExecContract() && s.cfg != nil && s.cfg.Gateway.OpenAIUpstreamInstructionsCompat
 }
 
 func isOpenAICodexModel(model string) bool {

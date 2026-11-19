@@ -1109,6 +1109,9 @@ func SnapshotOpenAICompatibilityFallbackMetrics() OpenAICompatibilityFallbackMet
 }
 
 func (s *OpenAIGatewayService) detectCodexClientRestriction(c *gin.Context, account *Account, body []byte) CodexClientRestrictionDetectionResult {
+	if codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+		return CodexClientRestrictionDetectionResult{Matched: true, Reason: "codex_http_contract"}
+	}
 	// 安全默认：即便缺 settingService（仅测试/误配可达）也保持指纹门为默认种子，
 	// 避免零值 policy（nil 信号）让指纹门失败开放。有 settingService 时整体覆盖为全局策略。
 	policy := CodexRestrictionPolicy{EngineFingerprintSignals: openai.DefaultEngineFingerprintSignals}
