@@ -76,6 +76,149 @@ func TestCodexHTTPIngressRejectsAmbiguousTaskContent(t *testing.T) {
 	}
 }
 
+func TestCodexHTTPChatPreservesAgentSemantics(t *testing.T) {
+	for _, lite := range []bool{false, true} {
+		t.Run("lite="+boolString(lite), func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"system","content":"KEEP CHAT SYSTEM"},{"role":"user","content":[{"type":"text","text":"KEEP CHAT TASK"}]},{"role":"assistant","content":"","tool_calls":[{"id":"call_chat","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]},{"role":"tool","tool_call_id":"call_chat","content":""}],"metadata":{"caller":"KEEP CHAT METADATA"},"tools":[{"type":"function","function":{"name":"read_file","description":"Read","parameters":{"type":"object","properties":{"id":{"type":"integer","const":9007199254740993}}}}}],"tool_choice":{"type":"function","function":{"name":"read_file"}},"stream":false}`)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("User-Agent", "arbitrary-chat-harness/3")
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			account := codexBodyEncodingTestAccount(2100)
+			setCodexHTTPTestMode(account, "gpt-5.5", lite)
+			upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+			_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+			require.Error(t, err)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
+			require.Contains(t, string(upstream.lastBody), "KEEP CHAT SYSTEM")
+			require.Contains(t, string(upstream.lastBody), "KEEP CHAT TASK")
+			require.Contains(t, string(upstream.lastBody), "KEEP CHAT METADATA")
+			require.Equal(t, "call_chat", gjson.GetBytes(upstream.lastBody, `input.#(type=="function_call").call_id`).String())
+			require.Equal(t, "call_chat", gjson.GetBytes(upstream.lastBody, `input.#(type=="function_call_output").call_id`).String())
+			require.Equal(t, "", gjson.GetBytes(upstream.lastBody, `input.#(type=="function_call_output").output`).String())
+			require.Contains(t, string(upstream.lastBody), "9007199254740993")
+		})
+	}
+}
+
+func TestCodexHTTPChatRejectsUnrepresentableFieldsBeforeUpstream(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown message field",
+			body: `{"model":"gpt-5.5","messages":[{"role":"assistant","content":null,"audio":{"id":"keep"}}]}`,
+		},
+		{
+			name: "unknown tool field",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"},"defer_loading":true}}]}`,
+		},
+		{
+			name: "unsupported content part",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"audio","audio":{"id":"keep"}}]}]}`,
+		},
+		{
+			name: "duplicate call id",
+			body: `{"model":"gpt-5.5","messages":[{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"one","arguments":"{}"}},{"id":"call_1","type":"function","function":{"name":"two","arguments":"{}"}}]}]}`,
+		},
+		{
+			name: "orphan legacy result",
+			body: `{"model":"gpt-5.5","messages":[{"role":"function","name":"lookup","content":"result"}]}`,
+		},
+		{
+			name: "stream options",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream_options":{"include_usage":true}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(test.body)))
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+			_, err := svc.ForwardAsChatCompletions(
+				context.Background(),
+				c,
+				codexBodyEncodingTestAccount(2101),
+				[]byte(test.body),
+				"",
+				"",
+			)
+			require.Error(t, err)
+			require.Nil(t, upstream.lastReq)
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		})
+	}
+}
+
+func TestCodexHTTPChatPreservesHostedTools(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"search"}],"tools":[{"type":"web_search"},{"type":"code_execution"},{"type":"x_search","allowed_x_handles":["openai"],"enable_image_understanding":true}]}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	account := codexBodyEncodingTestAccount(2104)
+	setCodexHTTPTestMode(account, "gpt-5.5", false)
+	upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.Error(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "web_search", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
+	require.Equal(t, "code_execution", gjson.GetBytes(upstream.lastBody, "tools.1.type").String())
+	require.Equal(t, "x_search", gjson.GetBytes(upstream.lastBody, "tools.2.type").String())
+	require.Equal(t, "openai", gjson.GetBytes(upstream.lastBody, "tools.2.allowed_x_handles.0").String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "tools.2.enable_image_understanding").Bool())
+}
+
+func TestCodexHTTPChatLogsIgnoredGenerationControls(t *testing.T) {
+	logs, restore := captureStructuredLog(t)
+	defer restore()
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"keep task"}],"max_tokens":32,"temperature":0.1,"stop":"END"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	account := codexBodyEncodingTestAccount(2103)
+	setCodexHTTPTestMode(account, "gpt-5.5", false)
+	upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.Error(t, err)
+	require.NotNil(t, upstream.lastReq)
+	for _, field := range []string{"max_tokens", "temperature", "stop"} {
+		require.False(t, gjson.GetBytes(upstream.lastBody, field).Exists())
+		require.True(t, logs.ContainsFieldValue("ignored_parameters", field))
+	}
+	require.Contains(t, string(upstream.lastBody), "keep task")
+}
+
+func TestCodexHTTPChatPreservesResponsesShapedBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_keep","metadata":{"caller":"KEEP RESPONSES SHAPE"},"input":[{"type":"message","role":"user","content":"KEEP SHAPED TASK"},{"type":"function_call_output","call_id":"call_prev","output":"KEEP SHAPED RESULT"}],"tools":[{"type":"function","name":"read_file","description":"Read","parameters":{"type":"object"}}],"stream":false}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	account := codexBodyEncodingTestAccount(2102)
+	setCodexHTTPTestMode(account, "gpt-5.5", false)
+	upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.Error(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Contains(t, string(upstream.lastBody), "KEEP RESPONSES SHAPE")
+	require.Contains(t, string(upstream.lastBody), "KEEP SHAPED TASK")
+	require.Contains(t, string(upstream.lastBody), "KEEP SHAPED RESULT")
+	require.Equal(t, "resp_keep", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
+}
+
 func TestCodexHTTPForwardPreservesAgentTaskAndToolContinuation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, passthrough := range []bool{false, true} {

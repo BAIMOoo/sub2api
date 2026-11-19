@@ -316,11 +316,32 @@ func validateCodexHTTPChatHistory(body []byte) error {
 	}
 	for index, tool := range gjson.GetBytes(body, "tools").Array() {
 		path := fmt.Sprintf("tools[%d]", index)
-		if err := validateCodexHTTPFieldSet(tool, path, "type function", false); err != nil {
+		allowed := "type"
+		toolType := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
+		switch toolType {
+		case "function":
+			allowed += " function"
+		case "x_search":
+			allowed += " allowed_x_handles excluded_x_handles from_date to_date enable_image_understanding enable_video_understanding"
+		case "web_search", "code_execution":
+		default:
+			return newOpenAIResponsesLiteValidationError(
+				path+".type",
+				"unsupported Chat tool type for lossless Codex conversion",
+			)
+		}
+		if err := validateCodexHTTPFieldSet(tool, path, allowed, false); err != nil {
 			return err
 		}
-		if err := validateCodexHTTPFieldSet(tool.Get("function"), path+".function", "name description parameters strict", false); err != nil {
-			return err
+		if toolType == "function" {
+			if err := validateCodexHTTPFieldSet(
+				tool.Get("function"),
+				path+".function",
+				"name description parameters strict",
+				false,
+			); err != nil {
+				return err
+			}
 		}
 	}
 	for index, function := range gjson.GetBytes(body, "functions").Array() {
