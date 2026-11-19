@@ -72,7 +72,13 @@ func prepareCodexHTTPIngress(c *gin.Context, account *Account, body []byte) ([]b
 		return nil, err
 	}
 
-	if err := validateCodexHTTPChatHistory(body); err != nil {
+	isMessages := c != nil && c.Request != nil && strings.HasSuffix(c.Request.URL.Path, "/messages")
+	if isMessages {
+		if err := validateCodexHTTPMessagesHistory(body); err != nil {
+			writeCodexHTTPCompatibilityError(c, err)
+			return nil, err
+		}
+	} else if err := validateCodexHTTPChatHistory(body); err != nil {
 		writeCodexHTTPCompatibilityError(c, err)
 		return nil, err
 	}
@@ -100,6 +106,16 @@ func prepareCodexHTTPIngress(c *gin.Context, account *Account, body []byte) ([]b
 		}
 		ignored = append(ignored, field)
 	}
+	if isMessages {
+		if gjson.GetBytes(body, "thinking.budget_tokens").Exists() {
+			var err error
+			body, err = sjson.DeleteBytes(body, "thinking.budget_tokens")
+			if err != nil {
+				return nil, fmt.Errorf("remove unsupported Codex control thinking.budget_tokens: %w", err)
+			}
+			ignored = append(ignored, "thinking.budget_tokens")
+		}
+	}
 	if len(ignored) > 0 {
 		logger.L().Info("codex HTTP generation controls ignored",
 			zap.Int64("account_id", account.ID),
@@ -108,6 +124,39 @@ func prepareCodexHTTPIngress(c *gin.Context, account *Account, body []byte) ([]b
 		)
 	}
 	return body, nil
+}
+
+func validateCodexHTTPMessagesHistory(body []byte) error {
+	root := gjson.ParseBytes(body)
+	allowed := "model system messages tools tool_choice thinking output_config metadata stream service_tier"
+	if err := validateCodexHTTPFieldSet(root, "request", allowed, true); err != nil {
+		return err
+	}
+	if messages := gjson.GetBytes(body, "messages"); !messages.Exists() || !messages.IsArray() {
+		return newOpenAIResponsesLiteValidationError(
+			"messages",
+			"Anthropic messages must be an array for lossless Codex conversion",
+		)
+	}
+	for field, fields := range map[string]string{
+		"thinking":      "type budget_tokens",
+		"output_config": "effort",
+	} {
+		if err := validateCodexHTTPFieldSet(gjson.GetBytes(body, field), field, fields, false); err != nil {
+			return err
+		}
+	}
+	for index, message := range gjson.GetBytes(body, "messages").Array() {
+		if err := validateCodexHTTPFieldSet(
+			message,
+			fmt.Sprintf("messages[%d]", index),
+			"role content",
+			false,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateCodexHTTPFunctionTools(request map[string]any) error {

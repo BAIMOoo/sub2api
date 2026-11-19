@@ -21,6 +21,27 @@ import (
 	"go.uber.org/zap"
 )
 
+// preserveCodexAnthropicTopLevelFields retains Anthropic metadata that the
+// compatibility wire type does not model.
+func preserveCodexAnthropicTopLevelFields(original, converted []byte) ([]byte, error) {
+	var source map[string]any
+	if err := decodeOpenAIJSONUseNumber(original, &source); err != nil {
+		return nil, fmt.Errorf("decode original Anthropic request: %w", err)
+	}
+	var target map[string]any
+	if err := decodeOpenAIJSONUseNumber(converted, &target); err != nil {
+		return nil, fmt.Errorf("decode converted Anthropic request: %w", err)
+	}
+	if value, exists := source["metadata"]; exists {
+		target["metadata"] = value
+	}
+	preserved, err := marshalOpenAIUpstreamJSON(target)
+	if err != nil {
+		return nil, fmt.Errorf("encode preserved Anthropic fields: %w", err)
+	}
+	return preserved, nil
+}
+
 // ForwardAsAnthropic accepts an Anthropic Messages request body, converts it
 // to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
 // the response back to Anthropic Messages format. This enables Claude Code
@@ -33,27 +54,38 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	originalBody := bytes.Clone(body)
+	preparedBody, prepareErr := prepareCodexHTTPIngress(c, account, body)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
+	body = preparedBody
+	httpPolicy := codexHTTPPolicyForRequest(c, account)
 	// 工具 Schema 清洗必须先于所有分流：下游每条路径（原生 Anthropic 直通、
 	// Chat Completions 转换、Responses 转换）都会把 tools 原样带给上游，而
 	// xAI / Moonshot 等严格校验方会因 input_schema 里的 required:null 或
 	// type:null 直接 400。
-	if sanitized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); err != nil {
-		return nil, err
-	} else if changed {
-		body = sanitized
+	if !httpPolicy.usesFixedExecContract() {
+		if sanitized, changed, err := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); err != nil {
+			return nil, err
+		} else if changed {
+			body = sanitized
+		}
 	}
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	// Web Search 模拟：Chat Completions 转换会丢掉 web_search 工具，纯 web_search
 	// 请求在此直接调用搜索 API 构造 Anthropic 响应，不访问上游。
-	if groupID := getOpenAIGroupIDFromContext(c); shouldEmulateWebSearchFor(ctx, s.settingService, s.channelService, account, &groupID, body) {
-		stream := gjson.GetBytes(body, "stream").Bool()
-		res, err := writeEmulatedWebSearch(ctx, c, account, body, gjson.GetBytes(body, "model").String(), stream)
-		if err != nil {
-			return nil, err
+	if !httpPolicy.usesFixedExecContract() {
+		if groupID := getOpenAIGroupIDFromContext(c); shouldEmulateWebSearchFor(ctx, s.settingService, s.channelService, account, &groupID, body) {
+			stream := gjson.GetBytes(body, "stream").Bool()
+			res, err := writeEmulatedWebSearch(ctx, c, account, body, gjson.GetBytes(body, "model").String(), stream)
+			if err != nil {
+				return nil, err
+			}
+			return &OpenAIForwardResult{Model: res.Model, Stream: stream, Duration: res.Duration}, nil
 		}
-		return &OpenAIForwardResult{Model: res.Model, Stream: stream, Duration: res.Duration}, nil
 	}
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
@@ -87,6 +119,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 1. Parse Anthropic request
 	var anthropicReq apicompat.AnthropicRequest
 	if err := json.Unmarshal(body, &anthropicReq); err != nil {
+		if httpPolicy.usesFixedExecContract() {
+			writeCodexHTTPCompatibilityError(c, err)
+		}
 		return nil, fmt.Errorf("parse anthropic request: %w", err)
 	}
 	anthropicDigestReq := cloneAnthropicRequestForDigest(&anthropicReq)
@@ -154,11 +189,20 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// 3. Convert Anthropic → Responses after compatibility-only replay guard.
 	anthropicReq.Model = upstreamModel
+	conversionMode := apicompat.AnthropicConversionCompatible
+	if httpPolicy.usesFixedExecContract() {
+		conversionMode = apicompat.AnthropicConversionFixedCodexHTTP
+	}
 	responsesReq, err := apicompat.AnthropicToResponsesWithOptions(&anthropicReq, apicompat.AnthropicToResponsesOptions{
 		MinOutputTokens:                configuredMinOutputTokens(s.cfg),
 		DeferReasoningEffortValidation: true,
+		Mode:                           conversionMode,
+		OriginalRequest:                originalBody,
 	})
 	if err != nil {
+		if httpPolicy.usesFixedExecContract() {
+			writeCodexHTTPCompatibilityError(c, err)
+		}
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
 
@@ -173,6 +217,13 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	responsesReq.Model = upstreamModel
+	if httpPolicy.usesFixedExecContract() {
+		responsesReq.ServiceTier = gjson.GetBytes(body, "service_tier").String()
+		responsesReq.Text = nil
+		if anthropicReq.Thinking == nil && anthropicReq.OutputConfig == nil {
+			responsesReq.Reasoning = nil
+		}
+	}
 	if responsesReq.Reasoning != nil {
 		responsesReq.Reasoning.Effort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, responsesReq.Reasoning.Effort)
 	}
@@ -180,7 +231,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesReq.PreviousResponseID = previousResponseID
 		trimAnthropicCompatResponsesInputToLatestTurn(responsesReq)
 	}
-	if compatReplayGuardEnabled && !account.UsesOpenAICodexProtocol() {
+	if !httpPolicy.usesFixedExecContract() &&
+		compatReplayGuardEnabled &&
+		!account.UsesOpenAICodexProtocol() {
 		appendOpenAICompatClaudeCodeTodoGuard(responsesReq)
 	}
 
@@ -220,14 +273,26 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if err != nil {
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
+	if httpPolicy.usesFixedExecContract() {
+		responsesBody, err = preserveCodexAnthropicTopLevelFields(originalBody, responsesBody)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		var reqBody map[string]any
-		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
+		if err := decodeOpenAIJSONUseNumber(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
+		}
+		responsesLite := false
+		if httpPolicy.usesFixedExecContract() {
+			responsesLite = resolveCodexHTTPMode(c, account, upstreamModel, responsesBody).lite
 		}
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 			SkipDefaultInstructions:   true,
+			HTTPPolicy:                httpPolicy,
+			ResponsesLite:             responsesLite,
 			PreserveToolCallIDs:       true,
 			KeepSystemMessagesInInput: true,
 		})
@@ -236,29 +301,31 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			return nil, codexResult.Error
 		}
 		setCodexToolNameReverse(c, codexResult.ToolNameReverse)
-		forcedTemplateText := ""
-		if s.cfg != nil {
-			forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
-		}
-		templateUpstreamModel := upstreamModel
-		if codexResult.NormalizedModel != "" {
-			templateUpstreamModel = codexResult.NormalizedModel
-		}
-		existingInstructions, _ := reqBody["instructions"].(string)
-		if strings.TrimSpace(existingInstructions) == "" {
-			existingInstructions = extractPromptLikeInstructionsFromInput(reqBody)
-		}
-		if _, err := applyForcedCodexInstructionsTemplate(reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
-			ExistingInstructions: strings.TrimSpace(existingInstructions),
-			OriginalModel:        originalModel,
-			NormalizedModel:      normalizedModel,
-			BillingModel:         billingModel,
-			UpstreamModel:        templateUpstreamModel,
-		}); err != nil {
-			return nil, err
-		}
-		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
-			appendOpenAICompatClaudeCodeTodoGuardToRequestBody(reqBody)
+		if !httpPolicy.usesFixedExecContract() {
+			forcedTemplateText := ""
+			if s.cfg != nil {
+				forcedTemplateText = s.cfg.Gateway.ForcedCodexInstructionsTemplate
+			}
+			templateUpstreamModel := upstreamModel
+			if codexResult.NormalizedModel != "" {
+				templateUpstreamModel = codexResult.NormalizedModel
+			}
+			existingInstructions, _ := reqBody["instructions"].(string)
+			if strings.TrimSpace(existingInstructions) == "" {
+				existingInstructions = extractPromptLikeInstructionsFromInput(reqBody)
+			}
+			if _, err := applyForcedCodexInstructionsTemplate(reqBody, forcedTemplateText, forcedCodexInstructionsTemplateData{
+				ExistingInstructions: strings.TrimSpace(existingInstructions),
+				OriginalModel:        originalModel,
+				NormalizedModel:      normalizedModel,
+				BillingModel:         billingModel,
+				UpstreamModel:        templateUpstreamModel,
+			}); err != nil {
+				return nil, err
+			}
+			if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
+				appendOpenAICompatClaudeCodeTodoGuardToRequestBody(reqBody)
+			}
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
@@ -399,7 +466,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		// 清除身份头。真正发送前恢复完整 Codex 身份，避免 ChatGPT Codex 上游因缺失
 		// originator/OpenAI-Beta 返回 404（issue #3901）。
 		ensureCodexIdentityHeaders(upstreamReq.Header)
-		enforceCodexIdentityHeaders(upstreamReq.Header)
+		if httpPolicy.usesFixedExecContract() {
+			s.applyCodexHTTPIdentityHeaders(c, account, upstreamReq.Header)
+		} else {
+			enforceCodexIdentityHeaders(upstreamReq.Header)
+		}
 		logger.L().Debug("openai messages: upstream identity restored",
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_model", upstreamModel),
