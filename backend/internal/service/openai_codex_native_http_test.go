@@ -243,7 +243,7 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 							require.True(t, ok)
 							names = append(names, toolType)
 						}
-						require.Contains(t, names, "web_search")
+						require.NotContains(t, names, "web_search")
 						require.Contains(t, names, "namespace")
 						require.Contains(t, names, "custom")
 						require.NotContains(t, names, "function")
@@ -284,7 +284,7 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 						require.True(t, ok)
 						names = append(names, toolType)
 					}
-					require.ElementsMatch(t, []string{"function", "custom", "custom", "web_search"}, names)
+					require.ElementsMatch(t, []string{"function", "custom", "custom"}, names)
 					for _, raw := range items {
 						item, ok := raw.(map[string]any)
 						require.True(t, ok)
@@ -443,8 +443,8 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			sanitized, _, err := sanitizeOpenAIResponsesInputItemIDsWithOptions(body, openAIResponsesInputIDOptions{NativeCodexHTTP: native})
 			require.NoError(t, err)
 			assert.Equal(t, native, gjson.GetBytes(sanitized, "input.1.id").Exists())
-			assert.False(t, gjson.GetBytes(sanitized, "input.2.id").Exists())
-			assert.False(t, gjson.GetBytes(sanitized, "input.3.id").Exists())
+			assert.Equal(t, native, gjson.GetBytes(sanitized, "input.2.id").Exists())
+			assert.Equal(t, native, gjson.GetBytes(sanitized, "input.3.id").Exists())
 			policy := codexHTTPLegacy
 			if native {
 				policy = codexHTTPExec
@@ -460,11 +460,20 @@ func TestCodexNativeHTTPInputIDBoundsAndLegacyDefaults(t *testing.T) {
 			assert.Equal(t, call, output["call_id"])
 			callString, ok := call.(string)
 			require.True(t, ok)
-			assert.LessOrEqual(t, len(callString), 64)
+			if native {
+				assert.Greater(t, len(callString), 64)
+			} else {
+				assert.LessOrEqual(t, len(callString), 64)
+			}
 			_, hasID := output["id"]
 			assert.Equal(t, native, hasID)
-			assert.NotContains(t, filtered[2], "id")
-			assert.NotContains(t, filtered[3], "id")
+			if native {
+				assert.Contains(t, filtered[2], "id")
+				assert.Contains(t, filtered[3], "id")
+			} else {
+				assert.NotContains(t, filtered[2], "id")
+				assert.NotContains(t, filtered[3], "id")
+			}
 			ref := "fc_previous"
 			if native {
 				ref = "call_previous"

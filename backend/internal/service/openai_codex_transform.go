@@ -232,11 +232,14 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		}
 	}
 
-	// Strip parameters unsupported by ChatGPT internal Codex endpoint.
-	for _, key := range openAICodexOAuthUnsupportedFields {
-		if _, ok := reqBody[key]; ok {
-			delete(reqBody, key)
-			result.Modified = true
+	// Fixed HTTP preserves fields outside the explicit generation-control
+	// exception. Legacy transports retain their historical endpoint cleanup.
+	if !opts.HTTPPolicy.usesFixedExecContract() {
+		for _, key := range openAICodexOAuthUnsupportedFields {
+			if _, ok := reqBody[key]; ok {
+				delete(reqBody, key)
+				result.Modified = true
+			}
 		}
 	}
 
@@ -331,18 +334,22 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	if !opts.SkipDefaultInstructions && applyInstructions(reqBody, opts.IsCodexCLI) {
 		result.Modified = true
 	}
-	if isCodexSparkModel(normalizedModel) && applyCodexSparkImageUnsupportedInstructions(reqBody) {
+	if !opts.HTTPPolicy.usesFixedExecContract() &&
+		isCodexSparkModel(normalizedModel) &&
+		applyCodexSparkImageUnsupportedInstructions(reqBody) {
 		result.Modified = true
 	}
 	// gpt-5.3-codex-spark rejects the image_generation tool upstream (HTTP 400,
 	// param=tools); Codex CLI advertises it by default, so strip it for spark.
-	if isCodexSparkModel(normalizedModel) && stripCodexSparkImageGenerationTools(reqBody) {
+	if !opts.HTTPPolicy.usesFixedExecContract() &&
+		isCodexSparkModel(normalizedModel) &&
+		stripCodexSparkImageGenerationTools(reqBody) {
 		result.Modified = true
 	}
 
 	// 续链场景保留 item_reference 与 id，避免 call_id 上下文丢失。
 	if input, ok := reqBody["input"].([]any); ok {
-		if normalizedInput, modified := normalizeCodexToolRoleMessages(input); modified {
+		if normalizedInput, modified := normalizeCodexToolRoleMessagesWithPolicy(input, opts.HTTPPolicy); modified {
 			input = normalizedInput
 			result.Modified = true
 		}
@@ -351,7 +358,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			result.Modified = true
 		}
 		input = filterCodexInputWithOptions(input, codexInputFilterOptions{
-			PreserveReferences: needsToolContinuation,
+			PreserveReferences: needsToolContinuation || opts.HTTPPolicy.usesFixedExecContract(),
 			PreserveCallIDs:    opts.PreserveToolCallIDs,
 			HTTPPolicy:         opts.HTTPPolicy,
 		})
@@ -365,7 +372,9 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 
 	// Runs after input filtering so it sees the final replayed history. The
 	// compact endpoint has its own wire shape and is left untouched.
-	if !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
+	if !opts.HTTPPolicy.usesFixedExecContract() &&
+		!opts.IsCompact &&
+		ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
 		result.Modified = true
 	}
 
@@ -631,7 +640,7 @@ func codexToolsContainFunctionName(rawTools any, name string) bool {
 	return false
 }
 
-func normalizeCodexToolRoleMessages(input []any) ([]any, bool) {
+func normalizeCodexToolRoleMessagesWithPolicy(input []any, policy codexHTTPPolicy) ([]any, bool) {
 	if len(input) == 0 {
 		return input, false
 	}
@@ -667,22 +676,38 @@ func normalizeCodexToolRoleMessages(input []any) ([]any, bool) {
 		}
 
 		output := extractTextFromContent(m["content"])
-		if output == "" {
+		_, losslessText := extractLosslessTextFromContent(m["content"])
+		preserveEmpty := policy.usesFixedExecContract() && losslessText
+		if output == "" && !preserveEmpty {
 			if value, ok := m["output"].(string); ok {
 				output = value
 			}
 		}
-		if output == "" && m["content"] != nil {
+		if output == "" && m["content"] != nil && !preserveEmpty {
 			if b, err := json.Marshal(m["content"]); err == nil {
 				output = string(b)
 			}
 		}
 
-		normalized = append(normalized, map[string]any{
-			"type":    "function_call_output",
-			"call_id": callID,
-			"output":  output,
-		})
+		if policy.usesFixedExecContract() {
+			next := make(map[string]any, len(m)+3)
+			for key, value := range m {
+				next[key] = value
+			}
+			delete(next, "role")
+			delete(next, "content")
+			delete(next, "tool_call_id")
+			next["type"] = "function_call_output"
+			next["call_id"] = callID
+			next["output"] = output
+			normalized = append(normalized, next)
+		} else {
+			normalized = append(normalized, map[string]any{
+				"type":    "function_call_output",
+				"call_id": callID,
+				"output":  output,
+			})
+		}
 		modified = true
 	}
 	if !modified {
@@ -1927,6 +1952,9 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		// 仅修正真正的 tool/function call 标识，避免误改普通 message/reasoning id；
 		// 若 item_reference 指向 legacy call_* 标识，则仅修正该引用本身。
 		fixCallIDPrefix := func(id string) string {
+			if opts.HTTPPolicy.usesFixedExecContract() {
+				return id
+			}
 			return normalizeCodexFilterCallID(typ, id, opts.PreserveCallIDs)
 		}
 
@@ -1993,7 +2021,7 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 			}
 		}
 
-		if !isCodexToolCallItemType(typ) {
+		if !isCodexToolCallItemType(typ) && !opts.HTTPPolicy.usesFixedExecContract() {
 			ensureCopy()
 			delete(newItem, "call_id")
 		}
@@ -2027,7 +2055,9 @@ func filterCodexInputWithOptions(input []any, opts codexInputFilterOptions) []an
 		} else if !opts.PreserveReferences {
 			ensureCopy()
 			delete(newItem, "id")
-		} else if id, ok := m["id"].(string); ok && shouldStripOpenAIResponsesInputItemIDWithOptions(typ, id, idOptions) {
+		} else if id, ok := m["id"].(string); ok &&
+			!opts.HTTPPolicy.usesFixedExecContract() &&
+			shouldStripOpenAIResponsesInputItemIDWithOptions(typ, id, idOptions) {
 			ensureCopy()
 			delete(newItem, "id")
 		}

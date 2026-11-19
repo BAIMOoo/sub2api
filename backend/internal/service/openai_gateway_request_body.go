@@ -1707,13 +1707,13 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = true
 		}
 	}
-	if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDsWithOptions(normalized, openAIResponsesInputIDOptions{
-		NativeCodexHTTP: opts.HTTPPolicy.usesFixedExecContract(),
-	}); err != nil {
-		return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
-	} else if idsChanged {
-		normalized = sanitized
-		changed = true
+	if !opts.HTTPPolicy.usesFixedExecContract() {
+		if sanitized, idsChanged, err := sanitizeOpenAIResponsesInputItemIDs(normalized); err != nil {
+			return body, false, fmt.Errorf("sanitize websocket Responses input item IDs: %w", err)
+		} else if idsChanged {
+			normalized = sanitized
+			changed = true
+		}
 	}
 	if account != nil && account.IsOpenAI() && account.IsOAuth() {
 		if reasoningBody, reasoningChanged, err := normalizeOpenAIResponsesReasoningMode(normalized, account.GetMappedModel(gjson.GetBytes(normalized, "model").String())); err != nil {
@@ -1730,18 +1730,20 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 		normalized = oauthBody
 		changed = changed || oauthChanged
-		for _, field := range openAIChatGPTInternalUnsupportedFields {
-			if !gjson.GetBytes(normalized, field).Exists() {
-				continue
+		if !opts.HTTPPolicy.usesFixedExecContract() {
+			for _, field := range openAIChatGPTInternalUnsupportedFields {
+				if !gjson.GetBytes(normalized, field).Exists() {
+					continue
+				}
+				next, deleteErr := sjson.DeleteBytes(normalized, field)
+				if deleteErr != nil {
+					return body, false, fmt.Errorf("normalize websocket body delete %s: %w", field, deleteErr)
+				}
+				normalized = next
+				changed = true
 			}
-			next, deleteErr := sjson.DeleteBytes(normalized, field)
-			if deleteErr != nil {
-				return body, false, fmt.Errorf("normalize websocket body delete %s: %w", field, deleteErr)
-			}
-			normalized = next
-			changed = true
 		}
-		if !opts.Compact {
+		if !opts.HTTPPolicy.usesFixedExecContract() && !opts.Compact {
 			webSearchBody, webSearchChanged, err := declareWebSearchForHistory(normalized, responsesLite, opts.SearchHistoryLayout)
 			if err != nil {
 				return body, false, fmt.Errorf("normalize websocket body: %w", err)
@@ -1750,7 +1752,9 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = changed || webSearchChanged
 		}
 	}
-	needsOrphanCleanup := account != nil && account.IsOpenAIOAuthLike() &&
+	needsOrphanCleanup := !opts.HTTPPolicy.usesFixedExecContract() &&
+		account != nil &&
+		account.IsOpenAIOAuthLike() &&
 		openAIResponsesInputMayNeedOrphanCleanup(normalized)
 	if needsOrphanCleanup || openAIResponsesInputMayNeedTruncation(normalized) {
 		var reqBody map[string]any
@@ -1799,7 +1803,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			changed = true
 		}
 	}
-	if account != nil {
+	if account != nil && !opts.HTTPPolicy.usesFixedExecContract() {
 		if schemaBody, schemaChanged, err := sanitizeOpenAIResponsesToolSchemasForPlatform(normalized, account.Platform); err != nil {
 			return body, false, fmt.Errorf("normalize websocket tool schemas: %w", err)
 		} else if schemaChanged {
@@ -1837,16 +1841,18 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool, httpPolicy c
 		changed = true
 	}
 
-	for _, field := range openAIChatGPTInternalUnsupportedFields {
-		if value := gjson.GetBytes(normalized, field); !value.Exists() {
-			continue
+	if !httpPolicy.usesFixedExecContract() {
+		for _, field := range openAIChatGPTInternalUnsupportedFields {
+			if value := gjson.GetBytes(normalized, field); !value.Exists() {
+				continue
+			}
+			next, err := sjson.DeleteBytes(normalized, field)
+			if err != nil {
+				return body, false, fmt.Errorf("normalize passthrough body delete %s: %w", field, err)
+			}
+			normalized = next
+			changed = true
 		}
-		next, err := sjson.DeleteBytes(normalized, field)
-		if err != nil {
-			return body, false, fmt.Errorf("normalize passthrough body delete %s: %w", field, err)
-		}
-		normalized = next
-		changed = true
 	}
 	if schemaBody, schemaChanged, schemaErr := normalizeOpenAIResponseFormatSchemasBody(normalized); schemaErr != nil {
 		return body, false, schemaErr

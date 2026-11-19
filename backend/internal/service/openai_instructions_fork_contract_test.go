@@ -14,12 +14,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestOpenAIPassthroughForkInstructionsDefault(t *testing.T) {
+func TestOpenAIPassthroughForkInstructionsAreCallerOwned(t *testing.T) {
 	for _, tc := range []struct {
 		name, field string
-		status      int
 	}{
-		{"absent", "", 200}, {"blank", `,"instructions":" "`, 403}, {"wrong type", `,"instructions":{"x":1}`, 403}, {"present", `,"instructions":"client rule"`, 200},
+		{"absent", ""},
+		{"blank", `,"instructions":" "`},
+		{"wrong type", `,"instructions":{"x":1}`},
+		{"present", `,"instructions":"client rule"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -31,19 +33,17 @@ func TestOpenAIPassthroughForkInstructionsDefault(t *testing.T) {
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: up}
 			a := &Account{ID: 11, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "local-synthetic"}, Extra: map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true, RateMultiplier: f64p(1)}
 			_, err := svc.Forward(context.Background(), c, a, []byte(`{"model":"gpt-5.3-codex","stream":true,"input":[{"role":"user","content":"hi"}]`+tc.field+`}`))
-			require.Equal(t, tc.status, rec.Code)
-			if tc.status != 200 {
-				require.Error(t, err)
-				require.Nil(t, up.lastReq)
-				return
-			}
 			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, rec.Code)
 			require.NotNil(t, up.lastReq)
 			field := gjson.GetBytes(up.lastBody, "instructions")
 			if tc.field == "" {
 				require.False(t, field.Exists())
 			} else {
-				require.Equal(t, "client rule", field.String())
+				require.JSONEq(t,
+					gjson.Get(`{`+strings.TrimPrefix(tc.field, ",")+`}`, "instructions").Raw,
+					field.Raw,
+				)
 			}
 		})
 	}

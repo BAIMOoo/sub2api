@@ -2,12 +2,15 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
@@ -72,6 +75,15 @@ func resolveCodexHTTPMode(c *gin.Context, account *Account, model string, body [
 		}
 	}
 	if c != nil {
+		if raw, exists := c.Get(codexHTTPDeclaredModeKey); exists {
+			if declaration, ok := raw.(codexHTTPDeclaredMode); ok && declaration.declared {
+				return codexHTTPMode{
+					lite:      declaration.lite,
+					source:    codexHTTPModeSourceRequestFallback,
+					alignment: codexHTTPAlignmentUnverified,
+				}
+			}
+		}
 		if declared := c.GetHeader(responsesLiteHeader); declared != "" {
 			return codexHTTPMode{
 				lite:      isOpenAIResponsesLiteHeader(declared),
@@ -93,14 +105,36 @@ func resolveCodexHTTPMode(c *gin.Context, account *Account, model string, body [
 	}
 }
 
-// normalizeCodexHTTPModeBody is the mode-specific final layout step shared by
-// normal forwarding and passthrough. It only rewrites a private attempt body.
-func normalizeCodexHTTPModeBody(c *gin.Context, account *Account, body []byte) ([]byte, codexHTTPMode, error) {
+// normalizeCodexHTTPBody is the final fixed-contract boundary shared by normal
+// forwarding and passthrough. It only rewrites a private attempt body.
+func normalizeCodexHTTPBody(
+	c *gin.Context,
+	account *Account,
+	body []byte,
+) (normalized []byte, mode codexHTTPMode, err error) {
 	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
 		return body, codexHTTPMode{}, nil
 	}
 
-	mode := resolveCodexHTTPMode(c, account, gjson.GetBytes(body, "model").String(), body)
+	defer func() {
+		if err == nil {
+			return
+		}
+		param := "tools"
+		var validationErr *openAIResponsesLiteValidationError
+		if errors.As(err, &validationErr) {
+			param = validationErr.param
+		}
+		setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": err.Error(),
+			"param":   param,
+		}})
+	}()
+
+	model := gjson.GetBytes(body, "model").String()
+	mode = resolveCodexHTTPMode(c, account, model, body)
 	if isOpenAIResponsesCompactPath(c) {
 		logCodexHTTPModeSelection(account, body, mode)
 		return body, mode, nil
@@ -109,7 +143,58 @@ func normalizeCodexHTTPModeBody(c *gin.Context, account *Account, body []byte) (
 	if err := decodeOpenAIJSONUseNumber(body, &request); err != nil {
 		return nil, mode, fmt.Errorf("decode Codex HTTP body: %w", err)
 	}
+	for _, field := range codexHTTPIgnoredControls {
+		delete(request, field)
+	}
+	if metadata, ok := request["client_metadata"].(map[string]any); ok {
+		delete(metadata, responsesLiteWSMetadataKey)
+	}
+	if err := validateCodexHTTPFunctionTools(request); err != nil {
+		return nil, mode, err
+	}
 	normalizeOpenAIResponsesStringInput(request)
+	normalizeCodexSystemRoleMessagesInInput(request)
+	request["store"], request["stream"] = false, true
+	if _, exists := request["tool_choice"]; !exists {
+		request["tool_choice"] = "auto"
+	}
+	if _, exists := request["parallel_tool_calls"]; !exists {
+		request["parallel_tool_calls"] = true
+	}
+	if request["reasoning"] == nil {
+		request["reasoning"] = map[string]any{}
+	}
+	if reasoning, ok := request["reasoning"].(map[string]any); ok {
+		if _, exists := reasoning["effort"]; !exists {
+			effort := ""
+			if metadata, ok := account.GetUpstreamModelMetadata(model); ok {
+				effort = metadata.DefaultReasoningLevel
+			}
+			if effort == "" {
+				switch model {
+				case "gpt-5.5":
+					effort = "medium"
+				case "gpt-6-astra":
+					effort = "low"
+				}
+			}
+			if effort != "" {
+				reasoning["effort"] = effort
+			}
+		}
+	}
+	if model == "gpt-5.5" || model == "gpt-6-astra" {
+		if request["text"] == nil {
+			request["text"] = map[string]any{}
+		}
+		if text, ok := request["text"].(map[string]any); ok && text["verbosity"] == nil {
+			text["verbosity"] = "low"
+		}
+	}
+	ensureCodexHTTPEncryptedContentInclude(request)
+	if err := ensureCodexHTTPSession(c, account, request); err != nil {
+		return nil, mode, err
+	}
 
 	if mode.lite {
 		if _, err := canonicalizeCodexExecLiteRequest(request); err != nil {
@@ -133,7 +218,8 @@ func normalizeCodexHTTPModeBody(c *gin.Context, account *Account, body []byte) (
 	}
 	mergeCodexToolNameReverse(c, toolNameReverse)
 
-	normalized, err := marshalOpenAIUpstreamJSON(request)
+	ensureCodexHTTPEncryptedContentInclude(request)
+	normalized, err = marshalOpenAIUpstreamJSON(request)
 	if err != nil {
 		return nil, mode, fmt.Errorf("encode Codex HTTP body: %w", err)
 	}
@@ -160,6 +246,104 @@ func applyCodexHTTPMode(c *gin.Context, account *Account, req *http.Request, bod
 	if mode.lite {
 		req.Header.Set(responsesLiteHeader, "true")
 	}
+	session := gjson.GetBytes(body, "prompt_cache_key").String()
+	applyCodexSessionIdentityHeaders(req.Header, session)
+	for _, header := range []string{"session-id", "thread-id", "x-client-request-id"} {
+		req.Header.Set(header, session)
+	}
+	req.Header.Set("x-codex-window-id", gjson.GetBytes(body, "client_metadata.x-codex-window-id").String())
+	req.Header.Set("x-codex-turn-metadata", gjson.GetBytes(body, "client_metadata.x-codex-turn-metadata").String())
+	return nil
+}
+
+func ensureCodexHTTPEncryptedContentInclude(request map[string]any) bool {
+	const encrypted = "reasoning.encrypted_content"
+	switch existing := request["include"].(type) {
+	case nil:
+		request["include"] = []any{encrypted}
+		return true
+	case []any:
+		for _, value := range existing {
+			if text, ok := value.(string); ok && text == encrypted {
+				return false
+			}
+		}
+		request["include"] = append(existing, encrypted)
+		return true
+	default:
+		return false
+	}
+}
+
+func ensureCodexHTTPSession(c *gin.Context, account *Account, request map[string]any) error {
+	metadata, _ := request["client_metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+		request["client_metadata"] = metadata
+	}
+	session := firstNonEmptyString(request["prompt_cache_key"], metadata["session_id"])
+	if session == "" {
+		incoming := ""
+		if c != nil {
+			incoming = firstNonEmpty(c.GetHeader("session-id"), c.GetHeader("session_id"))
+		}
+		if incoming != "" {
+			session = scopeCodexAccountIdentityValue(
+				codexAccountIdentitySource(c, account),
+				getAPIKeyIDFromContext(c),
+				"session",
+				incoming,
+			)
+		} else {
+			session = uuid.Must(uuid.NewV7()).String()
+		}
+	}
+	session = normalizeCodexHTTPIdentityID(session)
+	request["prompt_cache_key"] = session
+	metadata["session_id"], metadata["thread_id"] = session, session
+
+	suffix := "0"
+	if _, value, ok := strings.Cut(firstNonEmptyString(metadata["x-codex-window-id"]), ":"); ok && value != "" {
+		suffix = value
+	}
+	metadata["x-codex-window-id"] = session + ":" + suffix
+
+	turn := map[string]any{}
+	if raw, ok := metadata["x-codex-turn-metadata"].(string); ok && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &turn); err != nil {
+			return newOpenAIResponsesLiteValidationError(
+				"client_metadata",
+				"invalid Codex turn metadata",
+			)
+		}
+	}
+	if turn == nil {
+		turn = map[string]any{}
+	}
+	turn["session_id"], turn["thread_id"] = session, session
+	turn["window_id"] = metadata["x-codex-window-id"]
+
+	turnID := firstNonEmptyString(metadata["turn_id"], turn["turn_id"])
+	if turnID == "" {
+		turnID = uuid.Must(uuid.NewV7()).String()
+	}
+	turnID = normalizeCodexHTTPIdentityID(turnID)
+	metadata["turn_id"], metadata["root_turn_id"] = turnID, turnID
+	turn["turn_id"], turn["root_turn_id"] = turnID, turnID
+	if turn["sandbox"] == nil {
+		turn["sandbox"] = "seccomp"
+	}
+	if turn["sandbox_mode"] == nil {
+		turn["sandbox_mode"] = "read-only"
+	}
+	for _, field := range codexTurnMetadataClientOnlyFields {
+		delete(turn, field)
+	}
+	encoded, err := marshalCodexTurnMetadata(turn)
+	if err != nil {
+		return err
+	}
+	metadata["x-codex-turn-metadata"] = string(encoded)
 	return nil
 }
 

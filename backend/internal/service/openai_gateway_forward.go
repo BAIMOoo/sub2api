@@ -20,6 +20,11 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	preparedBody, prepareErr := prepareCodexHTTPIngress(c, account, body)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
+	body = preparedBody
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -77,10 +82,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 在分流到 passthrough / Codex transform / 原生 ChatCompletions 之前统一修正
 	// 显式为 null 的工具 Schema type，否则 upstream 的 400 会被归一成可重试的 502，
 	// 同一份坏定义在账号池里反复重放。
-	if sanitizedToolBody, toolSchemaSanitized, toolSchemaErr := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); toolSchemaErr != nil {
-		return nil, toolSchemaErr
-	} else if toolSchemaSanitized {
-		body = sanitizedToolBody
+	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+		if sanitizedToolBody, toolSchemaSanitized, toolSchemaErr := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); toolSchemaErr != nil {
+			return nil, toolSchemaErr
+		} else if toolSchemaSanitized {
+			body = sanitizedToolBody
+		}
 	}
 	if account.IsOpenAIOAuthLike() {
 		reasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningMode(body, account.GetMappedModel(gjson.GetBytes(body, "model").String()))
@@ -115,7 +122,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
-	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
+	httpContractIsFixed := codexHTTPPolicyForRequest(c, account).usesFixedExecContract()
+	if !httpContractIsFixed &&
+		shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
 		body, err = flattenOpenAIResponsesNamespaces(c, body)
 		if err != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
@@ -125,7 +134,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, err
 		}
 	}
-	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
+	if !httpContractIsFixed &&
+		shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
 		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
 			account, wsDecision.Transport, passthroughEnabled, compactPath, body,
 		)
@@ -213,24 +223,24 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				originalModel = reqModel
 			}
 		}
-		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDsWithOptions(body, openAIResponsesInputIDOptions{
-			NativeCodexHTTP: normalizeAsExec,
-		})
-		if sanitizeErr != nil {
-			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
-		}
-		if changed {
-			body = sanitizedBody
-			originalBody = sanitizedBody
-			requestView = newOpenAIRequestView(sanitizedBody)
-			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
-			originalModel = reqModel
+		if !normalizeAsExec {
+			sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+			if sanitizeErr != nil {
+				return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
+			}
+			if changed {
+				body = sanitizedBody
+				originalBody = sanitizedBody
+				requestView = newOpenAIRequestView(sanitizedBody)
+				reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
+				originalModel = reqModel
+			}
 		}
 	}
 
 	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
 	codexImageGenerationExplicitToolPolicy := codexImageGenerationExplicitToolPolicyAllow
-	if isCodexCLI {
+	if isCodexCLI && !httpPolicy.usesFixedExecContract() {
 		codexImageGenerationExplicitToolPolicy = account.CodexImageGenerationExplicitToolPolicy()
 	}
 	if c != nil {
@@ -380,7 +390,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if apiKey != nil {
 		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
 	}
-	codexImageGenerationBridgeEnabled := isCodexCLI &&
+	codexImageGenerationBridgeEnabled := !httpPolicy.usesFixedExecContract() && isCodexCLI &&
 		!isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) &&
 		imageGenerationAllowed &&
 		codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip &&
@@ -517,7 +527,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// gpt-5.3-codex-spark also rejects the image_generation tool (HTTP 400,
 	// param=tools). Strip it here so both APIKey and OAuth /responses paths are
 	// covered regardless of the image-generation feature gate.
-	if isCodexSparkModel(upstreamModel) && openAIRequestBodyHasImageGenerationDeclaration(body) {
+	if !httpPolicy.usesFixedExecContract() &&
+		isCodexSparkModel(upstreamModel) &&
+		openAIRequestBodyHasImageGenerationDeclaration(body) {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -679,7 +691,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("max_output_tokens", clampedCap)
 	}
 	if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 &&
-		!account.IsOpenAIApiKey() && gjson.GetBytes(body, "previous_response_id").Exists() {
+		!account.IsOpenAIApiKey() &&
+		!httpPolicy.usesFixedExecContract() &&
+		gjson.GetBytes(body, "previous_response_id").Exists() {
 		markPatchDelete("previous_response_id")
 	}
 	if openAIRequestBodyMayContainEmptyBase64InputImage(body) {
@@ -727,7 +741,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("service_tier", OpenAIFastTierPriority)
 	}
 
-	if account.UsesOpenAICodexProtocol() {
+	if account.UsesOpenAICodexProtocol() && !httpPolicy.usesFixedExecContract() {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -783,7 +797,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	lineageGroupID := getOpenAIGroupIDFromContext(c)
 	lineageEntryBody := body
 	lineageSessionHash := ""
-	if stateStore := s.getOpenAIWSStateStore(); stateStore != nil && stateStore.HasAnySessionInvalidEncryptedContent() {
+	if stateStore := s.getOpenAIWSStateStore(); !httpPolicy.usesFixedExecContract() &&
+		stateStore != nil &&
+		stateStore.HasAnySessionInvalidEncryptedContent() {
 		lineageSessionHash = s.GenerateSessionHash(c, body)
 		if invalidDigests := stateStore.GetSessionInvalidEncryptedContentDigests(lineageGroupID, lineageSessionHash); len(invalidDigests) > 0 {
 			strippedBody, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
@@ -1094,6 +1110,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return nil, err
 		}
+		if sentBody, aligned := codexHTTPAttemptBody(upstreamReq); aligned {
+			body = sentBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
+			rejectedFieldRetryState.remember(body)
+		}
 
 		// Get proxy URL
 		proxyURL := ""
@@ -1156,7 +1178,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					strings.Contains(upstreamMsg, "The encrypted content") &&
 					strings.Contains(upstreamMsg, "could not be verified") &&
 					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
+			if !httpPolicy.usesFixedExecContract() &&
+				!httpInvalidEncryptedContentRetryTried &&
+				resp.StatusCode == http.StatusBadRequest &&
+				invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -1180,7 +1205,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
+			if retryBody, reason, changed, retryErr := normalizeCodexHTTPRejectedFieldRetryBody(
+				httpPolicy,
+				resp.StatusCode,
+				body,
+				respBody,
+			); retryErr != nil {
 				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
 				body = retryBody
@@ -1447,7 +1477,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	body, httpMode, err := normalizeCodexHTTPModeBody(c, account, body)
+	body, httpMode, err := normalizeCodexHTTPBody(c, account, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1457,6 +1487,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req = withCodexHTTPAttempt(req, c, account, body)
 
 	// Build authentication for this request. Agent Identity signs a fresh
 	// assertion here; OAuth/PAT/API-key keep their existing Bearer behavior.

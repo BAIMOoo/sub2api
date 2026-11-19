@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,30 @@ func (policy codexHTTPPolicy) usesFixedExecContract() bool {
 
 func codexExecHTTPUserAgent() string {
 	return "codex_exec/0.158.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.158.0)"
+}
+
+const codexHTTPIdentityEpoch = "01a00000-0000-7000-8000-000000000000"
+
+func normalizeCodexHTTPIdentityID(raw string) string {
+	if _, ok := uuidV7TimestampMillis(raw); ok {
+		return raw
+	}
+	value, _ := deriveStableCodexIdentityUUIDv7("sub2api:codex-http:v1:"+raw, codexHTTPIdentityEpoch)
+	return value
+}
+
+type codexHTTPAttemptKey struct{}
+
+func withCodexHTTPAttempt(req *http.Request, c *gin.Context, account *Account, body []byte) *http.Request {
+	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+		return req
+	}
+	return req.WithContext(context.WithValue(req.Context(), codexHTTPAttemptKey{}, body))
+}
+
+func codexHTTPAttemptBody(req *http.Request) ([]byte, bool) {
+	body, ok := req.Context().Value(codexHTTPAttemptKey{}).([]byte)
+	return body, ok
 }
 
 // codexHTTPPolicyForRequest selects the fixed HTTP contract from the ingress

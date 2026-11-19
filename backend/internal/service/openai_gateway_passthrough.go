@@ -388,6 +388,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if buildErr != nil {
 			return nil, buildErr
 		}
+		if sentBody, aligned := codexHTTPAttemptBody(upstreamReq); aligned {
+			body = sentBody
+			rejectedFieldRetryState.remember(body)
+		}
 
 		upstreamStart := time.Now()
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
@@ -403,7 +407,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			probeBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
+			if retryBody, reason, changed, retryErr := normalizeCodexHTTPRejectedFieldRetryBody(
+				httpPolicy,
+				resp.StatusCode,
+				body,
+				probeBody,
+			); retryErr != nil {
 				return nil, fmt.Errorf("normalize passthrough rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
 				body = retryBody
@@ -609,7 +618,7 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	body, httpMode, err := normalizeCodexHTTPModeBody(c, account, body)
+	body, httpMode, err := normalizeCodexHTTPBody(c, account, body)
 	if err != nil {
 		return nil, err
 	}
@@ -619,6 +628,7 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req = withCodexHTTPAttempt(req, c, account, body)
 
 	// 透传客户端请求头（安全白名单）。
 	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()

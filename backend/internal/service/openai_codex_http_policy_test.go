@@ -146,7 +146,7 @@ func TestCodexHTTPModeSelectionUsesFinalCapabilityAndRecordsUnverifiedFallback(t
 				})
 			}
 
-			normalized, mode, err := normalizeCodexHTTPModeBody(c, account, body)
+			normalized, mode, err := normalizeCodexHTTPBody(c, account, body)
 			require.NoError(t, err)
 			require.Equal(t, test.wantLite, mode.lite)
 			require.Equal(t, test.wantStatus, string(mode.alignment))
@@ -171,7 +171,7 @@ func TestCodexHTTPModeBodyLeavesCompactForDedicatedAdapter(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(body))
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 
-	normalized, _, err := normalizeCodexHTTPModeBody(c, codexBodyEncodingTestAccount(1005), body)
+	normalized, _, err := normalizeCodexHTTPBody(c, codexBodyEncodingTestAccount(1005), body)
 	require.NoError(t, err)
 	require.Equal(t, body, normalized)
 }
@@ -182,7 +182,7 @@ func TestCodexHTTPStandardRejectsUnrepresentableAdditionalToolsCarrier(t *testin
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 
-	_, _, err := normalizeCodexHTTPModeBody(c, codexBodyEncodingTestAccount(1006), body)
+	_, _, err := normalizeCodexHTTPBody(c, codexBodyEncodingTestAccount(1006), body)
 	require.Error(t, err)
 	var validationErr *openAIResponsesLiteValidationError
 	require.ErrorAs(t, err, &validationErr)

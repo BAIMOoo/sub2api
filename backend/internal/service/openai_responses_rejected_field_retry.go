@@ -196,6 +196,43 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 	return nil, "", false, nil
 }
 
+// Fixed-contract HTTP may repair serialization hints, but cannot recover by
+// deleting reasoning content, changing namespaces or widening tool schemas.
+func normalizeCodexHTTPRejectedFieldRetryBody(
+	policy codexHTTPPolicy,
+	statusCode int,
+	body, responseBody []byte,
+) ([]byte, string, bool, error) {
+	if policy.usesFixedExecContract() {
+		param := strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "error.param").String()))
+		message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))
+		if param == "" {
+			param = openAIResponsesRejectedParamFromMessage(message)
+		}
+		allowed := param == "max_output_tokens" ||
+			param == "truncation" ||
+			param == "prompt_cache_breakpoint"
+		if _, ok := openAIResponsesRejectedCacheIndex(param); ok {
+			allowed = true
+		}
+		if index, ok := openAIResponsesRejectedStatusIndex(param); ok {
+			rejectedType := gjson.GetBytes(body, fmt.Sprintf("input.%d.type", index)).String()
+			allowed = rejectedType != ""
+			for _, item := range gjson.GetBytes(body, "input").Array() {
+				if item.Get("type").String() == rejectedType &&
+					item.Get("status").Exists() &&
+					item.Get("status").String() != "completed" {
+					allowed = false
+				}
+			}
+		}
+		if !allowed {
+			return nil, "", false, nil
+		}
+	}
+	return normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode, body, responseBody)
+}
+
 func isExplicitOpenAIResponsesFieldRejection(code, message string) bool {
 	switch strings.TrimSpace(code) {
 	case "unknown_parameter", "unsupported_parameter":

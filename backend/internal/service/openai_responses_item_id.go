@@ -56,8 +56,8 @@ type openAIResponsesInputIDOptions struct {
 }
 
 func shouldStripOpenAIResponsesInputItemIDWithOptions(itemType, id string, opts openAIResponsesInputIDOptions) bool {
-	if opts.NativeCodexHTTP && strings.TrimSpace(itemType) == "custom_tool_call_output" {
-		return strings.TrimSpace(id) == "" || len(id) > 64
+	if opts.NativeCodexHTTP {
+		return false
 	}
 	prefix, constrained := openAIResponsesInputItemIDPrefix(itemType)
 	if !constrained {
