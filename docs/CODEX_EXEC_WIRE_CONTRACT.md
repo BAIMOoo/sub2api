@@ -61,4 +61,4 @@ go test -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
 
 - HTTP 延续原 fork 的行为：有效原生 exec 请求仍可保留自己的版本；网关版本仍按手动配置、同步值、内置值的顺序选择。`0.158.0` 是夹具版本，**不是**所有出口的版本。全体客户端统一声明固定身份/版本的提案留出，不在本次合并内。
 - HTTP 的工具、续聊、Standard/Lite、compact、账号和会话隔离继续按原约定验收。普通 API Key 和其他供应商的协议不变。
-- WebSocket（含 WS 转 HTTP）按锁定的上游版本独立验收，不套用 fork 的原生 HTTP、安装标识或正文压缩规则。
+- WebSocket（含 WS 转 HTTP）按锁定的上游版本独立验收，不套用 fork 的原生 HTTP、安装标识或正文压缩规则。桥接在最终发送时仍优先走已绑定的插件；未命中插件则使用上游的普通 HTTP 传输，不使用 fork 的账号 TLS 指纹，也不读取、写入或清空普通 HTTP 的账号 Cookie。

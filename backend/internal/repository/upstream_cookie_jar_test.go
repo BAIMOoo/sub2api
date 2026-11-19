@@ -19,6 +19,7 @@ import (
 type fakeUpstreamCookieStore struct {
 	mu     sync.Mutex
 	jar    []service.UpstreamCookie
+	loads  int
 	saves  int
 	clears int
 }
@@ -26,6 +27,7 @@ type fakeUpstreamCookieStore struct {
 func (s *fakeUpstreamCookieStore) LoadUpstreamCookies(context.Context, int64, string) ([]service.UpstreamCookie, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.loads++
 	return append([]service.UpstreamCookie(nil), s.jar...), nil
 }
 
@@ -53,10 +55,11 @@ func (s *fakeUpstreamCookieStore) snapshot() []service.UpstreamCookie {
 
 // recordingUpstream 记录收到的请求，并按脚本返回响应。
 type recordingUpstream struct {
-	mu       sync.Mutex
-	requests []*http.Request
-	cookies  []string
-	respond  func(req *http.Request) *http.Response
+	mu          sync.Mutex
+	requests    []*http.Request
+	cookies     []string
+	tlsProfiles []*tlsfingerprint.Profile
+	respond     func(req *http.Request) *http.Response
 }
 
 func newRecordingUpstream(respond func(req *http.Request) *http.Response) *recordingUpstream {
@@ -71,7 +74,10 @@ func (u *recordingUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*ht
 	return u.respond(req), nil
 }
 
-func (u *recordingUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, conc int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+func (u *recordingUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, conc int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	u.mu.Lock()
+	u.tlsProfiles = append(u.tlsProfiles, profile)
+	u.mu.Unlock()
 	return u.Do(req, proxyURL, accountID, conc)
 }
 

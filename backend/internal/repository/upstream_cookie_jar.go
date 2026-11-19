@@ -177,7 +177,8 @@ func upstreamCookieJarTarget(req *http.Request, accountID int64) (string, bool) 
 	if req == nil || req.URL == nil || accountID <= 0 || req.Method == "" {
 		return "", false
 	}
-	if !strings.EqualFold(req.URL.Scheme, "https") {
+	// WS bridge responses must not populate or clear the ordinary HTTP jar either.
+	if service.IsOpenAIWSHTTPBridgeUpstream(req.Context()) || !strings.EqualFold(req.URL.Scheme, "https") {
 		return "", false
 	}
 	host := strings.ToLower(req.URL.Hostname())

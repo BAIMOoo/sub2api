@@ -96,13 +96,17 @@ func TestOpenAIGatewayPluginRoutingPreservesAPIKeyAndFailsClosedForOAuth(t *test
 
 	oauthRequest, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://example.com/v1/responses", nil)
 	require.NoError(t, err)
-	oauthResponse, err := service.doOpenAIUpstream(oauthRequest, "", &Account{
-		ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
-	})
+	oauthAccount := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1}
+	oauthResponse, err := service.doOpenAIUpstream(oauthRequest, "", oauthAccount)
 	require.Error(t, err)
 	assert.Nil(t, oauthResponse)
 	assert.Contains(t, err.Error(), "插件不可用")
 	assert.Equal(t, 1, upstream.doCalls)
+
+	bridgeResponse, err := service.doOpenAIWSHTTPBridgeUpstream(oauthRequest, "", oauthAccount)
+	require.ErrorContains(t, err, "插件不可用")
+	require.Nil(t, bridgeResponse)
+	assert.Equal(t, 1, upstream.doCalls, "a bridge must not fall back around a bound plugin")
 }
 
 func TestStablePluginBucketIsDeterministicAndBounded(t *testing.T) {
