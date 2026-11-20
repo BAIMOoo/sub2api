@@ -73,6 +73,9 @@ func TestOpenAIWSHTTPBridgeAndHTTPUseSeparateTransports(t *testing.T) {
 			require.Zero(t, store.saves, "bridge response must not update the HTTP jar")
 			require.Zero(t, store.clears, "bridge 403 must not clear the HTTP jar")
 
+			account.Extra["openai_oauth_responses_websockets_v2_mode"] = service.OpenAIWSIngressModeCtxPool
+			require.Equal(t, service.OpenAIUpstreamTransportResponsesWebsocketV2,
+				service.NewOpenAIWSProtocolResolver(cfg).Resolve(account).Transport)
 			const body = `{"model":"gpt-5","instructions":"Test","input":"hello","stream":true}`
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/responses", strings.NewReader(body))
