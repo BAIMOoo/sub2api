@@ -182,6 +182,37 @@ func TestCodexHTTPMessagesRejectsUnrepresentableContentBeforeUpstream(t *testing
 	}
 }
 
+func TestCodexHTTPMessagesLateToolValidationWritesAnthropicError(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.5",
+		"messages":[{"role":"user","content":"hi"}],
+		"tools":[
+			{"name":"python","input_schema":{"type":"object"}},
+			{"name":"python__sub2api","input_schema":{"type":"object"}}
+		]
+	}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := codexBodyEncodingTestAccount(4204)
+	setCodexHTTPTestMode(account, "gpt-5.5", false)
+
+	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+	require.ErrorContains(t, err, `both normalize to "python__sub2api"`)
+	require.Nil(t, upstream.lastReq)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.JSONEq(t, `{
+		"type":"error",
+		"error":{
+			"type":"invalid_request_error",
+			"message":"tool names \"python\" and \"python__sub2api\" both normalize to \"python__sub2api\""
+		}
+	}`, recorder.Body.String())
+}
+
 func TestCodexHTTPMessagesLeavesWebSocketAndAPIKeyCompatibilityPathsUnchanged(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","max_tokens":16,"system":"client system","messages":[{"role":"user","content":"client task"}],"stream":false}`)
 

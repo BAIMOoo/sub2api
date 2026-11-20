@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -121,17 +120,8 @@ func (policy codexHTTPPolicy) normalizeBody(
 		if err == nil {
 			return
 		}
-		param := "tools"
-		var validationErr *openAIResponsesLiteValidationError
-		if errors.As(err, &validationErr) {
-			param = validationErr.param
-		}
 		setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
-		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-			"type":    "invalid_request_error",
-			"message": err.Error(),
-			"param":   param,
-		}})
+		writeCodexHTTPCompatibilityErrorWithDefaultParam(c, err, "tools")
 	}()
 
 	model := gjson.GetBytes(body, "model").String()

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -436,13 +437,17 @@ func validateCodexHTTPFieldSet(value gjson.Result, path, allowed string, control
 }
 
 func writeCodexHTTPCompatibilityError(c *gin.Context, err error) {
-	param := "input"
-	if validationErr, ok := err.(*openAIResponsesLiteValidationError); ok {
-		param = validationErr.param
-	}
+	writeCodexHTTPCompatibilityErrorWithDefaultParam(c, err, "input")
+}
+
+func writeCodexHTTPCompatibilityErrorWithDefaultParam(c *gin.Context, err error, param string) {
 	if c.Request != nil && strings.HasSuffix(c.Request.URL.Path, "/messages") {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
+	}
+	var validationErr *openAIResponsesLiteValidationError
+	if errors.As(err, &validationErr) {
+		param = validationErr.param
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
 		"type":    "invalid_request_error",

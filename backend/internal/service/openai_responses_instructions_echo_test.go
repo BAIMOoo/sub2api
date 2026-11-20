@@ -220,7 +220,10 @@ func TestOpenAIGatewayService_OAuthResponses_DoesNotInjectInstructions(t *testin
 			`{"model":"gpt-6.1-sol","stream":true,"instructions":"client rule","input":[{"type":"message","role":"user","content":"Hi"}]}`)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		require.Contains(t, string(upstream.lastBody), "client rule")
+		require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+		message := gjson.GetBytes(upstream.lastBody, `input.#(type=="message")`)
+		require.Equal(t, "developer", message.Get("role").String())
+		require.JSONEq(t, `[{"type":"input_text","text":"client rule"}]`, message.Get("content").Raw)
 		require.Equal(t, "client rule", sseResponseInstructions(t, rec.Body.String(), "response.completed").String())
 	})
 }
