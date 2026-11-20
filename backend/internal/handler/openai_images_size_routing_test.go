@@ -30,6 +30,10 @@ func (r openAIImagesSizeRoutingAccountRepo) ListModelAvailabilityCandidates(_ co
 	return out, nil
 }
 
+func (r openAIImagesSizeRoutingAccountRepo) ListAllWithFilters(_ context.Context, platform, _, _, _ string, _ int64, _ string) ([]service.Account, error) {
+	return r.accountsForPlatform(platform), nil
+}
+
 func newOpenAIImagesSizeRoutingTestHandler(t *testing.T, accounts []service.Account, upstream service.HTTPUpstream) *OpenAIGatewayHandler {
 	t.Helper()
 	cfg := &config.Config{RunMode: config.RunModeSimple}

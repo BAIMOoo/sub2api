@@ -1,6 +1,9 @@
 package service
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
+)
 
 const openAIDeferPreOutputKeepaliveKey = "openai_defer_pre_output_keepalive"
 
@@ -35,9 +38,15 @@ func (s *OpenAIGatewayService) openAIHTTPPreOutputKeepaliveDeferred(c *gin.Conte
 		if apiKey == nil || s.accountRepo == nil {
 			return true
 		}
-		// Include cooldowns: an account that cannot serve this attempt can
-		// recover before failover, after a heartbeat would have committed 200.
-		accounts, err := s.listConfiguredOpenAIAccounts(c.Request.Context(), apiKey.GroupID, PlatformOpenAI)
+		groupID := AccountListGroupUngrouped
+		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+			groupID = 0 // Simple mode can select any OpenAI account.
+		} else if apiKey.GroupID != nil && *apiKey.GroupID > 0 {
+			groupID = *apiKey.GroupID
+		}
+		// Account membership is stable across cooldown expiry and scheduled
+		// recovery from error status. Neither can undo an already flushed ping.
+		accounts, err := s.accountRepo.ListAllWithFilters(c.Request.Context(), PlatformOpenAI, "", "", "", groupID, "")
 		if err == nil && len(accounts) > 0 {
 			policy.mayUseCodex = false
 			for i := range accounts {

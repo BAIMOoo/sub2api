@@ -15,7 +15,8 @@ import (
 type codexHTTPKeepaliveAccountRepo struct {
 	AccountRepository
 	schedulable []Account
-	configured  []Account
+	active      []Account
+	members     []Account
 }
 
 func (r codexHTTPKeepaliveAccountRepo) ListSchedulableByPlatform(context.Context, string) ([]Account, error) {
@@ -23,10 +24,14 @@ func (r codexHTTPKeepaliveAccountRepo) ListSchedulableByPlatform(context.Context
 }
 
 func (r codexHTTPKeepaliveAccountRepo) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]Account, error) {
-	return r.configured, nil
+	return r.active, nil
 }
 
-func TestCodexHTTPConfigErrorKeepaliveConsidersCoolingAccounts(t *testing.T) {
+func (r codexHTTPKeepaliveAccountRepo) ListAllWithFilters(context.Context, string, string, string, string, int64, string) ([]Account, error) {
+	return r.members, nil
+}
+
+func TestCodexHTTPConfigErrorKeepaliveConsidersRecoverableAccounts(t *testing.T) {
 	apiKey := Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true}
 	resumesAt := time.Now().Add(time.Minute)
 	codex := Account{
@@ -34,20 +39,26 @@ func TestCodexHTTPConfigErrorKeepaliveConsidersCoolingAccounts(t *testing.T) {
 		TempUnschedulableUntil: &resumesAt,
 	}
 	require.False(t, codex.IsSchedulable())
+	errored := codex
+	errored.Status = StatusError
+	errored.TempUnschedulableUntil = nil
 	for _, tc := range []struct {
-		name       string
-		configured []Account
-		deferPing  bool
+		name      string
+		active    []Account
+		members   []Account
+		deferPing bool
 	}{
-		{"API Key only", []Account{apiKey}, false},
-		{"Codex can recover before failover", []Account{apiKey, codex}, true},
+		{"API Key only", []Account{apiKey}, []Account{apiKey}, false},
+		{"Codex in cooldown", []Account{apiKey, codex}, []Account{apiKey, codex}, true},
+		{"Codex in error status", []Account{apiKey}, []Account{apiKey, errored}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &OpenAIGatewayService{
 				cfg: &config.Config{RunMode: config.RunModeSimple},
 				accountRepo: codexHTTPKeepaliveAccountRepo{
 					schedulable: []Account{apiKey},
-					configured:  tc.configured,
+					active:      tc.active,
+					members:     tc.members,
 				},
 			}
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

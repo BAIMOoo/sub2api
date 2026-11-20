@@ -35,7 +35,18 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 	}
 
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	accounts, err := s.listConfiguredOpenAIAccounts(ctx, groupID, platform)
+	queryGroupID := groupID
+	includeGrouped := false
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		queryGroupID = nil
+		includeGrouped = true
+	}
+	accounts, err := s.accountRepo.ListModelAvailabilityCandidates(
+		ctx,
+		queryGroupID,
+		[]string{platform},
+		includeGrouped,
+	)
 	if err != nil {
 		// Conservative fallback so the caller keeps returning 503; we do not
 		// want a transient lookup failure to flip into 404 model_not_found.
@@ -58,12 +69,4 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		}
 	}
 	return diag
-}
-
-func (s *OpenAIGatewayService) listConfiguredOpenAIAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
-	includeGrouped := s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
-	if includeGrouped {
-		groupID = nil
-	}
-	return s.accountRepo.ListModelAvailabilityCandidates(ctx, groupID, []string{platform}, includeGrouped)
 }
