@@ -196,8 +196,8 @@ func normalizeOpenAIResponsesRejectedFieldRetryBody(statusCode int, body, respon
 	return nil, "", false, nil
 }
 
-// Fixed-contract HTTP may repair serialization hints, but cannot recover by
-// deleting reasoning content, changing namespaces or widening tool schemas.
+// Fixed-contract HTTP may remove redundant status or unsupported generation
+// controls, but cannot recover by deleting caller metadata or task content.
 func normalizeCodexHTTPRejectedFieldRetryBody(
 	policy codexHTTPPolicy,
 	statusCode int,
@@ -209,12 +209,7 @@ func normalizeCodexHTTPRejectedFieldRetryBody(
 		if param == "" {
 			param = openAIResponsesRejectedParamFromMessage(message)
 		}
-		allowed := param == "max_output_tokens" ||
-			param == "truncation" ||
-			param == "prompt_cache_breakpoint"
-		if _, ok := openAIResponsesRejectedCacheIndex(param); ok {
-			allowed = true
-		}
+		allowed := param == "max_output_tokens" || param == "truncation"
 		if index, ok := openAIResponsesRejectedStatusIndex(param); ok {
 			rejectedType := gjson.GetBytes(body, fmt.Sprintf("input.%d.type", index)).String()
 			allowed = rejectedType != ""

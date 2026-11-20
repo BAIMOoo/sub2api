@@ -18,6 +18,10 @@ func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
 }
 
 func normalizeOpenAIResponsesLegacyIngressWithConfig(cfg *config.Config, body []byte) ([]byte, bool, error) {
+	return normalizeOpenAIResponsesLegacyIngressWithPolicy(cfg, body, codexHTTPLegacy)
+}
+
+func normalizeOpenAIResponsesLegacyIngressWithPolicy(cfg *config.Config, body []byte, policy codexHTTPPolicy) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -47,8 +51,8 @@ func normalizeOpenAIResponsesLegacyIngressWithConfig(cfg *config.Config, body []
 	messagesValue, hasMessages := request["messages"]
 	if hasMessages {
 		messages, messagesAreArray := messagesValue.([]any)
-		if messagesAreArray && len(messages) > 0 {
-			legacy, err := convertLegacyResponsesMessages(cfg, body)
+		if messagesAreArray && (len(messages) > 0 || policy.usesFixedExecContract()) {
+			legacy, err := convertLegacyResponsesMessages(cfg, body, policy)
 			if err != nil {
 				return body, false, err
 			}
@@ -110,20 +114,22 @@ type convertedLegacyResponsesMessages struct {
 	hasReasoningEffort bool
 }
 
-func convertLegacyResponsesMessages(cfg *config.Config, body []byte) (convertedLegacyResponsesMessages, error) {
+func convertLegacyResponsesMessages(cfg *config.Config, body []byte, policy codexHTTPPolicy) (convertedLegacyResponsesMessages, error) {
 	var converted convertedLegacyResponsesMessages
 	var chatRequest apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatRequest); err != nil {
 		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
-	responsesRequest, err := chatCompletionsToResponses(cfg, &chatRequest)
+	responsesRequest, err := chatCompletionsToResponsesWithPolicy(cfg, &chatRequest, policy)
 	if err != nil {
 		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
 	}
 	if len(responsesRequest.Input) == 0 {
 		return converted, fmt.Errorf("normalize legacy Responses messages: empty input")
 	}
-	if err := json.Unmarshal(responsesRequest.Input, &converted.input); err != nil {
+	if policy.usesFixedExecContract() {
+		converted.input = responsesRequest.Input
+	} else if err := json.Unmarshal(responsesRequest.Input, &converted.input); err != nil {
 		return converted, fmt.Errorf("decode normalized legacy Responses input: %w", err)
 	}
 

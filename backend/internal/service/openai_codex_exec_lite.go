@@ -59,6 +59,8 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 		if carrier == nil {
 			carrier = item
 			carrierIndex = index
+		} else if _, hasID := item["id"]; hasID {
+			return false, newOpenAIResponsesLiteValidationError("input", "additional_tools carrier id cannot be preserved when merging Lite carriers")
 		}
 		carrierCount++
 		existingTools = append(existingTools, itemTools...)

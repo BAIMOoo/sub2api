@@ -178,17 +178,48 @@ func TestCodexHTTPModeBodyAdaptsCompactForStreamingResponses(t *testing.T) {
 	require.Equal(t, "compaction_trigger", gjson.GetBytes(normalized, "input.1.type").String())
 }
 
-func TestCodexHTTPStandardRejectsUnrepresentableAdditionalToolsCarrier(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.5","input":[{"type":"additional_tools","role":"developer","tools":[],"content":"must not disappear"}]}`)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+func TestCodexHTTPRejectsUnrepresentableAdditionalToolsCarrier(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		body    string
+		wantErr string
+		lite    bool
+	}{
+		{
+			name:    "unsupported field",
+			body:    `{"model":"gpt-5.5","input":[{"type":"additional_tools","role":"developer","tools":[],"content":"must not disappear"}]}`,
+			wantErr: "fields that cannot be preserved",
+		},
+		{
+			name:    "referenced carrier id",
+			body:    `{"model":"gpt-5.5","input":[{"type":"additional_tools","id":"at_keep","role":"developer","tools":[]},{"type":"item_reference","id":"at_keep"}]}`,
+			wantErr: "additional_tools carrier id cannot be preserved in Standard layout",
+		},
+		{
+			name:    "referenced second Lite carrier",
+			body:    `{"model":"gpt-5.5","input":[{"type":"additional_tools","id":"at_first","role":"developer","tools":[]},{"type":"additional_tools","id":"at_keep","role":"developer","tools":[]},{"type":"item_reference","id":"at_keep"}]}`,
+			wantErr: "additional_tools carrier id cannot be preserved when merging Lite carriers",
+			lite:    true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := []byte(test.body)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			account := codexBodyEncodingTestAccount(1006)
+			setCodexHTTPTestMode(account, "gpt-5.5", test.lite)
 
-	_, _, err := codexHTTPExec.normalizeBody(c, codexBodyEncodingTestAccount(1006), body)
-	require.Error(t, err)
-	var validationErr *openAIResponsesLiteValidationError
-	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, "input", validationErr.param)
+			_, _, err := codexHTTPExec.normalizeBody(c, account, body)
+			require.ErrorContains(t, err, test.wantErr)
+			var validationErr *openAIResponsesLiteValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, "input", validationErr.param)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Equal(t, "input", gjson.GetBytes(rec.Body.Bytes(), "error.param").String())
+		})
+	}
 }
 
 func boolString(value bool) string {

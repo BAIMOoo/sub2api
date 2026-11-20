@@ -162,7 +162,11 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// 1. Parse Chat Completions request
 	var chatReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatReq); err != nil {
-		return nil, fmt.Errorf("parse chat completions request: %w", err)
+		parseErr := fmt.Errorf("parse chat completions request: %w", err)
+		if httpPolicy.usesFixedExecContract() {
+			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", parseErr.Error())
+		}
+		return nil, parseErr
 	}
 	originalModel := chatReq.Model
 	clientStream := chatReq.Stream
@@ -239,17 +243,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		// Normal path: convert Chat Completions → Responses.
 		// ChatCompletionsToResponses always sets Stream=true (upstream always streams).
 		chatReq.Model = upstreamModel
-		if httpPolicy.usesFixedExecContract() {
-			responsesReq, err = apicompat.ChatCompletionsToResponsesWithOptions(
-				&chatReq,
-				configuredMinOutputTokens(s.cfg),
-				apicompat.ChatCompletionsToResponsesOptions{
-					Mode: apicompat.ChatCompletionsConversionFixedCodexHTTP,
-				},
-			)
-		} else {
-			responsesReq, err = chatCompletionsToResponses(s.cfg, &chatReq)
-		}
+		responsesReq, err = chatCompletionsToResponsesWithPolicy(s.cfg, &chatReq, httpPolicy)
 		if err != nil {
 			if httpPolicy.usesFixedExecContract() {
 				writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())

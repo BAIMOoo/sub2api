@@ -89,8 +89,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if normalized {
 		body = normalizedBody
 	}
-	legacyIngressBody, legacyIngressChanged, legacyIngressErr := normalizeOpenAIResponsesLegacyIngressWithConfig(s.cfg, body)
+	legacyIngressBody, legacyIngressChanged, legacyIngressErr := normalizeOpenAIResponsesLegacyIngressWithPolicy(s.cfg, body, httpPolicy)
 	if legacyIngressErr != nil {
+		if httpPolicy.usesFixedExecContract() {
+			writeCodexHTTPCompatibilityError(c, legacyIngressErr)
+		}
 		return nil, legacyIngressErr
 	}
 	if legacyIngressChanged {

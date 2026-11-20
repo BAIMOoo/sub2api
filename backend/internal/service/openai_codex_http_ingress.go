@@ -328,14 +328,18 @@ func validateCodexHTTPContentText(raw any) error {
 }
 
 func validateCodexHTTPChatHistory(body []byte) error {
-	if !gjson.GetBytes(body, "messages").Exists() {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() {
 		return nil
+	}
+	if !messages.IsArray() {
+		return newOpenAIResponsesLiteValidationError("messages", "chat messages must be an array for lossless Codex conversion")
 	}
 	allowed := "model messages instructions prompt_cache_options prompt_cache_key stream stream_options tools parallel_tool_calls tool_choice reasoning_effort service_tier response_format functions function_call metadata user"
 	if err := validateCodexHTTPFieldSet(gjson.ParseBytes(body), "request", allowed, true); err != nil {
 		return err
 	}
-	for index, message := range gjson.GetBytes(body, "messages").Array() {
+	for index, message := range messages.Array() {
 		var invalid string
 		message.ForEach(func(key, _ gjson.Result) bool {
 			switch key.String() {

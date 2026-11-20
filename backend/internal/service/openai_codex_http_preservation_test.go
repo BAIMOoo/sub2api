@@ -56,6 +56,8 @@ func TestCodexHTTPIngressRejectsAmbiguousTaskContent(t *testing.T) {
 		{name: "commands", body: `{"model":"gpt-5.5","commands":"must not disappear"}`},
 		{name: "prompt conflicts with input", body: `{"model":"gpt-5.5","prompt":"legacy","input":[{"role":"user","content":"native"}]}`},
 		{name: "input conflicts with messages", body: `{"model":"gpt-5.5","input":[{"role":"user","content":"native"}],"messages":[{"role":"user","content":"legacy"}]}`},
+		{name: "invalid messages shape", body: `{"model":"gpt-5.5","messages":{"role":"user","content":"legacy"}}`},
+		{name: "invalid legacy instructions type", body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"legacy"}],"instructions":123}`},
 		{name: "tools conflict with functions", body: `{"model":"gpt-5.5","input":[{"role":"user","content":"hi"}],"tools":[],"functions":[{"name":"lookup"}]}`},
 		{name: "empty base64 image", body: `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,"}]}]}`},
 	} {
@@ -72,6 +74,32 @@ func TestCodexHTTPIngressRejectsAmbiguousTaskContent(t *testing.T) {
 			require.Nil(t, upstream.lastReq)
 			require.Equal(t, http.StatusBadRequest, recorder.Code)
 			require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+		})
+	}
+}
+
+func TestCodexHTTPResponsesPreservesEmptyLegacyToolResult(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-5.5",
+		"messages":[
+			{"role":"user","content":"Use the tool"},
+			{"role":"assistant","tool_calls":[{"id":"call_legacy","type":"function","function":{"name":"lookup","arguments":"{}"}}]},
+			{"role":"tool","tool_call_id":"call_legacy","content":""}
+		]
+	}`)
+	for _, passthrough := range []bool{false, true} {
+		t.Run("passthrough="+boolString(passthrough), func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			account := codexBodyEncodingTestAccount(2105)
+			account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+			upstream := captureCodexHTTPForward(t, c, account, body, &config.Config{})
+
+			require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+			output := gjson.GetBytes(upstream.lastBody, `input.#(type=="function_call_output")`)
+			require.Equal(t, "call_legacy", output.Get("call_id").String())
+			require.Equal(t, `""`, output.Get("output").Raw)
 		})
 	}
 }
@@ -134,6 +162,10 @@ func TestCodexHTTPChatRejectsUnrepresentableFieldsBeforeUpstream(t *testing.T) {
 			name: "stream options",
 			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream_options":{"include_usage":true}}`,
 		},
+		{
+			name: "invalid instructions type",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"instructions":123}`,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -154,6 +186,7 @@ func TestCodexHTTPChatRejectsUnrepresentableFieldsBeforeUpstream(t *testing.T) {
 			require.Error(t, err)
 			require.Nil(t, upstream.lastReq)
 			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 		})
 	}
 }
@@ -620,11 +653,14 @@ func TestCodexHTTPDoesNotRetryByDroppingTaskContent(t *testing.T) {
 		`{"error":{"code":"invalid_encrypted_content","message":"invalid encrypted content"}}`,
 		`{"error":{"code":"array_above_max_length","param":"input[0].content","message":"Invalid content: array too long. Maximum length 0"}}`,
 		`{"error":{"code":"unknown_parameter","param":"tools","message":"Unsupported tools namespace"}}`,
+		`{"error":{"code":"invalid_parameter","param":"prompt_cache_breakpoint","message":"prompt_cache_breakpoint is not supported on this model"}}`,
+		`{"error":{"code":"invalid_parameter","param":"input[0].prompt_cache_breakpoint","message":"input[0].prompt_cache_breakpoint is not supported on this model"}}`,
 	}
 	for _, passthrough := range []bool{false, true} {
 		for _, rejection := range rejections {
-			t.Run("passthrough="+boolString(passthrough)+"/"+gjson.Get(rejection, "error.code").String(), func(t *testing.T) {
-				body := []byte(`{"model":"gpt-5.5","instructions":"keep task","input":[{"type":"reasoning","id":"rs_keep","summary":[],"encrypted_content":"opaque","content":[{"type":"reasoning_text","text":"KEEP REASONING"}]}],"tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"read_file","description":"Read","parameters":{"type":"object"}}]}]}`)
+			name := firstNonEmpty(gjson.Get(rejection, "error.param").String(), gjson.Get(rejection, "error.code").String())
+			t.Run("passthrough="+boolString(passthrough)+"/"+name, func(t *testing.T) {
+				body := []byte(`{"model":"gpt-5.5","instructions":"keep task","prompt_cache_breakpoint":{"type":"message_start"},"input":[{"type":"reasoning","id":"rs_keep","summary":[],"encrypted_content":"opaque","content":[{"type":"reasoning_text","text":"KEEP REASONING"}],"prompt_cache_breakpoint":{"type":"message_end"}}],"tools":[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"read_file","description":"Read","parameters":{"type":"object"}}]}]}`)
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
@@ -642,6 +678,8 @@ func TestCodexHTTPDoesNotRetryByDroppingTaskContent(t *testing.T) {
 				require.Len(t, upstream.bodies, 1)
 				require.Contains(t, string(upstream.bodies[0]), "KEEP REASONING")
 				require.Contains(t, string(upstream.bodies[0]), "read_file")
+				require.Equal(t, "message_start", gjson.GetBytes(upstream.bodies[0], "prompt_cache_breakpoint.type").String())
+				require.Equal(t, "message_end", gjson.GetBytes(upstream.bodies[0], "input.0.prompt_cache_breakpoint.type").String())
 			})
 		}
 	}

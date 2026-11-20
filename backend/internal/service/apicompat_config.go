@@ -16,6 +16,15 @@ func chatCompletionsToResponses(cfg *config.Config, req *apicompat.ChatCompletio
 	return apicompat.ChatCompletionsToResponsesWithMinOutputTokens(req, configuredMinOutputTokens(cfg))
 }
 
+func chatCompletionsToResponsesWithPolicy(cfg *config.Config, req *apicompat.ChatCompletionsRequest, policy codexHTTPPolicy) (*apicompat.ResponsesRequest, error) {
+	if !policy.usesFixedExecContract() {
+		return chatCompletionsToResponses(cfg, req)
+	}
+	return apicompat.ChatCompletionsToResponsesWithOptions(req, configuredMinOutputTokens(cfg), apicompat.ChatCompletionsToResponsesOptions{
+		Mode: apicompat.ChatCompletionsConversionFixedCodexHTTP,
+	})
+}
+
 func settingServiceConfig(settingService *SettingService) *config.Config {
 	if settingService == nil {
 		return nil

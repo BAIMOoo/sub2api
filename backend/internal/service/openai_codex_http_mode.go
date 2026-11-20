@@ -375,9 +375,12 @@ func restoreCodexStandardTools(request map[string]any) error {
 			continue
 		}
 		found = true
+		if _, hasID := item["id"]; hasID {
+			return newOpenAIResponsesLiteValidationError("input", "additional_tools carrier id cannot be preserved in Standard layout")
+		}
 		for field := range item {
 			switch field {
-			case "type", "id", "role", "tools":
+			case "type", "role", "tools":
 			default:
 				return newOpenAIResponsesLiteValidationError(
 					"input",

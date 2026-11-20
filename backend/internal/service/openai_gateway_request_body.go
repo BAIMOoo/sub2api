@@ -1669,7 +1669,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 	changed := false
 	if account.IsOpenAIOAuthLike() {
 		var err error
-		normalized, changed, err = normalizeOpenAIResponsesLegacyIngressWithConfig(opts.Config, body)
+		normalized, changed, err = normalizeOpenAIResponsesLegacyIngressWithPolicy(opts.Config, body, opts.HTTPPolicy)
 		if err != nil {
 			return body, false, err
 		}
