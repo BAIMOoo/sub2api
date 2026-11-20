@@ -1170,13 +1170,8 @@ func mapAnthropicEffortToResponses(effort string) string {
 	return effort // low→low, medium→medium, high→high, unknown→passthrough
 }
 
-// convertAnthropicToolsToResponses maps Anthropic tool definitions to
-// Responses API tools. Server-side tools like web_search are mapped to their
-// OpenAI equivalents; regular tools become function tools.
-func convertAnthropicToolsToResponses(tools []AnthropicTool) []ResponsesTool {
-	return convertAnthropicToolsToResponsesWithMode(tools, AnthropicConversionCompatible)
-}
-
+// convertAnthropicToolsToResponsesWithMode maps Anthropic tool definitions to
+// Responses API tools, preserving custom schemas on fixed Codex HTTP.
 func convertAnthropicToolsToResponsesWithMode(
 	tools []AnthropicTool,
 	mode AnthropicConversionMode,

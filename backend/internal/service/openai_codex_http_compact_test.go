@@ -36,7 +36,7 @@ func TestCodexHTTPCompactAdaptsToRemoteCompactionV2(t *testing.T) {
 				account := codexBodyEncodingTestAccount(4510)
 				account.Extra = map[string]any{"openai_passthrough": passthrough}
 				setCodexHTTPTestMode(account, "gpt-5.5", lite)
-				result, err, recorder, upstream, c := forwardCodexHTTPCompactForTest(t, "/v1/responses/compact", account, codexHTTPCompactInput, codexHTTPCompactSSEItem+codexHTTPCompactSSECompleted)
+				result, recorder, upstream, c, err := forwardCodexHTTPCompactForTest(t, "/v1/responses/compact", account, codexHTTPCompactInput, codexHTTPCompactSSEItem+codexHTTPCompactSSECompleted)
 				require.NoError(t, err)
 				require.Equal(t, http.StatusOK, recorder.Code)
 				require.Contains(t, recorder.Header().Get("Content-Type"), "application/json")
@@ -92,7 +92,7 @@ func TestCodexHTTPCompactRejectsIncompleteUpstream(t *testing.T) {
 			t.Run(tc.name+"/passthrough="+boolString(passthrough), func(t *testing.T) {
 				account := codexBodyEncodingTestAccount(4511)
 				account.Extra = map[string]any{"openai_passthrough": passthrough}
-				result, err, recorder, upstream, _ := forwardCodexHTTPCompactForTest(t, "/v1/responses/compact", account, codexHTTPCompactInput, tc.reply)
+				result, recorder, upstream, _, err := forwardCodexHTTPCompactForTest(t, "/v1/responses/compact", account, codexHTTPCompactInput, tc.reply)
 				require.Error(t, err)
 				require.Nil(t, result)
 				require.Len(t, upstream.requests, 1)
@@ -106,7 +106,7 @@ func TestCodexHTTPCompactRejectsIncompleteUpstream(t *testing.T) {
 func TestCodexHTTPCompactLeavesAPIKeyCompactOnLegacyWire(t *testing.T) {
 	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-key"}}
 	reply := `{"id":"cmp_original","object":"response.compaction","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`
-	_, err, recorder, upstream, _ := forwardCodexHTTPCompactForTest(t, "/v1/responses/compact", account, codexHTTPCompactInput, reply)
+	_, recorder, upstream, _, err := forwardCodexHTTPCompactForTest(t, "/v1/responses/compact", account, codexHTTPCompactInput, reply)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, openaiPlatformAPIURL+"/compact", upstream.lastReq.URL.String())
@@ -116,7 +116,7 @@ func TestCodexHTTPCompactLeavesAPIKeyCompactOnLegacyWire(t *testing.T) {
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
 }
 
-func forwardCodexHTTPCompactForTest(t *testing.T, path string, account *Account, input, reply string) (*OpenAIForwardResult, error, *httptest.ResponseRecorder, *httpUpstreamRecorder, *gin.Context) {
+func forwardCodexHTTPCompactForTest(t *testing.T, path string, account *Account, input, reply string) (*OpenAIForwardResult, *httptest.ResponseRecorder, *httpUpstreamRecorder, *gin.Context, error) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -133,5 +133,5 @@ func forwardCodexHTTPCompactForTest(t *testing.T, path string, account *Account,
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 	result, err := svc.Forward(c.Request.Context(), c, account, body)
 	require.Equal(t, input, string(body))
-	return result, err, recorder, upstream, c
+	return result, recorder, upstream, c, err
 }

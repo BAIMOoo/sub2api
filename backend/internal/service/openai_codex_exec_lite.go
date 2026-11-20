@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -354,25 +353,4 @@ func ensureCodexMessageInputText(item map[string]any, text string) bool {
 		metadata["content_item_kinds"] = append(kinds, "model.base_instructions")
 	}
 	return true
-}
-
-func canonicalizeCodexExecLiteBody(body []byte) ([]byte, bool, error) {
-	if !bytes.Contains(body, []byte(`"instructions"`)) &&
-		!bytes.Contains(body, []byte(`"tools"`)) &&
-		!bytes.Contains(body, []byte(`"additional_tools"`)) {
-		return body, false, nil
-	}
-	var reqBody map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &reqBody); err != nil {
-		return body, false, fmt.Errorf("decode codex exec Lite body: %w", err)
-	}
-	changed, err := canonicalizeCodexExecLiteRequest(reqBody)
-	if err != nil || !changed {
-		return body, false, err
-	}
-	rebuilt, err := marshalOpenAIUpstreamJSON(reqBody)
-	if err != nil {
-		return body, false, fmt.Errorf("encode codex exec Lite body: %w", err)
-	}
-	return rebuilt, true, nil
 }

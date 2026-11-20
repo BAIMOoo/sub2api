@@ -259,12 +259,14 @@ func convertChatMessageToResponsesItemsWithMode(
 	}
 
 	var content any
+	emitMessage := message.Role != "assistant"
 	if strict {
 		preserved, err := preserveChatContent(message.Content, message.Role)
 		if err != nil {
 			return nil, err
 		}
 		content = preserved
+		emitMessage = emitMessage || len(normalizedRawJSON(message.Content)) > 0 || message.Refusal != "" || len(message.ToolCalls) == 0
 	} else if message.Role == "assistant" {
 		text := ""
 		if message.ReasoningContent != "" {
@@ -283,6 +285,8 @@ func convertChatMessageToResponsesItemsWithMode(
 		content = []map[string]any{{"type": "output_text", "text": text}}
 		if text == "" {
 			content = []map[string]any{}
+		} else {
+			emitMessage = true
 		}
 	} else {
 		parsed, err := parseChatMessageContent(message.Content)
@@ -310,9 +314,6 @@ func convertChatMessageToResponsesItemsWithMode(
 	}
 
 	var items []map[string]any
-	emitMessage := message.Role != "assistant" ||
-		(strict && (len(normalizedRawJSON(message.Content)) > 0 || message.Refusal != "" || len(message.ToolCalls) == 0)) ||
-		(!strict && len(content.([]map[string]any)) > 0)
 	if emitMessage {
 		items = append(items, map[string]any{
 			"type":    "message",
