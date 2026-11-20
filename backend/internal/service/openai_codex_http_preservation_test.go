@@ -115,44 +115,44 @@ func TestCodexHTTPResponsesDoesNotBroadenExplicitToolChoice(t *testing.T) {
 		wantParam  string
 	}{
 		{
-			name:       "native named selection from replay context",
+			name:       "native named selection without a matching declaration",
 			selection:  `"tool_choice":{"type":"function","name":"lookup"}`,
 			wantChoice: `{"type":"function","name":"lookup"}`,
 		},
 		{
-			name:       "native hosted selection from replay context",
+			name:       "native hosted selection without a matching declaration",
 			selection:  `"tool_choice":{"type":"web_search"}`,
 			wantChoice: `{"type":"web_search"}`,
 		},
 		{
 			name:       "legacy nested selection",
-			selection:  `"tool_choice":{"type":"function","function":{"name":"lookup"}}`,
-			wantChoice: `{"type":"function","name":"lookup"}`,
+			selection:  `"tool_choice":{"type":"function","function":{"name":"available"}}`,
+			wantChoice: `{"type":"function","name":"available"}`,
 		},
 		{
 			name:       "legacy function call",
-			selection:  `"function_call":{"name":"lookup"}`,
-			wantChoice: `{"type":"function","name":"lookup"}`,
+			selection:  `"function_call":{"name":"available"}`,
+			wantChoice: `{"type":"function","name":"available"}`,
 		},
 		{
 			name:      "legacy fields cannot disappear",
-			selection: `"tool_choice":{"type":"function","function":{"name":"lookup","description":"keep"}}`,
+			selection: `"tool_choice":{"type":"function","function":{"name":"available","description":"keep"}}`,
 			wantParam: "tool_choice",
 		},
 		{
 			name:      "legacy function call fields cannot disappear",
-			selection: `"function_call":{"name":"lookup","description":"keep"}`,
+			selection: `"function_call":{"name":"available","description":"keep"}`,
 			wantParam: "function_call",
 		},
 		{
 			name:      "conflicting formats",
-			selection: `"tool_choice":"none","function_call":{"name":"lookup"}`,
+			selection: `"tool_choice":"none","function_call":{"name":"available"}`,
 			wantParam: "tool_choice",
 		},
 	} {
 		for _, passthrough := range []bool{false, true} {
 			t.Run(test.name+"/passthrough="+boolString(passthrough), func(t *testing.T) {
-				body := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_prior","input":"continue",` + test.selection + `}`)
+				body := []byte(`{"model":"gpt-5.5","input":"continue","tools":[{"type":"function","name":"available","description":"Available","parameters":{"type":"object"}}],` + test.selection + `}`)
 				rec := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
@@ -172,7 +172,7 @@ func TestCodexHTTPResponsesDoesNotBroadenExplicitToolChoice(t *testing.T) {
 					return
 				}
 				require.NotNil(t, upstream.lastReq, "request must reach the synthetic upstream: %v", err)
-				require.Equal(t, "resp_prior", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
+				require.Equal(t, "available", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
 				require.JSONEq(t, test.wantChoice, gjson.GetBytes(upstream.lastBody, "tool_choice").Raw)
 				require.False(t, gjson.GetBytes(upstream.lastBody, "function_call").Exists())
 			})
