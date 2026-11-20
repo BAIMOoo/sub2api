@@ -25,12 +25,15 @@ func CodexLiveSSECompleted(body string) bool {
 		if data == "[DONE]" {
 			return completed
 		}
-		var event apicompat.ResponsesStreamEvent
-		payload := []byte(data)
-		if json.Unmarshal(payload, &event) != nil {
+		if !json.Valid([]byte(data)) {
 			return false
 		}
-		switch effectiveOpenAISSEEventType(payload, frame.EventType) {
+		var event apicompat.ResponsesStreamEvent
+		payload := openAICompatPayloadWithEventType(data, frame.EventType)
+		if json.Unmarshal([]byte(payload), &event) != nil {
+			return false
+		}
+		switch strings.TrimSpace(event.Type) {
 		case "response.completed":
 			if completed || event.Response == nil || event.Response.Status != "completed" {
 				return false

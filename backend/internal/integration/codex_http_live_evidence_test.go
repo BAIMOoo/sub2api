@@ -89,6 +89,7 @@ func TestCodexLiveRequiresUpstreamCompletionEvidence(t *testing.T) {
 		{"missing event", "data: [DONE]\n\n", false},
 		{"completion after done", "data: [DONE]\n\n" + complete, false},
 		{"conflicting terminal", complete + incomplete, false},
+		{"case-insensitive incomplete before completion", strings.Replace(incomplete, `"type"`, `"Type"`, 1) + complete, false},
 		{"malformed completed frame then named incomplete", completeLine + "\ndata: {}\n\n" + namedIncomplete, false},
 		{"oversize", complete + strings.Repeat("x", codexLiveEvidenceLimit), false},
 	} {
