@@ -36,8 +36,8 @@ func normalizeCodexHTTPIdentityID(raw string) string {
 
 type codexHTTPAttemptKey struct{}
 
-func withCodexHTTPAttempt(req *http.Request, c *gin.Context, account *Account, body []byte) *http.Request {
-	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+func (policy codexHTTPPolicy) withAttemptBody(req *http.Request, body []byte) *http.Request {
+	if !policy.usesFixedExecContract() {
 		return req
 	}
 	ctx := WithHTTPUpstreamRedirectsDisabled(req.Context())

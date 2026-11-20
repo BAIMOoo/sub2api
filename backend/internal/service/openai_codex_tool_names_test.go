@@ -169,7 +169,7 @@ func TestCodexHTTPModeBody_AliasesLiteChildrenNamespace(t *testing.T) {
 	account := codexBodyEncodingTestAccount(530)
 	setCodexHTTPTestMode(account, "gpt-5.5", true)
 
-	normalized, _, err := normalizeCodexHTTPBody(c, account, body)
+	normalized, _, err := codexHTTPExec.normalizeBody(c, account, body)
 	require.NoError(t, err)
 	require.Equal(t, "python", codexToolNameReverseFromContext(c)[codexPythonToolAlias])
 	var forwarded map[string]any

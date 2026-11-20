@@ -106,14 +106,14 @@ func resolveCodexHTTPMode(c *gin.Context, account *Account, model string, body [
 	}
 }
 
-// normalizeCodexHTTPBody is the final fixed-contract boundary shared by normal
+// normalizeBody is the final fixed-contract boundary shared by normal
 // forwarding and passthrough. It only rewrites a private attempt body.
-func normalizeCodexHTTPBody(
+func (policy codexHTTPPolicy) normalizeBody(
 	c *gin.Context,
 	account *Account,
 	body []byte,
 ) (normalized []byte, mode codexHTTPMode, err error) {
-	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+	if !policy.usesFixedExecContract() {
 		return body, codexHTTPMode{}, nil
 	}
 
@@ -241,8 +241,8 @@ func logCodexHTTPModeSelection(account *Account, body []byte, mode codexHTTPMode
 	)
 }
 
-func applyCodexHTTPMode(c *gin.Context, account *Account, req *http.Request, body []byte, mode codexHTTPMode) error {
-	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+func (policy codexHTTPPolicy) applyModeHeaders(c *gin.Context, account *Account, req *http.Request, body []byte, mode codexHTTPMode) error {
+	if !policy.usesFixedExecContract() {
 		return applyMappedGPT55LiteCompatibility(req, account, body)
 	}
 	// The pinned auth provider sends this routing header, but the captured

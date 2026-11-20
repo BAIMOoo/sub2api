@@ -622,11 +622,17 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 			targetURL = buildOpenAIResponsesURLForPlatform(account.Platform, validatedURL)
 		}
 	}
-	targetURL = openAIHTTPResponsesUpstreamURL(c, account, targetURL)
+	// A WS bridge stays on the upstream wire policy even if a caller reuses
+	// an HTTP ingress context for the builder.
+	httpPolicy := codexHTTPLegacy
+	if policy != upstreamWSWire {
+		httpPolicy = codexHTTPPolicyForRequest(c, account)
+	}
+	targetURL = httpPolicy.responsesUpstreamURL(c, targetURL)
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	body, httpMode, err := normalizeCodexHTTPBody(c, account, body)
+	body, httpMode, err := httpPolicy.normalizeBody(c, account, body)
 	if err != nil {
 		return nil, err
 	}
@@ -636,7 +642,7 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-	req = withCodexHTTPAttempt(req, c, account, body)
+	req = httpPolicy.withAttemptBody(req, body)
 
 	// 透传客户端请求头（安全白名单）。
 	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
@@ -756,7 +762,7 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")
 
-	if err := applyCodexHTTPMode(c, account, req, body, httpMode); err != nil {
+	if err := httpPolicy.applyModeHeaders(c, account, req, body, httpMode); err != nil {
 		return nil, err
 	}
 	return req, nil

@@ -1496,12 +1496,13 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	default:
 		targetURL = openaiPlatformAPIURL
 	}
-	targetURL = openAIHTTPResponsesUpstreamURL(c, account, targetURL)
+	httpPolicy := codexHTTPPolicyForRequest(c, account)
+	targetURL = httpPolicy.responsesUpstreamURL(c, targetURL)
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	body, httpMode, err := normalizeCodexHTTPBody(c, account, body)
+	body, httpMode, err := httpPolicy.normalizeBody(c, account, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1511,7 +1512,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		return nil, err
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-	req = withCodexHTTPAttempt(req, c, account, body)
+	req = httpPolicy.withAttemptBody(req, body)
 
 	// Build authentication for this request. Agent Identity signs a fresh
 	// assertion here; OAuth/PAT/API-key keep their existing Bearer behavior.
@@ -1623,7 +1624,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 
-	if err := applyCodexHTTPMode(c, account, req, body, httpMode); err != nil {
+	if err := httpPolicy.applyModeHeaders(c, account, req, body, httpMode); err != nil {
 		return nil, err
 	}
 	if err := prepareOpenAIHTTPBody(account, req); err != nil {

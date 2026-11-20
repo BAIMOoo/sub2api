@@ -18,8 +18,8 @@ func isCodexHTTPCompactRequest(c *gin.Context, account *Account) bool {
 	return isOpenAIResponsesCompactPath(c) && codexHTTPPolicyForRequest(c, account).usesFixedExecContract()
 }
 
-func openAIHTTPResponsesUpstreamURL(c *gin.Context, account *Account, baseURL string) string {
-	if isCodexHTTPCompactRequest(c, account) {
+func (policy codexHTTPPolicy) responsesUpstreamURL(c *gin.Context, baseURL string) string {
+	if policy.usesFixedExecContract() && isOpenAIResponsesCompactPath(c) {
 		return baseURL
 	}
 	return appendOpenAIResponsesRequestPathSuffix(baseURL, openAIResponsesRequestPathSuffix(c))

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -50,13 +51,21 @@ func TestOpenAIWSHTTPBridgeAndHTTPUseSeparateTransports(t *testing.T) {
 			account := &service.Account{
 				ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Concurrency: 1,
 				Credentials: map[string]any{"access_token": "test-token"},
-				Extra:       map[string]any{"enable_tls_fingerprint": tc.accountTLS},
+				Extra: map[string]any{
+					"openai_oauth_responses_websockets_v2_mode": service.OpenAIWSIngressModeHTTPBridge,
+				},
+			}
+			if tc.accountTLS {
+				account.Extra["enable_tls_fingerprint"] = true
 			}
 
 			runCookieJarWSBridge(t, gateway, account)
 			require.Len(t, origin.requests, 2)
 			for i, req := range origin.requests {
 				require.Equal(t, codexResponsesURL, req.URL.String())
+				require.True(t, service.IsOpenAIWSHTTPBridgeUpstream(req.Context()))
+				require.Equal(t, service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(req.Context()))
+				require.Empty(t, req.Header.Get("Content-Encoding"))
 				require.Empty(t, origin.cookieAt(i), "bridge must not attach the HTTP account cookie")
 			}
 			require.Empty(t, origin.tlsProfiles, "bridge must call the ordinary Do method")
@@ -68,18 +77,20 @@ func TestOpenAIWSHTTPBridgeAndHTTPUseSeparateTransports(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/responses", strings.NewReader(body))
 			service.SetOpenAIClientTransport(c, service.OpenAIClientTransportHTTP)
-			_, err := gateway.Forward(t.Context(), c, account, []byte(body))
+			result, err := gateway.Forward(t.Context(), c, account, []byte(body))
 			require.NoError(t, err)
+			require.False(t, result.OpenAIWSMode, "the WS mode setting must not select WS egress for direct HTTP")
 			require.Len(t, origin.requests, 3)
-			require.Equal(t, codexResponsesURL, origin.requests[2].URL.String())
+			direct := origin.requests[2]
+			require.Equal(t, codexResponsesURL, direct.URL.String())
+			require.False(t, service.IsOpenAIWSHTTPBridgeUpstream(direct.Context()))
+			require.Equal(t, service.HTTPUpstreamProfileCodexHTTP, service.HTTPUpstreamProfileFromContext(direct.Context()))
+			require.Equal(t, "codex_exec", direct.Header.Get("Originator"))
+			require.Equal(t, "0.158.0", direct.Header.Get("Version"))
+			require.Equal(t, "zstd", direct.Header.Get("Content-Encoding"))
 			require.Equal(t, "_cfuvid=test-http-only", origin.cookieAt(2))
 			require.Positive(t, store.saves, "ordinary HTTP still harvests Set-Cookie")
-			if tc.accountTLS {
-				require.Len(t, origin.tlsProfiles, 1)
-				require.NotNil(t, origin.tlsProfiles[0])
-			} else {
-				require.Empty(t, origin.tlsProfiles)
-			}
+			require.Equal(t, []*tlsfingerprint.Profile{tlsfingerprint.OpenAICodexLinuxProfile()}, origin.tlsProfiles)
 		})
 	}
 }
