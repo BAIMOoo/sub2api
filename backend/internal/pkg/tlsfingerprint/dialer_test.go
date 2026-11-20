@@ -16,6 +16,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -24,6 +25,34 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestBoundedDialerDistinguishesHTTPProxyAuthRejection(t *testing.T) {
+	for _, status := range []int{http.StatusProxyAuthRequired, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodConnect {
+					t.Errorf("proxy received %q, want CONNECT", r.Method)
+				}
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(peer.Close)
+			proxyURL, err := url.Parse(peer.URL)
+			require.NoError(t, err)
+			dialer, err := NewBoundedDialer(OpenAICodexLinuxProfile(), proxyURL, time.Second, time.Second)
+			require.NoError(t, err)
+
+			conn, err := dialer.DialTLSContext(t.Context(), "tcp", "example.invalid:443")
+
+			require.Nil(t, conn)
+			if status == http.StatusProxyAuthRequired {
+				require.ErrorIs(t, err, ErrProxyAuthentication)
+			} else {
+				require.ErrorContains(t, err, "503")
+				require.NotErrorIs(t, err, ErrProxyAuthentication)
+			}
+		})
+	}
+}
 
 func TestBoundedDialerTimesOutStalledTunnelOrTLS(t *testing.T) {
 	for _, tc := range []struct {

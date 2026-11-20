@@ -491,7 +491,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	// private until semantic output. The bytes do not count as client output.
 	keepaliveEventDirect := false
 	forwardsKeepaliveDirect := func(eventType string) bool {
-		return eventType == "keepalive" && stageFirstOutput && !firstOutputStage.closed && !failureDelivered && !suppressCurrentEvent
+		return eventType == "keepalive" && stageFirstOutput && !firstOutputStage.closed &&
+			!failureDelivered && !suppressCurrentEvent && !s.openAIHTTPPreOutputKeepaliveDeferred(c, account)
 	}
 	writeKeepaliveDirect := func(value string) {
 		if clientDisconnected {
@@ -1052,6 +1053,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				continue
 			}
 			if time.Since(lastDownstreamWriteAt) < keepaliveInterval {
+				continue
+			}
+			if !clientOutputStarted && s.openAIHTTPPreOutputKeepaliveDeferred(c, account) {
 				continue
 			}
 			if stageFirstOutput {

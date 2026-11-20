@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -25,7 +26,11 @@ func (s *OpenAIGatewayService) doCodexHTTPUpstream(req *http.Request, proxyURL s
 		return nil, err
 	}
 	ctx := WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileCodexHTTP)
-	return s.httpUpstream.DoWithTLS(req.WithContext(ctx), proxyURL, account.ID, account.Concurrency, tlsfingerprint.OpenAICodexLinuxProfile())
+	resp, err := s.httpUpstream.DoWithTLS(req.WithContext(ctx), proxyURL, account.ID, account.Concurrency, tlsfingerprint.OpenAICodexLinuxProfile())
+	if errors.Is(err, tlsfingerprint.ErrProxyAuthentication) {
+		return nil, &CodexHTTPTransportConfigError{reason: "proxy authentication rejected"}
+	}
+	return resp, err
 }
 
 func (s *OpenAIGatewayService) validateCodexHTTPTransport(req *http.Request, proxyURL string, account *Account) error {

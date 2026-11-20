@@ -8,17 +8,24 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/codexprobe"
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
 )
+
+// ErrProxyAuthentication is returned by the bounded dialer when the proxy
+// rejects authentication before an upstream TLS connection exists.
+var ErrProxyAuthentication = errors.New("proxy authentication rejected")
 
 // Profile contains TLS fingerprint configuration.
 // All slice fields use built-in defaults when empty.
@@ -207,8 +214,18 @@ func NewBoundedDialer(profile *Profile, proxyURL *url.URL, connectTimeout, hands
 			ctx, cancel := context.WithTimeout(ctx, connectTimeout)
 			defer cancel()
 			conn, err := dial(ctx, network, addr)
-			if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
-				err = fmt.Errorf("establish TCP connection or proxy tunnel: %w", ctxErr)
+			if err != nil {
+				ctxErr := ctx.Err()
+				if ctxErr == nil && errors.Is(err, os.ErrDeadlineExceeded) {
+					// SOCKS applies the same deadline to the socket, which can
+					// fire before the context timer reports its expiration.
+					if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+						ctxErr = context.DeadlineExceeded
+					}
+				}
+				if ctxErr != nil {
+					err = fmt.Errorf("establish TCP connection or proxy tunnel: %w", ctxErr)
+				}
 			}
 			return conn, err
 		},
@@ -278,6 +295,11 @@ func (d *SOCKS5ProxyDialer) dialTunnel(ctx context.Context, addr string, bounded
 	}
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
+		// x/net/proxy does not expose a typed error for SOCKS authentication.
+		if bounded && (strings.Contains(err.Error(), "username/password authentication failed") ||
+			strings.Contains(err.Error(), "no acceptable authentication methods")) {
+			return nil, ErrProxyAuthentication
+		}
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)
 	}
 	slog.Debug("tls_fingerprint_socks5_tunnel_established")
@@ -362,6 +384,9 @@ func (d *HTTPProxyDialer) dialTunnel(ctx context.Context, addr string, bounded b
 	if resp.StatusCode != http.StatusOK {
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed_status", "status_code", resp.StatusCode, "status", resp.Status)
+		if bounded && resp.StatusCode == http.StatusProxyAuthRequired {
+			return nil, ErrProxyAuthentication
+		}
 		return nil, fmt.Errorf("proxy CONNECT failed: %s", resp.Status)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")

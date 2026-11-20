@@ -161,6 +161,27 @@ func TestCodexHTTPTransportRefusesUnverifiedConfigBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestCodexHTTPTransportProxyAuthIsNotFailover(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		t.Run("passthrough="+boolString(passthrough), func(t *testing.T) {
+			account := codexBodyEncodingTestAccount(332)
+			account.Extra = map[string]any{"openai_passthrough": passthrough}
+			account.Proxy = &Proxy{ID: 1, Protocol: "http", Host: "proxy.example.test", Port: 1080}
+			account.ProxyID = &account.Proxy.ID
+			upstream := &codexHTTPTransportRecorder{httpUpstreamRecorder: httpUpstreamRecorder{err: tlsfingerprint.ErrProxyAuthentication}}
+
+			_, err := forwardFixedCodexTransportForTest(t, account, upstream, nil, "/v1/responses")
+
+			var configuration *CodexHTTPTransportConfigError
+			require.ErrorAs(t, err, &configuration)
+			require.ErrorContains(t, err, "proxy authentication rejected")
+			var failover *UpstreamFailoverError
+			require.NotErrorAs(t, err, &failover)
+			require.Len(t, upstream.requests, 1)
+		})
+	}
+}
+
 func forwardFixedCodexTransportForTest(t *testing.T, account *Account, upstream *codexHTTPTransportRecorder, plugin *PluginManager, path string) (*OpenAIForwardResult, error) {
 	t.Helper()
 	if path == "" {

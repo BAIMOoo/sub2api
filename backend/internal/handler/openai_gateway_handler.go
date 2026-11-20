@@ -290,6 +290,16 @@ func openAICompatibleRequestPlatform(ctx context.Context, apiKey *service.APIKey
 	return service.PlatformOpenAI
 }
 
+// Until the response has semantic output, a Codex-capable pool can switch to
+// another account whose transport preflight needs to return HTTP 502.
+func deferOpenAIHTTPPreOutputKeepalive(c *gin.Context, platform string, apiKeyOnly bool) bool {
+	if platform != service.PlatformOpenAI || apiKeyOnly {
+		return false
+	}
+	service.DeferOpenAIHTTPPreOutputKeepalive(c)
+	return true
+}
+
 func openAIResponsesRequiredCapability(imageIntent bool, platform string) service.OpenAIEndpointCapability {
 	if imageIntent && platform == service.PlatformOpenAI {
 		return service.OpenAIEndpointCapabilityResponses
@@ -604,10 +614,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Get subscription info (may be nil)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-	// Any attempt in an OpenAI pool can select Codex. Do not commit a 200
-	// while a later preflight can still reject the request with a 502.
-	allowQueuePing := reqStream && requestPlatform != service.PlatformOpenAI
-	if requestPlatform != service.PlatformOpenAI {
+	apiKeyContinuation := requestPlatform == service.PlatformOpenAI && previousResponseID != ""
+	deferKeepalive := deferOpenAIHTTPPreOutputKeepalive(c, requestPlatform, apiKeyContinuation)
+	allowQueuePing := reqStream && !deferKeepalive
+	if !deferKeepalive {
 		stopCompactKeepalive := service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
 		defer stopCompactKeepalive()
 	}
@@ -781,7 +791,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		account := selection.Account
-		if previousResponseID != "" && requestPlatform == service.PlatformOpenAI && !account.IsOpenAIApiKey() {
+		if apiKeyContinuation && !account.IsOpenAIApiKey() {
 			// The public Responses HTTP API supports previous_response_id on API-key
 			// accounts. OAuth/SetupToken upstreams do not, so keep searching instead
 			// of silently deleting continuation state from a mixed account pool.
@@ -1293,7 +1303,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-	allowQueuePing := reqStream && requestPlatform != service.PlatformOpenAI
+	deferKeepalive := deferOpenAIHTTPPreOutputKeepalive(c, requestPlatform, false)
+	allowQueuePing := reqStream && !deferKeepalive
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()

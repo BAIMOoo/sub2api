@@ -1106,6 +1106,52 @@ type openaiStreamingResultPassthrough struct {
 
 const openAIStreamKeepaliveBytesKey = "openai_stream_keepalive_bytes"
 
+const openAIDeferPreOutputKeepaliveKey = "openai_defer_pre_output_keepalive"
+
+type openAIHTTPKeepalivePolicy struct {
+	checkedPool bool
+	mayUseCodex bool
+}
+
+// DeferOpenAIHTTPPreOutputKeepalive preserves the HTTP status while a later
+// account may still be selected and fail fixed transport configuration.
+func DeferOpenAIHTTPPreOutputKeepalive(c *gin.Context) {
+	c.Set(openAIDeferPreOutputKeepaliveKey, &openAIHTTPKeepalivePolicy{mayUseCodex: true})
+}
+
+func (s *OpenAIGatewayService) openAIHTTPPreOutputKeepaliveDeferred(c *gin.Context, account *Account) bool {
+	if c == nil {
+		return false
+	}
+	raw, _ := c.Get(openAIDeferPreOutputKeepaliveKey)
+	policy, ok := raw.(*openAIHTTPKeepalivePolicy)
+	if !ok {
+		return false
+	}
+	if codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+		return true
+	}
+	if !policy.checkedPool {
+		policy.checkedPool = true
+		// Check only when a non-Codex attempt would send a pre-output ping.
+		// A proven non-Codex pool can keep its existing SSE behavior.
+		apiKey := getAPIKeyFromContext(c)
+		if apiKey != nil && (s.accountRepo != nil || s.schedulerSnapshot != nil) {
+			accounts, err := s.listSchedulableAccounts(c.Request.Context(), apiKey.GroupID, PlatformOpenAI)
+			if err == nil && len(accounts) > 0 {
+				policy.mayUseCodex = false
+				for i := range accounts {
+					if codexHTTPPolicyForRequest(c, &accounts[i]).usesFixedExecContract() {
+						policy.mayUseCodex = true
+						break
+					}
+				}
+			}
+		}
+	}
+	return policy.mayUseCodex
+}
+
 func recordOpenAIStreamKeepaliveBytes(c *gin.Context, written int) {
 	if c == nil || written <= 0 {
 		return
@@ -2063,7 +2109,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	// compact 标记，而这里是普通 /v1/responses 透传。走到这一行时上游已回
 	// text/event-stream、SSE 响应头也已设好，处于流式上下文是确定的。
 	stopKeepalive := func() {}
-	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 && !s.openAIHTTPPreOutputKeepaliveDeferred(c, account) {
 		stopKeepalive = startOpenAISSEKeepalive(c,
 			time.Duration(s.cfg.Gateway.StreamKeepaliveInterval)*time.Second)
 	}

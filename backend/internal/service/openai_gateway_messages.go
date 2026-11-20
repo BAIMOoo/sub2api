@@ -1499,6 +1499,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			if clientDisconnected {
 				continue
 			}
+			if !clientOutputStarted && s.openAIHTTPPreOutputKeepaliveDeferred(c, account) {
+				continue
+			}
 			// While the prelude is held nothing else reaches the client, so every
 			// tick pings. Account headers stay private and the bytes count as
 			// keepalive: the attempt that finally answers may be another one.
