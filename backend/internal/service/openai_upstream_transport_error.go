@@ -115,6 +115,11 @@ func isClientCanceledTransportError(ctx context.Context, err error) bool {
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
+	var configErr *CodexHTTPTransportConfigError
+	if errors.As(err, &configErr) {
+		setOpsUpstreamError(c, http.StatusBadGateway, configErr.Error(), "")
+		return err
+	}
 	if isClientCanceledTransportError(ctx, err) {
 		return err
 	}

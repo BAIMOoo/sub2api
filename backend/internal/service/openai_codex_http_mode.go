@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -243,12 +245,19 @@ func applyCodexHTTPMode(c *gin.Context, account *Account, req *http.Request, bod
 	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
 		return applyMappedGPT55LiteCompatibility(req, account, body)
 	}
+	order := tlsfingerprint.OpenAIResponsesHeaderOrder().Order
+	for name := range req.Header {
+		if !slices.Contains(order, strings.ToLower(name)) {
+			delete(req.Header, name)
+		}
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Del(responsesLiteHeader)
 	if mode.lite {
 		req.Header.Set(responsesLiteHeader, "true")
 	}
 	if isOpenAIResponsesCompactPath(c) {
-		req.Header.Set("Accept", "text/event-stream")
 		ensureOpenAIRemoteCompactionV2BetaFeature(req.Header)
 	}
 	session := gjson.GetBytes(body, "prompt_cache_key").String()

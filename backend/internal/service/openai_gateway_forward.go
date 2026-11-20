@@ -1626,8 +1626,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	if err := applyCodexHTTPMode(c, account, req, body, httpMode); err != nil {
 		return nil, err
 	}
-	// 正文编码对齐官方 HTTP 形态：chatgpt.com Codex 后端收 zstd。
-	applyCodexRequestBodyZstd(account, req)
+	if err := prepareOpenAIHTTPBody(account, req); err != nil {
+		return nil, err
+	}
 	return req, nil
 }
 

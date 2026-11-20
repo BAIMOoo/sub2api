@@ -5,10 +5,33 @@ package repository
 import (
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCodexHTTPConnectionPoolIsolatedByAccountAndTransport(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.ConnectionPoolIsolation = config.ConnectionPoolIsolationProxy
+	s, ok := NewHTTPUpstream(cfg).(*httpUpstreamService)
+	require.True(t, ok)
+	profile := tlsfingerprint.OpenAICodexLinuxProfile()
+	const proxy = "socks5h://proxy.example.test:1080"
+
+	entry := func(accountID int64, upstreamProfile service.HTTPUpstreamProfile) *upstreamClientEntry {
+		t.Helper()
+		got, err := s.getClientEntryWithTLS(proxy, accountID, 2, profile, upstreamProfile, false, false)
+		require.NoError(t, err)
+		return got
+	}
+	fixed := entry(7, service.HTTPUpstreamProfileCodexHTTP)
+	require.Same(t, fixed, entry(7, service.HTTPUpstreamProfileCodexHTTP))
+	require.NotSame(t, fixed, entry(8, service.HTTPUpstreamProfileCodexHTTP))
+	legacy := entry(7, service.HTTPUpstreamProfileOpenAI)
+	require.NotSame(t, fixed, legacy)
+	require.Same(t, legacy, entry(8, service.HTTPUpstreamProfileOpenAI))
+}
 
 // TestGetClientEntryWithTLSSeparatesProfiles 形态身份必须参与连接池缓存键：
 // 面板改了绑定、或形态被编辑过之后，必须重建客户端，否则账号会一直用旧形态的

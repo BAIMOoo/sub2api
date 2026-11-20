@@ -587,7 +587,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		return nil, err
 	}
 	// Compression belongs to the fork's HTTP ingress, not to the WS→HTTP bridge.
-	applyCodexRequestBodyZstd(account, req)
+	if err := prepareOpenAIHTTPBody(account, req); err != nil {
+		return nil, err
+	}
 	return req, nil
 }
 

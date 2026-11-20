@@ -921,6 +921,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				submitResponsesUsage(result)
 				return
 			}
+			if h.writeCodexHTTPTransportConfigError(c, err, streamStarted, false) {
+				reqLog.Warn("openai.transport_configuration_incompatible", zap.Int64("account_id", account.ID), zap.Error(err))
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1498,6 +1502,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if h.writeCodexHTTPTransportConfigError(c, err, streamStarted, true) {
+				reqLog.Warn("openai_messages.transport_configuration_incompatible", zap.Int64("account_id", account.ID), zap.Error(err))
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -3906,6 +3914,25 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	c.JSON(status, gin.H{"error": gin.H{
 		"type": errType, "code": code, "message": message,
 	}})
+}
+
+func (h *OpenAIGatewayHandler) writeCodexHTTPTransportConfigError(c *gin.Context, err error, streamStarted, anthropic bool) bool {
+	var configErr *service.CodexHTTPTransportConfigError
+	if !errors.As(err, &configErr) {
+		return false
+	}
+	if failoverClientGone(c) {
+		return true
+	}
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) || c.Writer.Written() {
+		streamStarted = true
+	}
+	if anthropic {
+		h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", configErr.Error(), streamStarted)
+	} else {
+		h.handleStreamingAwareErrorWithCode(c, http.StatusBadGateway, "upstream_error", "upstream_configuration_error", configErr.Error(), streamStarted, false)
+	}
+	return true
 }
 
 func (h *OpenAIGatewayHandler) ensureOpenAIStreamReadErrorResponse(c *gin.Context, err error, streamStarted bool) bool {

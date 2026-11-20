@@ -54,6 +54,9 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 			return nil, codexprobe.ErrProbe
 		}
 	}
+	if _, fixed := codexHTTPAttemptBody(request); fixed && !IsOpenAIWSHTTPBridgeUpstream(request.Context()) {
+		return s.doCodexHTTPUpstream(request, proxyURL, account)
+	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {

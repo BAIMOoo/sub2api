@@ -18,7 +18,54 @@ const codexRequestBodyContentEncoding = "zstd"
 var (
 	codexRequestBodyZstdOnce    sync.Once
 	codexRequestBodyZstdEncoder *zstd.Encoder
+	codexHTTPZstdPool           sync.Pool
 )
+
+// The fixed reference uses a streaming frame with a 2 MiB window, without
+// content size, checksum or dictionary. Flushing also keeps short bodies on
+// the streaming path instead of Close's single-frame EncodeAll optimization.
+func encodeCodexHTTPZstd(payload []byte) ([]byte, error) {
+	var out bytes.Buffer
+	encoder, ok := codexHTTPZstdPool.Get().(*zstd.Encoder)
+	if !ok {
+		var err error
+		encoder, err = zstd.NewWriter(nil, zstd.WithEncoderCRC(false),
+			zstd.WithWindowSize(2<<20), zstd.WithEncoderConcurrency(1))
+		if err != nil {
+			return nil, err
+		}
+	}
+	encoder.Reset(&out)
+	if _, err := encoder.Write(payload); err != nil {
+		return nil, err
+	}
+	if err := encoder.Flush(); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	encoder.Reset(io.Discard)
+	codexHTTPZstdPool.Put(encoder)
+	return out.Bytes(), nil
+}
+
+func prepareOpenAIHTTPBody(account *Account, req *http.Request) error {
+	payload, fixed := codexHTTPAttemptBody(req)
+	if !fixed {
+		applyCodexRequestBodyZstd(account, req)
+		return nil
+	}
+	if len(payload) == 0 || req.Header.Get("Content-Encoding") != "" {
+		return &CodexHTTPTransportConfigError{reason: "fixed request body must be unencoded JSON before compression"}
+	}
+	compressed, err := encodeCodexHTTPZstd(payload)
+	if err != nil {
+		return &CodexHTTPTransportConfigError{reason: "failed to encode the fixed zstd request body"}
+	}
+	setCodexZstdBody(req, compressed)
+	return nil
+}
 
 // codexRequestBodyZstdWriter 复用同一个 encoder：EncodeAll 支持并发调用，
 // 热路径无需加锁，也不必每请求重建窗口缓冲。
@@ -65,6 +112,11 @@ func applyCodexRequestBodyZstd(account *Account, req *http.Request) bool {
 		return false
 	}
 	compressed := encoder.EncodeAll(payload, make([]byte, 0, len(payload)/2))
+	setCodexZstdBody(req, compressed)
+	return true
+}
+
+func setCodexZstdBody(req *http.Request, compressed []byte) {
 	req.Header.Set("content-encoding", codexRequestBodyContentEncoding)
 	req.Body = io.NopCloser(bytes.NewReader(compressed))
 	req.ContentLength = int64(len(compressed))
@@ -72,5 +124,4 @@ func applyCodexRequestBodyZstd(account *Account, req *http.Request) bool {
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(compressed)), nil
 	}
-	return true
 }

@@ -40,7 +40,8 @@ func withCodexHTTPAttempt(req *http.Request, c *gin.Context, account *Account, b
 	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
 		return req
 	}
-	return req.WithContext(context.WithValue(req.Context(), codexHTTPAttemptKey{}, body))
+	ctx := WithHTTPUpstreamRedirectsDisabled(req.Context())
+	return req.WithContext(context.WithValue(ctx, codexHTTPAttemptKey{}, body))
 }
 
 func codexHTTPAttemptBody(req *http.Request) ([]byte, bool) {

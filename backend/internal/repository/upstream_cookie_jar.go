@@ -76,6 +76,11 @@ func (j *upstreamCookieJar) roundTrip(req *http.Request, proxyURL string, accoun
 		} else {
 			if header := service.BuildOpenAIUpstreamCookieHeader(cookies, j.now()); header != "" {
 				req.Header.Set("Cookie", header)
+				if service.HTTPUpstreamProfileFromContext(req.Context()) == service.HTTPUpstreamProfileCodexHTTP {
+					if err := service.ValidateCodexHTTPHeaderBlock(req); err != nil {
+						return nil, err
+					}
+				}
 			}
 			j.seedMissingCfuvid(req, host, proxyURL, accountID, accountConcurrency, cookies, profile)
 		}

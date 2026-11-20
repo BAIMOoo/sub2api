@@ -128,6 +128,30 @@ func TestOpenAIHandleStreamingAwareErrorWithCode_EmitsStableClassification(t *te
 	require.Equal(t, http.StatusBadGateway, streamErr.IntendedStatus)
 }
 
+func TestOpenAICodexHTTPTransportConfigErrorResponse(t *testing.T) {
+	for _, tc := range []struct {
+		path, errorType, code string
+		anthropic             bool
+	}{
+		{"/v1/responses", "upstream_error", "upstream_configuration_error", false},
+		{"/v1/responses/compact", "upstream_error", "upstream_configuration_error", false},
+		{"/v1/chat/completions", "upstream_error", "upstream_configuration_error", false},
+		{"/v1/messages", "api_error", "", true},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
+			h := &OpenAIGatewayHandler{}
+			require.True(t, h.writeCodexHTTPTransportConfigError(c, &service.CodexHTTPTransportConfigError{}, false, tc.anthropic))
+			require.Equal(t, http.StatusBadGateway, w.Code)
+			require.Equal(t, tc.errorType, gjson.Get(w.Body.String(), "error.type").String())
+			require.Equal(t, tc.code, gjson.Get(w.Body.String(), "error.code").String())
+			require.Contains(t, gjson.Get(w.Body.String(), "error.message").String(), "Codex HTTP configuration incompatible")
+		})
+	}
+}
+
 func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
 	require.True(t, openAIForwardSucceededForScheduling(nil))
 	require.True(t, openAIForwardSucceededForScheduling(&service.OpenAIForwardResult{}))

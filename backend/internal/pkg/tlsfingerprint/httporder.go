@@ -3,6 +3,7 @@ package tlsfingerprint
 import (
 	"bytes"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,6 +96,22 @@ func (p *Profile) HeaderOrders() []*HTTPHeaderOrder {
 // maxOrderedHeaderBytes 是等待完整请求头块的上限。超过就原样透传，
 // 避免异常（超大或无终止符）的请求把内存拖大、或把数据卡在缓冲里。
 const maxOrderedHeaderBytes = 64 << 10
+
+// FitsOrderedHTTPHeaderBlock bounds the HTTP/1.1 request line and headers before
+// dialing. The caller must use a fixed-length body and disable implicit gzip.
+func FitsOrderedHTTPHeaderBlock(req *http.Request) bool {
+	size := len(req.Method) + len(req.URL.RequestURI()) + len(req.Host) +
+		len(strconv.FormatInt(req.ContentLength, 10)) + len("  HTTP/1.1\r\nHost: \r\nContent-Length: \r\n\r\n")
+	for name, values := range req.Header {
+		for _, value := range values {
+			size += len(name) + len(value) + len(": \r\n")
+			if size > maxOrderedHeaderBytes {
+				return false
+			}
+		}
+	}
+	return size <= maxOrderedHeaderBytes
+}
 
 type orderedWriteConn struct {
 	net.Conn
