@@ -52,7 +52,7 @@ func normalizeOpenAIResponsesLegacyIngressWithPolicy(cfg *config.Config, body []
 	if hasMessages {
 		messages, messagesAreArray := messagesValue.([]any)
 		if messagesAreArray && (len(messages) > 0 || policy.usesFixedExecContract()) {
-			legacy, err := convertLegacyResponsesMessages(cfg, body, policy)
+			legacy, err := convertLegacyResponsesMessages(cfg, body, request, policy)
 			if err != nil {
 				return body, false, err
 			}
@@ -114,11 +114,17 @@ type convertedLegacyResponsesMessages struct {
 	hasReasoningEffort bool
 }
 
-func convertLegacyResponsesMessages(cfg *config.Config, body []byte, policy codexHTTPPolicy) (convertedLegacyResponsesMessages, error) {
+func convertLegacyResponsesMessages(cfg *config.Config, body []byte, request map[string]any, policy codexHTTPPolicy) (convertedLegacyResponsesMessages, error) {
 	var converted convertedLegacyResponsesMessages
 	var chatRequest apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &chatRequest); err != nil {
 		return converted, fmt.Errorf("normalize legacy Responses messages: %w", err)
+	}
+	converted.hasChatTools = hasChatStyleTools(request) || request["functions"] != nil
+	converted.hasChatToolChoice = hasChatStyleToolChoice(request) || request["function_call"] != nil
+	if policy.usesFixedExecContract() && !converted.hasChatToolChoice {
+		// Responses-native selections remain in request; only convert Chat aliases.
+		chatRequest.ToolChoice = nil
 	}
 	responsesRequest, err := chatCompletionsToResponsesWithPolicy(cfg, &chatRequest, policy)
 	if err != nil {
@@ -143,15 +149,9 @@ func convertLegacyResponsesMessages(cfg *config.Config, body []byte, policy code
 		converted.reasoning = responsesRequest.Reasoning
 	}
 
-	var rawRequest map[string]any
-	if err := decodeOpenAIJSONUseNumber(body, &rawRequest); err != nil {
-		return converted, fmt.Errorf("inspect legacy Responses fields: %w", err)
-	}
-	converted.hasChatTools = hasChatStyleTools(rawRequest) || rawRequest["functions"] != nil
 	if converted.hasChatTools && len(responsesRequest.Tools) > 0 {
 		converted.tools = responsesRequest.Tools
 	}
-	converted.hasChatToolChoice = hasChatStyleToolChoice(rawRequest) || rawRequest["function_call"] != nil
 	if converted.hasChatToolChoice && len(responsesRequest.ToolChoice) > 0 {
 		choice, err := normalizeLegacyResponsesToolChoice(responsesRequest.ToolChoice)
 		if err != nil {

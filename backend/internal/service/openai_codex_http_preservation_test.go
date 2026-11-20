@@ -81,6 +81,8 @@ func TestCodexHTTPIngressRejectsAmbiguousTaskContent(t *testing.T) {
 func TestCodexHTTPResponsesPreservesEmptyLegacyToolResult(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.5",
+		"tools":[{"type":"web_search"}],
+		"tool_choice":{"type":"web_search"},
 		"messages":[
 			{"role":"user","content":"Use the tool"},
 			{"role":"assistant","tool_calls":[{"id":"call_legacy","type":"function","function":{"name":"lookup","arguments":"{}"}}]},
@@ -97,6 +99,7 @@ func TestCodexHTTPResponsesPreservesEmptyLegacyToolResult(t *testing.T) {
 			upstream := captureCodexHTTPForward(t, c, account, body, &config.Config{})
 
 			require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
+			require.JSONEq(t, `{"type":"web_search"}`, gjson.GetBytes(upstream.lastBody, "tool_choice").Raw)
 			output := gjson.GetBytes(upstream.lastBody, `input.#(type=="function_call_output")`)
 			require.Equal(t, "call_legacy", output.Get("call_id").String())
 			require.Equal(t, `""`, output.Get("output").Raw)
