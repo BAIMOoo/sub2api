@@ -190,6 +190,11 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DirectCompactUsesCodexR
 					Status: StatusActive, Schedulable: true, Concurrency: 1,
 					Extra: map[string]any{"openai_compact_supported": false},
 				},
+				{
+					ID: 71019, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+					Status: StatusActive, Schedulable: true, Concurrency: 1,
+					Extra: map[string]any{"openai_compact_mode": OpenAICompactModeForceOff},
+				},
 			}, advanced)
 
 			selection, _, err := svc.SelectAccountWithSchedulerForCapability(
@@ -199,6 +204,13 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DirectCompactUsesCodexR
 			require.NoError(t, err)
 			require.NotNil(t, selection)
 			require.EqualValues(t, 71018, selection.Account.ID)
+
+			selection, _, err = svc.SelectAccountWithSchedulerForCapability(
+				WithOpenAIDirectHTTPCompact(context.Background()), &groupID, "", "", "gpt-5.6-sol", map[int64]struct{}{71018: {}},
+				OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, true, false, false,
+			)
+			require.ErrorIs(t, err, ErrNoAvailableCompactAccounts)
+			require.Nil(t, selection)
 		})
 	}
 }

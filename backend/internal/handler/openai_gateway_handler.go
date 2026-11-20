@@ -635,7 +635,15 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
+	reservationBody := body
+	if legacyCompact {
+		reservationBody, _, err = service.NormalizeOpenAICompactRequestBody(body)
+		if err != nil {
+			h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", "Failed to normalize compact request body", streamStarted)
+			return
+		}
+	}
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, reservationBody))
 	if err != nil {
 		reqLog.Info("openai.inflight_reservation_rejected", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)

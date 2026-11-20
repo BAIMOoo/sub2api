@@ -30,7 +30,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				return nil, err
 			}
 		} else {
-			normalized, _, err := normalizeOpenAICompactRequestBody(body)
+			normalized, _, err := NormalizeOpenAICompactRequestBody(body)
 			if err != nil {
 				return nil, err
 			}
@@ -1360,7 +1360,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			imageOutputSizes = streamResult.imageOutputSizes
 			searchCount = streamResult.searchCount
 		} else {
-			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
+			var nonStreamResult *openaiNonStreamingResult
+			if isCompactRequest && normalizeAsExec {
+				nonStreamResult, err = s.handleCodexHTTPCompactResponse(ctx, resp, c, account, body, originalModel, upstreamModel, false)
+			} else {
+				nonStreamResult, err = s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
+			}
 			if err != nil {
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(

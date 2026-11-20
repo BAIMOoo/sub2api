@@ -334,7 +334,7 @@ func (p codexWirePolicy) scopeEmbeddedMetadata(values map[string]any, account *A
 		return false
 	}
 	metadata := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
+	if err := p.decodeMetadata([]byte(raw), &metadata); err != nil || metadata == nil {
 		return false
 	}
 	if !p.scopeFields(metadata, account, apiKeyID) {
@@ -346,6 +346,13 @@ func (p codexWirePolicy) scopeEmbeddedMetadata(values map[string]any, account *A
 	}
 	values[openAIWSTurnMetadataHeader] = string(rebuilt)
 	return true
+}
+
+func (p codexWirePolicy) decodeMetadata(raw []byte, metadata *map[string]any) error {
+	if p == forkHTTPWire {
+		return decodeOpenAIJSONUseNumber(raw, metadata)
+	}
+	return json.Unmarshal(raw, metadata)
 }
 
 // codexPromptCacheKeyKind scopes a prompt_cache_key that names the client's
@@ -410,7 +417,7 @@ func (p codexWirePolicy) scopeMetadataRaw(body []byte, account *Account, apiKeyI
 	originalBodySessionID := ""
 	if cm := gjson.GetBytes(body, "client_metadata"); cm.IsObject() {
 		clientMetadata := map[string]any{}
-		if err := json.Unmarshal([]byte(cm.Raw), &clientMetadata); err != nil {
+		if err := p.decodeMetadata([]byte(cm.Raw), &clientMetadata); err != nil {
 			return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
 		}
 		originalBodySessionID, _ = clientMetadata["session_id"].(string)

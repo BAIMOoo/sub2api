@@ -16,11 +16,11 @@ import (
 
 const codexHTTPCompactInput = `{
 	"model":"gpt-5.5","instructions":"caller task","stream":true,
-	"input":[{"type":"message","role":"user","content":"caller history"},
+	"input":[{"type":"message","id":"msg_original","role":"user","content":"caller history"},
 		{"type":"reasoning","id":"rs_original","encrypted_content":"opaque-in","summary":[]}],
 	"reasoning":{"effort":"high"},
 	"prompt_cache_key":"caller-session",
-	"client_metadata":{"x-codex-turn-metadata":"{\"caller\":9007199254740993}"},
+	"client_metadata":{"x-codex-turn-metadata":"{\"session_id\":\"caller-session\",\"caller\":9007199254740993}"},
 	"tools":[{"type":"function","name":"read_file","parameters":{"type":"object"}}],
 	"parallel_tool_calls":false,"tool_choice":"none"
 }`
@@ -44,8 +44,12 @@ func TestCodexHTTPCompactAdaptsToRemoteCompactionV2(t *testing.T) {
 				require.Equal(t, "resp_original", result.ResponseID)
 				require.Equal(t, 11, result.Usage.InputTokens)
 				require.False(t, result.Stream)
-				require.JSONEq(t, codexHTTPCompactOutputItem, gjson.Get(recorder.Body.String(), "output.0").Raw)
-				require.Equal(t, "9007199254740993", gjson.Get(recorder.Body.String(), "output.0.opaque_data.id").Raw)
+				require.Positive(t, gjson.Get(recorder.Body.String(), "created_at").Int())
+				require.Equal(t, "msg_original", gjson.Get(recorder.Body.String(), "output.0.id").String())
+				require.Equal(t, "input_text", gjson.Get(recorder.Body.String(), "output.0.content.0.type").String())
+				require.Equal(t, "caller history", gjson.Get(recorder.Body.String(), "output.0.content.0.text").String())
+				require.JSONEq(t, codexHTTPCompactOutputItem, gjson.Get(recorder.Body.String(), "output.1").Raw)
+				require.Equal(t, "9007199254740993", gjson.Get(recorder.Body.String(), "output.1.opaque_data.id").Raw)
 
 				require.Len(t, upstream.requests, 1)
 				require.Equal(t, chatgptCodexURL, upstream.lastReq.URL.String())
@@ -74,11 +78,14 @@ func TestCodexHTTPCompactRejectsIncompleteUpstream(t *testing.T) {
 	for _, passthrough := range []bool{false, true} {
 		for _, tc := range []struct{ name, reply string }{
 			{"missing completion", codexHTTPCompactSSEItem},
+			{"legacy done", codexHTTPCompactSSEItem + strings.Replace(codexHTTPCompactSSECompleted, "response.completed", "response.done", 1)},
 			{"missing compaction", codexHTTPCompactSSECompleted},
+			{"item after completion", codexHTTPCompactSSECompleted + codexHTTPCompactSSEItem},
 			{"malformed completion", codexHTTPCompactSSEItem + "event: response.completed\ndata: {\"response\":\n\n"},
 			{"malformed upstream event", "data: {broken}\n\n" + codexHTTPCompactSSEItem + codexHTTPCompactSSECompleted},
 			{"unfinished item", strings.Replace(codexHTTPCompactSSEItem, "output_item.done", "output_item.added", 1) + codexHTTPCompactSSECompleted},
 			{"ambiguous compaction output", codexHTTPCompactSSEItem + strings.Replace(codexHTTPCompactSSEItem, "cmp_original", "cmp_second", 1) + codexHTTPCompactSSECompleted},
+			{"terminal hides ambiguous output", codexHTTPCompactSSEItem + strings.Replace(codexHTTPCompactSSEItem, "cmp_original", "cmp_second", 1) + strings.Replace(codexHTTPCompactSSECompleted, `"output":[]`, `"output":[`+codexHTTPCompactOutputItem+`]`, 1)},
 			{"incomplete", codexHTTPCompactSSEItem + `data: {"type":"response.incomplete","response":{"id":"resp_incomplete","output":[]}}` + "\n\n"},
 			{"unary upstream", `{"id":"resp_original","object":"response.compaction","output":[` + codexHTTPCompactOutputItem + "]}"},
 		} {

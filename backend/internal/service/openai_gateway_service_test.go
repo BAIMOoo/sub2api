@@ -3132,7 +3132,7 @@ func TestOpenAIResponsesRequestPathSuffix(t *testing.T) {
 func TestNormalizeOpenAICompactRequestBodyPreservesCurrentCodexPayloadFields(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"compact me"}],"instructions":"compact-test","tools":[{"type":"function","name":"shell"}],"parallel_tool_calls":true,"reasoning":{"effort":"high"},"text":{"verbosity":"low"},"previous_response_id":"resp_123","store":true,"stream":true,"prompt_cache_key":"cache_123"}`)
 
-	normalized, changed, err := normalizeOpenAICompactRequestBody(body)
+	normalized, changed, err := NormalizeOpenAICompactRequestBody(body)
 
 	require.NoError(t, err)
 	require.True(t, changed)
@@ -3154,14 +3154,14 @@ func TestNormalizeOpenAICompactRequestBodyDropsParallelToolCallsWithoutUsableToo
 		`{"model":"gpt-5.5","input":[],"tools":null,"parallel_tool_calls":true}`,
 		`{"model":"gpt-5.5","input":[],"tools":{},"parallel_tool_calls":true}`,
 	} {
-		normalized, changed, err := normalizeOpenAICompactRequestBody([]byte(body))
+		normalized, changed, err := NormalizeOpenAICompactRequestBody([]byte(body))
 		require.NoError(t, err)
 		require.True(t, changed)
 		require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists(), string(normalized))
 	}
 
 	withTools := []byte(`{"model":"gpt-5.5","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`)
-	normalized, _, err := normalizeOpenAICompactRequestBody(withTools)
+	normalized, _, err := NormalizeOpenAICompactRequestBody(withTools)
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Bool())

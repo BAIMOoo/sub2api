@@ -590,7 +590,9 @@ func isOpenAIResponsesCompactPath(c *gin.Context) bool {
 	return suffix == "/compact" || strings.HasPrefix(suffix, "/compact/")
 }
 
-func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
+// NormalizeOpenAICompactRequestBody projects the legacy upstream compact
+// schema. The direct Codex adapter keeps the original body for Responses V2.
+func NormalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}

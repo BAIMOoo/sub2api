@@ -1727,7 +1727,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// Detect SSE responses for ALL account types via Content-Type header.
 	// Some OpenAI-compatible upstreams (including other sub2api instances)
 	// may return SSE even when stream=false was requested.
-	if isCodexHTTPCompactRequest(c, account) || isEventStreamResponse(resp.Header) {
+	if isEventStreamResponse(resp.Header) {
 		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 	// bodyLooksLikeSSE is a line-level heuristic: real SSE framing requires
@@ -1833,22 +1833,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
-		msg := extractOpenAISSEErrorMessage(terminalPayload)
-		if msg == "" {
-			msg = "Upstream compact response failed"
-		}
-		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
-			return nil, compactErr
-		}
-		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
-			return nil, failoverErr
-		}
-		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
+		return nil, s.handleOpenAIUnarySSEFailure(resp, c, account, terminalType, terminalPayload, mappedModel, false)
 	}
-	finalResponse, ok, err := extractOpenAIUnarySSEOutput(c, account, terminalType, terminalPayload, bodyText)
-	if err != nil {
-		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, err.Error())
-	}
+	finalResponse, ok := extractOpenAIUnarySSEOutput(c, terminalType, terminalPayload, bodyText)
 
 	usage := s.parseSSEUsageFromBody(bodyText)
 	if ok {
@@ -1914,17 +1901,27 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	}, nil
 }
 
-func extractOpenAIUnarySSEOutput(c *gin.Context, account *Account, terminalType string, terminalPayload []byte, bodyText string) ([]byte, bool, error) {
-	if isCodexHTTPCompactRequest(c, account) {
-		body, err := decodeCodexHTTPCompactCompletion(terminalType, terminalPayload, bodyText)
-		return body, err == nil, err
+func (s *OpenAIGatewayService) handleOpenAIUnarySSEFailure(resp *http.Response, c *gin.Context, account *Account, terminalType string, terminalPayload []byte, mappedModel string, passthrough bool) error {
+	msg := extractOpenAISSEErrorMessage(terminalPayload)
+	if msg == "" {
+		msg = "Upstream compact response failed"
 	}
+	if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
+		return compactErr
+	}
+	if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, passthrough, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
+		return failoverErr
+	}
+	return s.writeOpenAINonStreamingProtocolError(resp, c, msg)
+}
+
+func extractOpenAIUnarySSEOutput(c *gin.Context, terminalType string, terminalPayload []byte, bodyText string) ([]byte, bool) {
 	body, ok := extractCodexFinalResponse(bodyText)
 	if !ok && terminalType != "" {
 		body, ok = extractOpenAINonCompletedTerminalResponse(terminalType, terminalPayload)
 	}
 	if !ok {
-		return nil, false, nil
+		return nil, false
 	}
 	// Some upstreams only send completed output items in preceding events.
 	if len(gjson.GetBytes(body, "output").Array()) == 0 {
@@ -1934,7 +1931,7 @@ func extractOpenAIUnarySSEOutput(c *gin.Context, account *Account, terminalType 
 			}
 		}
 	}
-	return supplementCompactionItemFromSSE(c, body, bodyText), true, nil
+	return supplementCompactionItemFromSSE(c, body, bodyText), true
 }
 
 func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {

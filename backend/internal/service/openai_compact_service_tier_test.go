@@ -22,7 +22,7 @@ func TestNormalizeOpenAICompactRequestBodyPreservesServiceTier(t *testing.T) {
 		"stream":true
 	}`)
 
-	normalized, changed, err := normalizeOpenAICompactRequestBody(body)
+	normalized, changed, err := NormalizeOpenAICompactRequestBody(body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(normalized, "model").String())
@@ -40,7 +40,7 @@ func TestOpenAIOAuthCompactHTTPBuildersUsePreservedServiceTierInRoutingHint(t *t
 		"service_tier":"priority",
 		"stream":true
 	}`)
-	normalized, changed, err := normalizeOpenAICompactRequestBody(body)
+	normalized, changed, err := NormalizeOpenAICompactRequestBody(body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "priority", gjson.GetBytes(normalized, "service_tier").String())

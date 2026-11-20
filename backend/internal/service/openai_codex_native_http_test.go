@@ -64,11 +64,9 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						require.NoError(t, err)
 						path := "/v1/responses"
 						responseBody := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\ndata: [DONE]\n\n"
-						contentType := "text/event-stream"
 						if compact {
 							path += "/compact"
-							responseBody = `{"id":"cmp_test","object":"response.compaction","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`
-							contentType = "application/json"
+							responseBody = codexHTTPCompactSSEItem + responseBody
 						}
 						c, _ := gin.CreateTestContext(httptest.NewRecorder())
 						c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -80,7 +78,7 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 							c.Request.Header.Set(responsesLiteHeader, "true")
 						}
 						SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-						upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(responseBody))}}
+						upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(responseBody))}}
 						account := codexBodyEncodingTestAccount(158)
 						account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 1
 						account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
@@ -95,6 +93,11 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						// Compatibility may prepend a tool declaration; the history itself must survive.
 						var forwarded []any
 						require.NoError(t, json.Unmarshal([]byte(gjson.GetBytes(upstream.lastBody, "input").Raw), &forwarded))
+						if compact {
+							require.NotEmpty(t, forwarded)
+							require.Equal(t, map[string]any{"type": "compaction_trigger"}, forwarded[len(forwarded)-1])
+							forwarded = forwarded[:len(forwarded)-1]
+						}
 						require.GreaterOrEqual(t, len(forwarded), len(input))
 						assert.Equal(t, input, forwarded[len(forwarded)-len(input):])
 					})

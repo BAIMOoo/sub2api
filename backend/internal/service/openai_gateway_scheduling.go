@@ -338,7 +338,13 @@ func openAICompactSupportTier(ctx context.Context, account *Account) int {
 	if account == nil {
 		return 0
 	}
-	if account.IsGrok() || (account.IsOpenAIOAuthLike() && isOpenAIDirectHTTPCompact(ctx)) {
+	if account.IsGrok() {
+		return 2
+	}
+	if account.IsOpenAIOAuthLike() && isOpenAIDirectHTTPCompact(ctx) {
+		if account.GetOpenAICompactMode() == OpenAICompactModeForceOff {
+			return 0
+		}
 		return 2
 	}
 	if !account.IsOpenAI() {
