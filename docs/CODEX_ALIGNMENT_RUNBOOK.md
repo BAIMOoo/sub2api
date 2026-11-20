@@ -32,7 +32,7 @@ The runner command `notify-latest` regenerates and resends the last report, expl
 
 1. Acquires a process lock and verifies fresh production health, account identity and proxy binding.
 2. Reads the exact `main` SHA and its matching Actions conclusion. Missing/failed CI remains separate from production findings.
-3. Discovers official stable Codex, verifies published digests for both the CLI and its code-mode host, and retains the approved 0.158.0 binary separately. Existing 0.158.0 fixtures approve body structure only.
+3. Discovers official stable Codex, verifies published digests for the CLI and its code-mode host, and retains the approved 0.158.0 binary separately. Discovery is a drift check, not an update to the [fixed gateway target](CODEX_EXEC_WIRE_CONTRACT.md). The reference contains separate native TLS and synthetic HTTP records, not credential or deployment approval.
 4. Captures a separate local default ClientHello offer, then official `codex exec` requests through a local inspection CA and the selected SOCKS exit. Local WebSocket upgrades are rejected so `codex exec` falls back to HTTP. Apps, plugins and analytics are disabled in the synthetic workspace. Desktop, TUI and IDE clients are not covered by this reference.
 5. Replays native HTTP payloads through the dedicated loopback gateway key and captures the actual gateway HTTP and ClientHello. Ordinary requests run every day; tools and compaction rotate. Acceptance and official version changes run both. Compaction V2 is observed through `compaction_trigger`, provider compaction output and subsequent replay.
 6. Exercises Responses, Chat Completions and Messages independently. These bridge tests check successful completion and converted request semantics, not equality with the `codex exec` workspace prompt.
@@ -48,7 +48,7 @@ The initial watchdog is 60 minutes; systemd permits 65 minutes for setup/cleanup
 - `drift`: captured comparable fields differ. Paths, not private field values, identify changes.
 - `unverified`: missing evidence, unsupported model, unavailable CI, provider rejection, stale snapshot, timeout or resource failure. This is never a pass.
 
-Each report lists boundaries. Native inspected HTTP and the independent default TLS offer are separate measurements; they do not prove same-transaction direct wire equality. Gateway probes use fresh connections. Scoped identity values differ intentionally. The current observer verifies session/body and metadata/header relationships, but opaque turn-metadata JSON contents and the UUID/window-suffix relationship remain unverified. Unknown request fields outside documented exceptions remain in comparisons.
+Each report lists boundaries. Native inspected HTTP and the independent default TLS offer are separate measurements; they do not prove same-transaction direct wire equality. Gateway probes use fresh connections. Scoped identity values differ intentionally. The current observer verifies session/body and metadata/header relationships, but opaque turn-metadata JSON contents and the UUID/window-suffix relationship remain unverified. Unknown request fields outside documented exceptions remain in comparisons. Record CI, real supplier acceptance, an installed-database upgrade rehearsal, and the running deployment independently; one result cannot stand in for another.
 
 On 2026-10-18 the selected account's visible model catalog offered Lite models only. The configured live model is `gpt-6-astra`; standard-mode coverage remains offline and is explicitly unavailable live. A newly visible standard model raises a selection-review finding. Do not change the approved baseline to silence a result.
 
@@ -84,10 +84,25 @@ The application observer is inactive for ordinary requests. The initial producti
 python -m pip install -r tools/codex_alignment/requirements.txt
 python -m unittest discover -s tools/codex_alignment -p 'test_*.py' -v
 cd backend
-go test -race ./internal/pkg/codexprobe
-go test -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
+GOMAXPROCS=2 go test -p 1 -race ./internal/pkg/codexprobe
+GOMAXPROCS=2 go test -p 1 -parallel 1 -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
   ./internal/service ./internal/server/middleware \
   -run 'Codex|Zstd|Compact|OpenAI.*(Retry|Failover|Timeout|401|429|5xx)|HTTPUpstream.*(Disconnect|Timeout)|Alignment' -count=1
 ```
 
 Fault injection is local/mock only. CI receives no production secrets and makes no live account calls.
+
+## Opt-in candidate live verification
+
+Use an approved non-production test credential and record the exact candidate SHA. This test makes real, potentially billable supplier requests. It does not start the gateway server, connect to a database, refresh credentials, or change deployment or monitor state. It exercises the public forwarding methods with the real HTTP repository, not ingress authentication or deployment routing.
+
+Use a private JSON file outside the repository, mode `0600`, with `credential_type` (`oauth`, `pat`, or `setup-token`), `access_token`, `chatgpt_account_id`, and `model`. Run once per available credential type on the approved test host, in series:
+
+```sh
+cd backend
+SUB2API_CODEX_LIVE_CONFIG=/private/path/live-test.json \
+  GOMAXPROCS=2 go test -tags=codexlive -p 1 -parallel 1 \
+  ./internal/integration -run '^TestCodexHTTPPinnedLive$' -count=1 -v
+```
+
+The test defaults to skipped without the private file and exercises Responses, passthrough, Chat Completions, Messages and compact. Publish only per-route status and completion, with model/mode and candidate SHA; never publish credentials, request/response bodies or logs from the private test account. Report each missing credential type as untested live (`unverified`) even if its automated coverage is green.

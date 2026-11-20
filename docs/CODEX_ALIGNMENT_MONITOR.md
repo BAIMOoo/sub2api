@@ -2,7 +2,7 @@
 
 ## Accepted scope
 
-Detect fork regressions after upstream merges and changes in official Codex stable releases. The live reference client is the official non-interactive `codex exec` command. Gateway behavior normalizes recognized Codex HTTP harnesses to the same exec wire conventions; live automated capture remains exec-based, while TUI/Desktop/IDE normalization is covered by full Forward regressions. Report repository and deployed-service results separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket is outside this first release.
+Detect fork regressions after upstream merges and changes in official Codex stable releases. The [fixed HTTP target](CODEX_EXEC_WIRE_CONTRACT.md) is `codex exec 0.158.0 / Linux x86_64` for any direct HTTP harness on a Codex/ChatGPT account, independent of caller identity. Live native capture remains exec-based; other harnesses and compatibility routes have separate forwarding regressions. Report repository candidates and deployed services separately, with immutable source, image, configuration, model, provider, and binary-digest provenance. WebSocket keeps upstream behavior and is outside this HTTP monitor.
 
 The production host runs lightweight, serial probes using the owner's selected production OAuth account and fixed SOCKS exit. GitHub Actions runs the full offline regression suite. Test credentials and notification recipients are private configuration, never repository fixtures. A separate gateway probe key identifies synthetic traffic; it does not give the shared OAuth account an independent upstream allowance. Official Codex uses its own login directory, not a writable copy of the gateway's refresh-token state.
 
@@ -18,7 +18,7 @@ The production host runs lightweight, serial probes using the owner's selected p
 
 ## Evidence and comparison
 
-Keep the approved baseline immutable; discover the latest stable independently. New candidates never silently overwrite the approved baseline. The existing 0.158.0 fixtures establish body provenance only, not complete OAuth wire approval.
+Keep the approved baseline immutable; discover the latest stable independently. Discovery does not select or update the gateway's fixed runtime target. New candidates never silently overwrite the approved baseline. The earlier arm64 fixtures establish body provenance only. The x86_64 reference adds synthetic OAuth HTTP and independent native ClientHello evidence; it does not establish real OAuth, PAT or SetupToken acceptance or an end-to-end wire approval.
 
 HTTP content captured through a TLS inspection proxy and a separately captured native ClientHello are independent evidence. A proxy's upstream TLS is not native TLS. In official 0.163.0, the custom-CA path explicitly chooses rustls; its handshake is not evidence of the default TLS backend. The same-transaction native direct final HTTP remains unverified until a suitable capture method is actually demonstrated.
 
@@ -31,6 +31,8 @@ Native-forwarding checks preserve the supplied request except those exceptions. 
 Normal live requests run daily; tool continuation and compact scenarios rotate. Initial acceptance and official-version changes expand the normal matrix. Inject disconnects, timeouts, 401/429/5xx, account changes, and proxy failures only in an isolated mock environment.
 
 Gate every observable upstream attempt, including retries, before sending. CLI invocations and TCP connections are not request counts. If a path cannot enforce or observe a property, report that boundary explicitly.
+
+Record local regression, remote CI, native TLS, offline HTTP/body/compression, live supplier acceptance per tested credential type, installed-database upgrade, and deployment as separate results. Missing evidence is `unverified`. A candidate's opt-in direct forwarding test neither updates the monitor baseline nor proves a production deployment.
 
 ## Privacy and reporting
 
