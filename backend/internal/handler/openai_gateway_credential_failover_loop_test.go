@@ -52,6 +52,20 @@ func (r *grokCredentialHandlerRepo) ListSchedulableByPlatform(_ context.Context,
 	return out, nil
 }
 
+func (r *grokCredentialHandlerRepo) ListModelAvailabilityCandidates(_ context.Context, _ *int64, platforms []string, _ bool) ([]service.Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []service.Account
+	for _, platform := range platforms {
+		for _, account := range r.accounts {
+			if account.Platform == platform && account.Status == service.StatusActive && account.Schedulable {
+				out = append(out, account)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (r *grokCredentialHandlerRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, _ int64, platform string) ([]service.Account, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
 }

@@ -292,12 +292,11 @@ func openAICompatibleRequestPlatform(ctx context.Context, apiKey *service.APIKey
 
 // Until the response has semantic output, a Codex-capable pool can switch to
 // another account whose transport preflight needs to return HTTP 502.
-func deferOpenAIHTTPPreOutputKeepalive(c *gin.Context, platform string, apiKeyOnly bool) bool {
-	if platform != service.PlatformOpenAI || apiKeyOnly {
+func (h *OpenAIGatewayHandler) deferOpenAIHTTPPreOutputKeepalive(c *gin.Context, platform string, checkPoolBeforeWait bool) bool {
+	if platform != service.PlatformOpenAI {
 		return false
 	}
-	service.DeferOpenAIHTTPPreOutputKeepalive(c)
-	return true
+	return h.gatewayService.DeferOpenAIHTTPPreOutputKeepalive(c, checkPoolBeforeWait)
 }
 
 func openAIResponsesRequiredCapability(imageIntent bool, platform string) service.OpenAIEndpointCapability {
@@ -615,7 +614,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 	apiKeyContinuation := requestPlatform == service.PlatformOpenAI && previousResponseID != ""
-	deferKeepalive := deferOpenAIHTTPPreOutputKeepalive(c, requestPlatform, apiKeyContinuation)
+	deferKeepalive := h.deferOpenAIHTTPPreOutputKeepalive(c, requestPlatform, apiKeyContinuation)
 	allowQueuePing := reqStream && !deferKeepalive
 	if !deferKeepalive {
 		stopCompactKeepalive := service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
@@ -1303,7 +1302,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-	deferKeepalive := deferOpenAIHTTPPreOutputKeepalive(c, requestPlatform, false)
+	deferKeepalive := h.deferOpenAIHTTPPreOutputKeepalive(c, requestPlatform, false)
 	allowQueuePing := reqStream && !deferKeepalive
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
@@ -3939,6 +3938,10 @@ func (h *OpenAIGatewayHandler) writeCodexHTTPTransportConfigError(c *gin.Context
 	}
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) || c.Writer.Written() {
 		streamStarted = true
+	}
+	if !streamStarted {
+		// A failed attempt can set an SSE content type without committing it.
+		c.Writer.Header().Del("Content-Type")
 	}
 	if anthropic {
 		h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", configErr.Error(), streamStarted)

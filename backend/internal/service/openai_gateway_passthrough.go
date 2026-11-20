@@ -1106,52 +1106,6 @@ type openaiStreamingResultPassthrough struct {
 
 const openAIStreamKeepaliveBytesKey = "openai_stream_keepalive_bytes"
 
-const openAIDeferPreOutputKeepaliveKey = "openai_defer_pre_output_keepalive"
-
-type openAIHTTPKeepalivePolicy struct {
-	checkedPool bool
-	mayUseCodex bool
-}
-
-// DeferOpenAIHTTPPreOutputKeepalive preserves the HTTP status while a later
-// account may still be selected and fail fixed transport configuration.
-func DeferOpenAIHTTPPreOutputKeepalive(c *gin.Context) {
-	c.Set(openAIDeferPreOutputKeepaliveKey, &openAIHTTPKeepalivePolicy{mayUseCodex: true})
-}
-
-func (s *OpenAIGatewayService) openAIHTTPPreOutputKeepaliveDeferred(c *gin.Context, account *Account) bool {
-	if c == nil {
-		return false
-	}
-	raw, _ := c.Get(openAIDeferPreOutputKeepaliveKey)
-	policy, ok := raw.(*openAIHTTPKeepalivePolicy)
-	if !ok {
-		return false
-	}
-	if codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
-		return true
-	}
-	if !policy.checkedPool {
-		policy.checkedPool = true
-		// Check only when a non-Codex attempt would send a pre-output ping.
-		// A proven non-Codex pool can keep its existing SSE behavior.
-		apiKey := getAPIKeyFromContext(c)
-		if apiKey != nil && (s.accountRepo != nil || s.schedulerSnapshot != nil) {
-			accounts, err := s.listSchedulableAccounts(c.Request.Context(), apiKey.GroupID, PlatformOpenAI)
-			if err == nil && len(accounts) > 0 {
-				policy.mayUseCodex = false
-				for i := range accounts {
-					if codexHTTPPolicyForRequest(c, &accounts[i]).usesFixedExecContract() {
-						policy.mayUseCodex = true
-						break
-					}
-				}
-			}
-		}
-	}
-	return policy.mayUseCodex
-}
-
 func recordOpenAIStreamKeepaliveBytes(c *gin.Context, written int) {
 	if c == nil || written <= 0 {
 		return

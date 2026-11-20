@@ -56,6 +56,7 @@ func TestCodexHTTPConfigErrorAfterUpstreamKeepaliveStillReturns502(t *testing.T)
 			rec, _ := serveOpenAIResponsesSizeRoutingRequest(h, 11, `{"model":"gpt-6-astra","input":"hello","stream":true}`)
 
 			require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+			require.Equal(t, "application/json; charset=utf-8", rec.Result().Header.Get("Content-Type"))
 			require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "TLS fingerprint opt-out")
 			require.NotEmpty(t, upstream.accountIDs)
 			require.NotContains(t, upstream.accountIDs, int64(2), "the misconfigured account must not dispatch")
@@ -64,10 +65,26 @@ func TestCodexHTTPConfigErrorAfterUpstreamKeepaliveStillReturns502(t *testing.T)
 }
 
 func TestOpenAIHTTPAPIKeyContinuationKeepsQueueHeartbeat(t *testing.T) {
+	rec, upstream := serveOpenAIHTTPContinuationWaitingForUserSlot(t, service.AccountTypeAPIKey)
+
+	require.Equal(t, []int64{1}, upstream.calls())
+	require.True(t, strings.HasPrefix(rec.Body.String(), string(SSEPingFormatComment)), rec.Body.String())
+}
+
+func TestCodexHTTPContinuationRejectionKeeps400AfterQueueWait(t *testing.T) {
+	rec, upstream := serveOpenAIHTTPContinuationWaitingForUserSlot(t, service.AccountTypeOAuth)
+
+	require.Empty(t, upstream.calls())
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "previous_response_id requires an OpenAI API-key account")
+}
+
+func serveOpenAIHTTPContinuationWaitingForUserSlot(t *testing.T, accountType string) (*httptest.ResponseRecorder, *openAIResponsesFailoverCancelUpstream) {
+	t.Helper()
 	account := service.Account{
-		ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		ID: 1, Platform: service.PlatformOpenAI, Type: accountType,
 		Status: service.StatusActive, Schedulable: true,
-		Credentials: map[string]any{"api_key": "fixture"},
+		Credentials: map[string]any{"api_key": "fixture", "access_token": "fixture"},
 	}
 	upstream := &openAIResponsesFailoverCancelUpstream{}
 	h := newOpenAIImagesSizeRoutingTestHandler(t, []service.Account{account}, upstream)
@@ -86,8 +103,7 @@ func TestOpenAIHTTPAPIKeyContinuationKeepsQueueHeartbeat(t *testing.T) {
 	h.Responses(c)
 
 	require.Equal(t, 2, cache.userAcquireCalls, rec.Body.String())
-	require.Equal(t, []int64{1}, upstream.calls())
-	require.True(t, strings.HasPrefix(rec.Body.String(), string(SSEPingFormatComment)), rec.Body.String())
+	return rec, upstream
 }
 
 func TestCodexHTTPConfigErrorAfterWaitingStillReturns502(t *testing.T) {
