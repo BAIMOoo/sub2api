@@ -14,13 +14,60 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
+
+func TestBoundedDialerTimesOutStalledTunnelOrTLS(t *testing.T) {
+	for _, tc := range []struct {
+		scheme    string
+		firstByte byte
+	}{
+		{"direct", 22}, // TLS handshake record
+		{"http", 'C'},  // CONNECT
+		{"socks5", 5},  // SOCKS greeting
+		{"socks5h", 5},
+	} {
+		t.Run(tc.scheme, func(t *testing.T) {
+			peer, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = peer.Close() })
+			require.NoError(t, peer.SetDeadline(time.Now().Add(2*time.Second)))
+
+			var proxyURL *url.URL
+			target := peer.Addr().String()
+			if tc.scheme != "direct" {
+				proxyURL = &url.URL{Scheme: tc.scheme, Host: target}
+				target = "example.invalid:443"
+			}
+			dialer, err := NewBoundedDialer(OpenAICodexLinuxProfile(), proxyURL, 150*time.Millisecond, 150*time.Millisecond)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			conn, err := dialer.DialTLSContext(ctx, "tcp", target)
+			if conn != nil {
+				_ = conn.Close()
+			}
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			require.NoError(t, ctx.Err(), "the phase timeout must beat the request deadline")
+			received, err := peer.AcceptTCP()
+			require.NoError(t, err)
+			defer func() { _ = received.Close() }()
+			require.NoError(t, received.SetReadDeadline(time.Now().Add(time.Second)))
+			first := make([]byte, 1)
+			_, err = io.ReadFull(received, first)
+			require.NoError(t, err)
+			require.Equal(t, tc.firstByte, first[0])
+		})
+	}
+}
 
 // TestDialerBasicConnection tests that the dialer can establish TLS connections.
 func TestDialerBasicConnection(t *testing.T) {

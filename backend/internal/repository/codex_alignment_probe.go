@@ -30,8 +30,9 @@ func (s *httpUpstreamService) doAlignmentProbe(req *http.Request, proxyURL strin
 	if !strings.EqualFold(req.URL.Scheme, "https") {
 		return nil, codexprobe.ErrProbe
 	}
-	settings := s.applyProfilePoolSettings(defaultPoolSettings(s.cfg), service.HTTPUpstreamProfileFromContext(req.Context()))
-	transport, err := buildUpstreamTransportWithTLSFingerprint(settings, proxy, profile)
+	upstreamProfile := service.HTTPUpstreamProfileFromContext(req.Context())
+	settings := s.applyProfilePoolSettings(defaultPoolSettings(s.cfg), upstreamProfile)
+	transport, err := buildUpstreamTransportWithTLSFingerprint(settings, proxy, profile, upstreamProfile == service.HTTPUpstreamProfileCodexHTTP)
 	if err != nil {
 		return nil, codexprobe.ErrProbe
 	}

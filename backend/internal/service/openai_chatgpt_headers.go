@@ -5,6 +5,8 @@ import (
 	"net/http"
 )
 
+const openAIChatGPTFedRAMPHeader = "x-openai-fedramp"
+
 func setOpenAIChatGPTAccountHeaders(headers http.Header, account *Account) {
 	if headers == nil || account == nil || !account.IsOpenAIOAuthLike() {
 		return
@@ -13,9 +15,9 @@ func setOpenAIChatGPTAccountHeaders(headers http.Header, account *Account) {
 		headers.Set("chatgpt-account-id", chatgptAccountID)
 	}
 	if account.IsChatGPTAccountFedRAMP() {
-		headers.Set("x-openai-fedramp", "true")
+		headers.Set(openAIChatGPTFedRAMPHeader, "true")
 	} else {
-		headers.Del("x-openai-fedramp")
+		headers.Del(openAIChatGPTFedRAMPHeader)
 	}
 }
 

@@ -245,6 +245,11 @@ func applyCodexHTTPMode(c *gin.Context, account *Account, req *http.Request, bod
 	if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
 		return applyMappedGPT55LiteCompatibility(req, account, body)
 	}
+	// The pinned auth provider sends this routing header, but the captured
+	// HTTP/1.1 order doesn't cover it. Never send the request without it.
+	if req.Header.Get(openAIChatGPTFedRAMPHeader) != "" {
+		return &CodexHTTPTransportConfigError{reason: "FedRAMP routing is not verified for the fixed header order"}
+	}
 	order := tlsfingerprint.OpenAIResponsesHeaderOrder().Order
 	for name := range req.Header {
 		if !slices.Contains(order, strings.ToLower(name)) {

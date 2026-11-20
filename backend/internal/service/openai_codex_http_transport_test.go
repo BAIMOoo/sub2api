@@ -47,9 +47,8 @@ func TestCodexHTTPTransportUsesFixedProfileAndStreamingZstd(t *testing.T) {
 			account.Credentials[openAIAuthModeCredentialKey] = tc.authMode
 			account.Credentials["user_agent"] = "manual override"
 			account.Extra = map[string]any{
-				"openai_passthrough":         tc.passthrough,
-				"enable_tls_fingerprint":     false,
-				"tls_fingerprint_profile_id": int64(999),
+				"openai_passthrough": tc.passthrough,
+				"codex_cli_only":     true,
 			}
 			if tc.proxyScheme != "" {
 				account.Proxy = &Proxy{ID: 1, Protocol: tc.proxyScheme, Host: "proxy.example.test", Port: 1080}
@@ -107,14 +106,32 @@ func TestCodexHTTPTransportRefusesUnverifiedConfigBeforeDispatch(t *testing.T) {
 		name, path, reason string
 		proxy              *Proxy
 		configuredProxy    bool
-		oversizedHeaders   bool
+		configure          func(*Account)
 		plugin             *PluginManager
 	}{
 		{name: "HTTPS proxy", proxy: &Proxy{Protocol: "https", Host: "proxy.example.test", Port: 443}, reason: "HTTPS proxy"},
 		{name: "missing proxy", configuredProxy: true, reason: "configured proxy"},
 		{name: "invalid URL", proxy: &Proxy{Protocol: "socks5", Host: "", Port: 1080}, reason: "invalid proxy"},
 		{name: "invalid port", proxy: &Proxy{Protocol: "http", Host: "proxy.example.test", Port: 65536}, reason: "invalid proxy"},
-		{name: "oversized headers", oversizedHeaders: true, reason: "ordered transport limit"},
+		{name: "oversized headers", configure: func(a *Account) {
+			a.Credentials["access_token"] = strings.Repeat("x", 64<<10)
+		}, reason: "ordered transport limit"},
+		{name: "invalid header value", configure: func(a *Account) {
+			a.Credentials["chatgpt_account_id"] = "invalid\naccount"
+		}, reason: "invalid HTTP header"},
+		{name: "FedRAMP routing", configure: func(a *Account) {
+			a.Credentials["chatgpt_account_is_fedramp"] = true
+		}, reason: "FedRAMP"},
+		{name: "TLS opt-out", configure: func(a *Account) {
+			a.Extra["enable_tls_fingerprint"] = false
+		}, reason: "TLS fingerprint opt-out"},
+		{name: "custom TLS profile", configure: func(a *Account) {
+			a.Extra["enable_tls_fingerprint"] = true
+			a.Extra["tls_fingerprint_profile_id"] = int64(999)
+		}, reason: "TLS fingerprint profile"},
+		{name: "malformed TLS profile", configure: func(a *Account) {
+			a.Extra["tls_fingerprint_profile_id"] = "999"
+		}, reason: "TLS fingerprint profile"},
 		{name: "plugin", plugin: manager, reason: "plugin"},
 		{name: "unverified endpoint", path: "/v1/responses/unsupported", reason: "ChatGPT HTTPS endpoint"},
 	} {
@@ -123,8 +140,8 @@ func TestCodexHTTPTransportRefusesUnverifiedConfigBeforeDispatch(t *testing.T) {
 				t.Run("passthrough="+boolString(passthrough), func(t *testing.T) {
 					account := codexBodyEncodingTestAccount(332)
 					account.Extra = map[string]any{"openai_passthrough": passthrough}
-					if tc.oversizedHeaders {
-						account.Credentials["access_token"] = strings.Repeat("x", 64<<10)
+					if tc.configure != nil {
+						tc.configure(account)
 					}
 					if tc.proxy != nil || tc.configuredProxy {
 						proxyID := int64(1)
