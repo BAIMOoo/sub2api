@@ -96,7 +96,7 @@ Fault injection is local/mock only. CI receives no production secrets and makes 
 
 Use an approved non-production test credential and record the exact candidate SHA. This test makes real, potentially billable supplier requests. It does not start the gateway server, connect to a database, refresh credentials, or change deployment or monitor state. It exercises the public forwarding methods with the real HTTP repository, not ingress authentication or deployment routing.
 
-Use a private JSON file outside the repository, mode `0600`, with `credential_type` (`oauth`, `pat`, or `setup-token`), `access_token`, `chatgpt_account_id`, and `model`. Run once per available credential type on the approved test host, in series:
+Use a private JSON file outside the repository, mode `0600`, with `credential_type` (`oauth`, `pat`, or `setup-token`), `access_token`, and `model`. Include `chatgpt_account_id` when the credential requires it; omit it for a bearer-only SetupToken. Run once per available credential type on the approved test host, in series:
 
 ```sh
 cd backend
@@ -105,4 +105,4 @@ SUB2API_CODEX_LIVE_CONFIG=/private/path/live-test.json \
   ./internal/integration -run '^TestCodexHTTPPinnedLive$' -count=1 -v
 ```
 
-The test defaults to skipped without the private file and exercises Responses, passthrough, Chat Completions, Messages and compact. Publish only per-route status and completion, with model/mode and candidate SHA; never publish credentials, request/response bodies or logs from the private test account. Report each missing credential type as untested live (`unverified`) even if its automated coverage is green.
+The test defaults to skipped without the private file and exercises Responses, passthrough, Chat Completions, Messages and compact. A route completes only with both the expected client response and an observed upstream `response.completed`; a compatibility route's HTTP 200 alone is insufficient. Publish only per-route status and completion, with the requested model, observed wire mode and candidate SHA; never publish credentials, request/response bodies or logs from the private test account. Report each missing credential type as untested live (`unverified`) even if its automated coverage is green.
