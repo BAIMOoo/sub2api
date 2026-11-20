@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -34,6 +35,7 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 					"model":"gpt-5.5",
 					"max_tokens":16,
 					"temperature":0.4,
+					"top_k":40,
 					"thinking":{"type":"enabled","budget_tokens":64},
 					"metadata":{"caller":"KEEP MESSAGES METADATA"},
 					"system":[{"type":"text","text":"KEEP SYSTEM BLOCK"}],
@@ -68,6 +70,7 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 				c, _ := gin.CreateTestContext(recorder)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
 				c.Request.Header.Set("User-Agent", "arbitrary-messages-harness/1")
+				c.Request.Header.Set("anthropic-beta", claude.BetaFastMode)
 				originalHeaders := c.Request.Header.Clone()
 				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 				upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
@@ -78,14 +81,19 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 					httpUpstream: upstream,
 				}
 
-				_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+				_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "caller-cache-key", "")
 				require.Error(t, err)
 				require.NotNil(t, upstream.lastReq)
 				require.Equal(t, originalBody, body)
 				require.Equal(t, originalHeaders, c.Request.Header)
 				require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
 				require.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
-				require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+				require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+				session := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
+				require.Equal(t, normalizeCodexHTTPIdentityID(scopeCodexAccountIdentityValue(account, 0, "prompt-cache", "caller-cache-key")), session)
+				for _, header := range []string{"session-id", "thread-id", "x-client-request-id"} {
+					require.Equal(t, session, upstream.lastReq.Header.Get(header))
+				}
 				require.Contains(t, string(upstream.lastBody), "KEEP SYSTEM BLOCK")
 				require.Contains(t, string(upstream.lastBody), "KEEP USER TASK")
 				require.Contains(t, string(upstream.lastBody), "KEEP SUMMARY")
@@ -98,6 +106,8 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 				require.NotContains(t, string(upstream.lastBody), "sub2api-claude-code-todo-guard")
 				require.False(t, gjson.GetBytes(upstream.lastBody, "max_tokens").Exists())
 				require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists())
+				require.False(t, gjson.GetBytes(upstream.lastBody, "top_k").Exists())
+				require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String())
 				require.Equal(t, lite, isOpenAIResponsesLiteHeader(upstream.lastReq.Header.Get(responsesLiteHeader)))
 				if lite {
 					require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
@@ -108,7 +118,7 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 			})
 		}
 	}
-	for _, field := range []string{"max_tokens", "temperature", "thinking.budget_tokens"} {
+	for _, field := range []string{"max_tokens", "temperature", "top_k", "thinking.budget_tokens"} {
 		require.True(t, logs.ContainsFieldValue("ignored_parameters", field), field)
 	}
 }
@@ -117,6 +127,7 @@ func TestCodexHTTPMessagesRejectsUnrepresentableContentBeforeUpstream(t *testing
 	for _, test := range []struct {
 		name string
 		body string
+		lite bool
 	}{
 		{
 			name: "unknown top level",
@@ -134,19 +145,31 @@ func TestCodexHTTPMessagesRejectsUnrepresentableContentBeforeUpstream(t *testing
 			name: "invalid image",
 			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":""}}]}]}`,
 		},
+		{
+			name: "explicit parallel tools in Lite",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"name":"lookup","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto","disable_parallel_tool_use":false}}`,
+			lite: true,
+		},
+		{
+			name: "implicit parallel tools in Lite",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"name":"lookup","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto"}}`,
+			lite: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(test.body)))
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			upstream := &httpUpstreamRecorder{}
+			upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			account := codexBodyEncodingTestAccount(4201)
+			setCodexHTTPTestMode(account, "gpt-5.5", test.lite)
 
 			_, err := svc.ForwardAsAnthropic(
 				context.Background(),
 				c,
-				codexBodyEncodingTestAccount(4201),
+				account,
 				[]byte(test.body),
 				"",
 				"",

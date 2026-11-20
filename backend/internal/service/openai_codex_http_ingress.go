@@ -25,6 +25,7 @@ var codexHTTPIgnoredControls = []string{
 	"max_completion_tokens",
 	"max_output_tokens",
 	"temperature",
+	"top_k",
 	"top_p",
 	"frequency_penalty",
 	"presence_penalty",
@@ -126,6 +127,19 @@ func prepareCodexHTTPIngress(c *gin.Context, account *Account, body []byte) ([]b
 	return body, nil
 }
 
+func preserveCodexTopLevelFields(original, converted []byte, fields ...string) ([]byte, error) {
+	for _, field := range fields {
+		if value := gjson.GetBytes(original, field); value.Exists() {
+			next, err := sjson.SetRawBytes(converted, field, []byte(value.Raw))
+			if err != nil {
+				return nil, fmt.Errorf("preserve Codex field %s: %w", field, err)
+			}
+			converted = next
+		}
+	}
+	return converted, nil
+}
+
 func validateCodexHTTPMessagesHistory(body []byte) error {
 	root := gjson.ParseBytes(body)
 	allowed := "model system messages tools tool_choice thinking output_config metadata stream service_tier"
@@ -137,14 +151,6 @@ func validateCodexHTTPMessagesHistory(body []byte) error {
 			"messages",
 			"Anthropic messages must be an array for lossless Codex conversion",
 		)
-	}
-	for field, fields := range map[string]string{
-		"thinking":      "type budget_tokens",
-		"output_config": "effort",
-	} {
-		if err := validateCodexHTTPFieldSet(gjson.GetBytes(body, field), field, fields, false); err != nil {
-			return err
-		}
 	}
 	for index, message := range gjson.GetBytes(body, "messages").Array() {
 		if err := validateCodexHTTPFieldSet(

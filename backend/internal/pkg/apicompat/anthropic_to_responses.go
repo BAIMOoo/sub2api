@@ -501,17 +501,8 @@ func validateAnthropicCodexRequest(req *AnthropicRequest, original json.RawMessa
 			return err
 		}
 		if field == "thinking" {
-			typ, err := anthropicCodexString(fields, "type", field, true)
-			if err != nil {
+			if _, err := anthropicCodexString(fields, "type", field, true); err != nil {
 				return err
-			}
-			switch typ {
-			case "enabled", "adaptive", "disabled", "between_tools":
-			default:
-				return anthropicCodexContentError(
-					"thinking.type",
-					"unsupported thinking mode",
-				)
 			}
 			if budget, exists := fields["budget_tokens"]; exists {
 				var value *int
@@ -523,23 +514,9 @@ func validateAnthropicCodexRequest(req *AnthropicRequest, original json.RawMessa
 				}
 			}
 		}
-		if field == "output_config" {
-			if rawEffort, exists := fields["effort"]; exists {
-				var effort *string
-				if err := json.Unmarshal(rawEffort, &effort); err != nil || effort == nil {
-					return anthropicCodexContentError(
-						"output_config.effort",
-						"expected a string",
-					)
-				}
-				switch *effort {
-				case "", "low", "medium", "high", "max":
-				default:
-					return anthropicCodexContentError(
-						"output_config.effort",
-						"unsupported reasoning effort",
-					)
-				}
+		if _, exists := fields["effort"]; field == "output_config" && exists {
+			if _, err := anthropicCodexString(fields, "effort", field, false); err != nil {
+				return err
 			}
 		}
 	}
@@ -605,6 +582,15 @@ func anthropicCodexBlocks(raw json.RawMessage, path string) ([]json.RawMessage, 
 	return blocks, nil
 }
 
+func decodeAnthropicCodexBlock(raw json.RawMessage, path string) (map[string]json.RawMessage, string, error) {
+	fields, err := anthropicCodexObject(raw, path)
+	if err != nil {
+		return nil, "", err
+	}
+	typ, err := anthropicCodexString(fields, "type", path, true)
+	return fields, typ, err
+}
+
 func anthropicCodexPart(
 	fields map[string]json.RawMessage,
 	typ string,
@@ -614,7 +600,7 @@ func anthropicCodexPart(
 	var part anthropicCodexContentPart
 	switch typ {
 	case "text":
-		if err := anthropicCodexFields(fields, path, "type", "text", "cache_control"); err != nil {
+		if err := anthropicCodexFields(fields, path, "type", "text"); err != nil {
 			return part, err
 		}
 		text, err := anthropicCodexString(fields, "text", path, false)
@@ -623,7 +609,7 @@ func anthropicCodexPart(
 		if !images {
 			return part, anthropicCodexContentError(path, "image content is not supported in this role")
 		}
-		if err := anthropicCodexFields(fields, path, "type", "source", "cache_control"); err != nil {
+		if err := anthropicCodexFields(fields, path, "type", "source"); err != nil {
 			return part, err
 		}
 		sourcePath := path + ".source"
@@ -680,11 +666,7 @@ func anthropicCodexParts(
 	parts := make([]anthropicCodexContentPart, 0, len(blocks))
 	for i, block := range blocks {
 		blockPath := fmt.Sprintf("%s[%d]", path, i)
-		fields, err := anthropicCodexObject(block, blockPath)
-		if err != nil {
-			return nil, err
-		}
-		typ, err := anthropicCodexString(fields, "type", blockPath, true)
+		fields, typ, err := decodeAnthropicCodexBlock(block, blockPath)
 		if err != nil {
 			return nil, err
 		}
@@ -756,11 +738,7 @@ func anthropicCodexMessage(
 
 	for i, block := range blocks {
 		blockPath := fmt.Sprintf("%s[%d]", path, i)
-		fields, err := anthropicCodexObject(block, blockPath)
-		if err != nil {
-			return nil, err
-		}
-		typ, err := anthropicCodexString(fields, "type", blockPath, true)
+		fields, typ, err := decodeAnthropicCodexBlock(block, blockPath)
 		if err != nil {
 			return nil, err
 		}
@@ -788,7 +766,6 @@ func anthropicCodexMessage(
 				"type",
 				"thinking",
 				"signature",
-				"cache_control",
 			); err != nil {
 				return nil, err
 			}
@@ -816,7 +793,6 @@ func anthropicCodexMessage(
 				"id",
 				"name",
 				"input",
-				"cache_control",
 			); err != nil {
 				return nil, err
 			}
@@ -841,7 +817,6 @@ func anthropicCodexMessage(
 				"tool_use_id",
 				"content",
 				"is_error",
-				"cache_control",
 			); err != nil {
 				return nil, err
 			}
@@ -876,29 +851,23 @@ func anthropicCodexToolOutput(
 	if !exists {
 		content = json.RawMessage(`""`)
 	}
-	isError := false
 	if raw, exists := fields["is_error"]; exists {
 		var value *bool
 		if err := json.Unmarshal(raw, &value); err != nil || value == nil {
 			return nil, anthropicCodexContentError(path+".is_error", "expected a boolean")
 		}
-		isError = *value
+		if *value {
+			return nil, anthropicCodexContentError(path+".is_error", "Responses does not represent failed tool results")
+		}
 	}
 
 	var text *string
-	if err := json.Unmarshal(content, &text); err == nil && text != nil && !isError {
+	if err := json.Unmarshal(content, &text); err == nil && text != nil {
 		return json.Marshal(*text)
 	}
 	parts, err := anthropicCodexParts(content, path+".content", true)
 	if err != nil {
 		return nil, err
-	}
-	if isError {
-		status := `{"is_error":true}`
-		parts = append(
-			[]anthropicCodexContentPart{{Type: "input_text", Text: &status}},
-			parts...,
-		)
 	}
 	return json.Marshal(parts)
 }
@@ -909,11 +878,11 @@ func validateAnthropicCodexToolReferences(items []anthropicResponsesInputItem) e
 	for index, item := range items {
 		switch item.Type {
 		case "function_call":
-			callID := strings.TrimSpace(item.CallID)
-			if callID == "" {
+			callID := item.CallID
+			if strings.TrimSpace(callID) != callID || callID == "" {
 				return anthropicCodexContentError(
 					fmt.Sprintf("input[%d].call_id", index),
-					"expected a nonblank call id",
+					"expected a nonblank call id without surrounding whitespace",
 				)
 			}
 			if _, exists := calls[callID]; exists {
@@ -924,7 +893,7 @@ func validateAnthropicCodexToolReferences(items []anthropicResponsesInputItem) e
 			}
 			calls[callID] = struct{}{}
 		case "function_call_output":
-			callID := strings.TrimSpace(item.CallID)
+			callID := item.CallID
 			if _, exists := calls[callID]; !exists {
 				return anthropicCodexContentError(
 					fmt.Sprintf("input[%d].call_id", index),
@@ -967,7 +936,6 @@ func validateAnthropicCodexTools(tools []AnthropicTool, original json.RawMessage
 					"name",
 					"description",
 					"input_schema",
-					"cache_control",
 				); err != nil {
 					return err
 				}
@@ -978,6 +946,9 @@ func validateAnthropicCodexTools(tools []AnthropicTool, original json.RawMessage
 	names := make(map[string]bool, len(tools))
 	for i, tool := range tools {
 		path := fmt.Sprintf("tools[%d]", i)
+		if tool.CacheControl != nil {
+			return anthropicCodexContentError(path+".cache_control", "unsupported field")
+		}
 		if tool.Type != "" && tool.Type != "custom" {
 			return anthropicCodexContentError(path+".type", "unsupported tool type")
 		}

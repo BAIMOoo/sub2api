@@ -21,27 +21,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// preserveCodexAnthropicTopLevelFields retains Anthropic metadata that the
-// compatibility wire type does not model.
-func preserveCodexAnthropicTopLevelFields(original, converted []byte) ([]byte, error) {
-	var source map[string]any
-	if err := decodeOpenAIJSONUseNumber(original, &source); err != nil {
-		return nil, fmt.Errorf("decode original Anthropic request: %w", err)
-	}
-	var target map[string]any
-	if err := decodeOpenAIJSONUseNumber(converted, &target); err != nil {
-		return nil, fmt.Errorf("decode converted Anthropic request: %w", err)
-	}
-	if value, exists := source["metadata"]; exists {
-		target["metadata"] = value
-	}
-	preserved, err := marshalOpenAIUpstreamJSON(target)
-	if err != nil {
-		return nil, fmt.Errorf("encode preserved Anthropic fields: %w", err)
-	}
-	return preserved, nil
-}
-
 // ForwardAsAnthropic accepts an Anthropic Messages request body, converts it
 // to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
 // the response back to Anthropic Messages format. This enables Claude Code
@@ -54,7 +33,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	originalBody := bytes.Clone(body)
+	originalBody := body
 	preparedBody, prepareErr := prepareCodexHTTPIngress(c, account, body)
 	if prepareErr != nil {
 		return nil, prepareErr
@@ -218,7 +197,17 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	responsesReq.Model = upstreamModel
 	if httpPolicy.usesFixedExecContract() {
-		responsesReq.ServiceTier = gjson.GetBytes(body, "service_tier").String()
+		if gjson.GetBytes(body, "service_tier").Exists() {
+			serviceTier, err := ValidateOpenAIServiceTierField(body)
+			if err == nil && responsesReq.ServiceTier != "" && responsesReq.ServiceTier != serviceTier {
+				err = newOpenAIResponsesLiteValidationError("service_tier", "conflicts with the Anthropic fast-mode header")
+			}
+			if err != nil {
+				writeCodexHTTPCompatibilityError(c, err)
+				return nil, err
+			}
+			responsesReq.ServiceTier = serviceTier
+		}
 		responsesReq.Text = nil
 		if anthropicReq.Thinking == nil && anthropicReq.OutputConfig == nil {
 			responsesReq.Reasoning = nil
@@ -274,7 +263,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
 	if httpPolicy.usesFixedExecContract() {
-		responsesBody, err = preserveCodexAnthropicTopLevelFields(originalBody, responsesBody)
+		responsesBody, err = preserveCodexTopLevelFields(body, responsesBody, "metadata")
 		if err != nil {
 			return nil, err
 		}
@@ -288,6 +277,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesLite := false
 		if httpPolicy.usesFixedExecContract() {
 			responsesLite = resolveCodexHTTPMode(c, account, upstreamModel, responsesBody).lite
+			parallel := responsesReq.ParallelToolCalls
+			if responsesLite && len(responsesReq.Tools) > 0 && parallel != nil && *parallel && string(responsesReq.ToolChoice) != `"none"` {
+				err := newOpenAIResponsesLiteValidationError("tool_choice.disable_parallel_tool_use", "Responses Lite requires sequential tool calls")
+				writeCodexHTTPCompatibilityError(c, err)
+				return nil, err
+			}
 		}
 		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
 			SkipDefaultInstructions:   true,
@@ -333,8 +328,16 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
-		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), apiKeyID, codexClientSessionID(c))
-		delete(reqBody, "prompt_cache_key")
+		clientSessionID := codexClientSessionID(c)
+		if httpPolicy.usesFixedExecContract() {
+			if promptCacheKey != "" && clientSessionID == "" {
+				reqBody["prompt_cache_key"] = promptCacheKey
+			}
+		}
+		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), apiKeyID, clientSessionID)
+		if !httpPolicy.usesFixedExecContract() {
+			delete(reqBody, "prompt_cache_key")
+		}
 		if shouldAutoInjectPromptCacheKeyForCompat(upstreamModel) {
 			compatTurnState = s.getOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey)
 		}
@@ -429,7 +432,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// 6. Build upstream request
-	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
+	if !httpPolicy.usesFixedExecContract() && account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		// Messages 兼容桥即使 body 未带 todo-guard/prompt_cache_key 标记（如映射到非
 		// gpt-5/codex 模型），也必须让 buildUpstreamRequest 走 bridge 分支，以保留
 		// 既有 body/session/conversation 行为。身份头在 post-build 阶段统一恢复。
@@ -450,7 +453,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 会话身份：Codex 协议账号用官方头名承载（session-id / thread-id /
 	// x-client-request-id / x-codex-window-id，与官方客户端一致），隔离在作用域化
 	// 阶段生效；其余上游保持原有的隔离标识。
-	if account.Platform != PlatformGrok && promptCacheKey != "" {
+	if !httpPolicy.usesFixedExecContract() && account.Platform != PlatformGrok && promptCacheKey != "" {
 		if account.UsesOpenAICodexProtocol() {
 			applyCodexSessionIdentityHeaders(upstreamReq.Header, promptCacheKey)
 		} else {
@@ -461,16 +464,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			}
 		}
 	}
-	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
+	if !httpPolicy.usesFixedExecContract() && account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		// buildUpstreamRequest 保留 Messages bridge 的 body/session 兼容行为，并会先
 		// 清除身份头。真正发送前恢复完整 Codex 身份，避免 ChatGPT Codex 上游因缺失
 		// originator/OpenAI-Beta 返回 404（issue #3901）。
 		ensureCodexIdentityHeaders(upstreamReq.Header)
-		if httpPolicy.usesFixedExecContract() {
-			s.applyCodexHTTPIdentityHeaders(c, account, upstreamReq.Header)
-		} else {
-			enforceCodexIdentityHeaders(upstreamReq.Header)
-		}
+		enforceCodexIdentityHeaders(upstreamReq.Header)
 		logger.L().Debug("openai messages: upstream identity restored",
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_model", upstreamModel),

@@ -31,7 +31,7 @@ func TestAnthropicToResponsesPreservesFixedCodexContent(t *testing.T) {
 			]},
 			{"role":"user","content":[
 				{"type":"text","text":"before result"},
-				{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":[
+				{"type":"tool_result","tool_use_id":"toolu_1","is_error":false,"content":[
 					{"type":"image","source":{"type":"url","url":"https://example.test/result.png"}},
 					{"type":"text","text":"exact result"}
 				]},
@@ -74,7 +74,6 @@ func TestAnthropicToResponsesPreservesFixedCodexContent(t *testing.T) {
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"after"}]},
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"before result"}]},
 		{"type":"function_call_output","call_id":"toolu_1","output":[
-			{"type":"input_text","text":"{\"is_error\":true}"},
 			{"type":"input_image","image_url":"https://example.test/result.png"},
 			{"type":"input_text","text":"exact result"}
 		]},
@@ -114,9 +113,24 @@ func TestAnthropicToResponsesRejectsUnrepresentableFixedCodexContent(t *testing.
 			path: "missing",
 		},
 		{
+			name: "tool result references a different opaque id",
+			raw:  `{"model":"gpt-5.5","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":" toolu_1 ","content":"lost"}]}]}`,
+			path: "call_id",
+		},
+		{
 			name: "unknown tool field",
 			raw:  `{"model":"gpt-5.5","tools":[{"name":"lookup","input_schema":{"type":"object"},"input_examples":[{"id":1}]}]}`,
 			path: "input_examples",
+		},
+		{
+			name: "unrepresentable cache breakpoint",
+			raw:  `{"model":"gpt-5.5","system":[{"type":"text","text":"keep","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[]}`,
+			path: "cache_control",
+		},
+		{
+			name: "unrepresentable failed tool result",
+			raw:  `{"model":"gpt-5.5","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"failed"}]}]}`,
+			path: "is_error",
 		},
 		{
 			name: "tool choice undeclared",

@@ -39,27 +39,6 @@ var cursorResponsesUnsupportedFields = []string{
 	"stream_options",
 }
 
-func preserveCodexChatTopLevelFields(original, converted []byte) ([]byte, error) {
-	var source map[string]any
-	if err := decodeOpenAIJSONUseNumber(original, &source); err != nil {
-		return nil, fmt.Errorf("decode original chat request: %w", err)
-	}
-	var target map[string]any
-	if err := decodeOpenAIJSONUseNumber(converted, &target); err != nil {
-		return nil, fmt.Errorf("decode converted chat request: %w", err)
-	}
-	for _, field := range []string{"metadata", "prompt_cache_key"} {
-		if value, exists := source[field]; exists {
-			target[field] = value
-		}
-	}
-	preserved, err := marshalOpenAIUpstreamJSON(target)
-	if err != nil {
-		return nil, fmt.Errorf("encode preserved chat fields: %w", err)
-	}
-	return preserved, nil
-}
-
 // ForwardAsChatCompletions accepts a Chat Completions request body, converts it
 // to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
 // the response back to Chat Completions format.
@@ -284,7 +263,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 			return nil, fmt.Errorf("marshal responses request: %w", err)
 		}
 		if httpPolicy.usesFixedExecContract() {
-			responsesBody, err = preserveCodexChatTopLevelFields(body, responsesBody)
+			responsesBody, err = preserveCodexTopLevelFields(body, responsesBody, "metadata", "prompt_cache_key")
 			if err != nil {
 				return nil, err
 			}
