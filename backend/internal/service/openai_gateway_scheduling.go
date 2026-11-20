@@ -334,11 +334,11 @@ func (e openAINoAvailableSelectionError) Unwrap() error {
 
 // openAICompactSupportTier classifies an OpenAI-compatible account by compact capability.
 // 0 = explicitly unsupported, 1 = unknown / not yet probed, 2 = explicitly supported.
-func openAICompactSupportTier(account *Account) int {
+func openAICompactSupportTier(ctx context.Context, account *Account) int {
 	if account == nil {
 		return 0
 	}
-	if account.IsGrok() {
+	if account.IsGrok() || (account.IsOpenAIOAuthLike() && isOpenAIDirectHTTPCompact(ctx)) {
 		return 2
 	}
 	if !account.IsOpenAI() {
@@ -450,7 +450,7 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 		}
 		return "capability_mismatch"
 	}
-	if requireCompact && openAICompactSupportTier(account) == 0 {
+	if requireCompact && openAICompactSupportTier(ctx, account) == 0 {
 		return "compact_unsupported"
 	}
 	if vetoed, reason := openAIImageSizeVetoReason(ctx, account); vetoed {
@@ -789,7 +789,7 @@ func (s *OpenAIGatewayService) withOpenAIQuotaAutoPauseContext(ctx context.Conte
 // prioritizeOpenAICompactAccounts re-orders a slice so that accounts with known
 // compact support are tried first, followed by unknown, then explicitly unsupported.
 // The relative order within each tier is preserved.
-func prioritizeOpenAICompactAccounts(accounts []*Account) []*Account {
+func prioritizeOpenAICompactAccounts(ctx context.Context, accounts []*Account) []*Account {
 	if len(accounts) == 0 {
 		return nil
 	}
@@ -797,7 +797,7 @@ func prioritizeOpenAICompactAccounts(accounts []*Account) []*Account {
 	unknown := make([]*Account, 0, len(accounts))
 	unsupported := make([]*Account, 0, len(accounts))
 	for _, account := range accounts {
-		switch openAICompactSupportTier(account) {
+		switch openAICompactSupportTier(ctx, account) {
 		case 2:
 			supported = append(supported, account)
 		case 1:
@@ -1064,7 +1064,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		}
 		compactTier := 0
 		if requireCompact {
-			compactTier = openAICompactSupportTier(fresh)
+			compactTier = openAICompactSupportTier(ctx, fresh)
 			if compactTier == 0 {
 				compactBlocked = true
 				filterStats.exclude("compact_unsupported")
@@ -1372,7 +1372,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if requireCompact {
 			appendTier := func(out []accountWithLoad, tier int) []accountWithLoad {
 				for _, item := range available {
-					if openAICompactSupportTier(item.account) == tier {
+					if openAICompactSupportTier(ctx, item.account) == tier {
 						out = append(out, item)
 					}
 				}
@@ -1424,7 +1424,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			})
 		}
 		if requireCompact {
-			ordered = prioritizeOpenAICompactAccounts(ordered)
+			ordered = prioritizeOpenAICompactAccounts(ctx, ordered)
 		}
 		for _, acc := range ordered {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
@@ -1474,7 +1474,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		})
 	}
 	if requireCompact {
-		candidates = prioritizeOpenAICompactAccounts(candidates)
+		candidates = prioritizeOpenAICompactAccounts(ctx, candidates)
 	}
 	for _, acc := range candidates {
 		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)

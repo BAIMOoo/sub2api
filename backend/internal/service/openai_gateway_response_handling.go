@@ -1727,7 +1727,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// Detect SSE responses for ALL account types via Content-Type header.
 	// Some OpenAI-compatible upstreams (including other sub2api instances)
 	// may return SSE even when stream=false was requested.
-	if isEventStreamResponse(resp.Header) {
+	if isCodexHTTPCompactRequest(c, account) || isEventStreamResponse(resp.Header) {
 		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 	// bodyLooksLikeSSE is a line-level heuristic: real SSE framing requires
@@ -1845,9 +1845,9 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
-	finalResponse, ok := extractCodexFinalResponse(bodyText)
-	if !ok && terminalOK {
-		finalResponse, ok = extractOpenAINonCompletedTerminalResponse(terminalType, terminalPayload)
+	finalResponse, ok, err := extractOpenAIUnarySSEOutput(c, account, terminalType, terminalPayload, bodyText)
+	if err != nil {
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, err.Error())
 	}
 
 	usage := s.parseSSEUsageFromBody(bodyText)
@@ -1855,17 +1855,6 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
 		}
-		// When the terminal event has an empty output array, reconstruct
-		// output from accumulated delta events so the client gets full content.
-		// gjson Array() returns empty slice for null, missing, or empty arrays.
-		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-			if outputJSON, reconstructed := reconstructResponseOutputFromSSE(bodyText); reconstructed {
-				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
-					finalResponse = patched
-				}
-			}
-		}
-		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
 		body = finalResponse
 		if originalModel != mappedModel {
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
@@ -1923,6 +1912,29 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 		searchCount:      countGrokNativeSearchCallsFromSSEBody(bodyText),
 	}, nil
+}
+
+func extractOpenAIUnarySSEOutput(c *gin.Context, account *Account, terminalType string, terminalPayload []byte, bodyText string) ([]byte, bool, error) {
+	if isCodexHTTPCompactRequest(c, account) {
+		body, err := decodeCodexHTTPCompactCompletion(terminalType, terminalPayload, bodyText)
+		return body, err == nil, err
+	}
+	body, ok := extractCodexFinalResponse(bodyText)
+	if !ok && terminalType != "" {
+		body, ok = extractOpenAINonCompletedTerminalResponse(terminalType, terminalPayload)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	// Some upstreams only send completed output items in preceding events.
+	if len(gjson.GetBytes(body, "output").Array()) == 0 {
+		if output, reconstructed := reconstructResponseOutputFromSSE(bodyText); reconstructed {
+			if patched, err := sjson.SetRawBytes(body, "output", output); err == nil {
+				body = patched
+			}
+		}
+	}
+	return supplementCompactionItemFromSSE(c, body, bodyText), true, nil
 }
 
 func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {

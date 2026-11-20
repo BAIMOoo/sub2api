@@ -891,7 +891,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	if req.RequireCompact {
 		candidates = make([]openAIAccountCandidateScore, 0, len(allCandidates))
 		for _, candidate := range allCandidates {
-			if openAICompactSupportTier(candidate.account) == 0 {
+			if openAICompactSupportTier(ctx, candidate.account) == 0 {
 				staleSnapshotCompactRetry = append(staleSnapshotCompactRetry, candidate)
 				continue
 			}
@@ -906,7 +906,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		candidateCount:            len(candidates),
 	}
 	if len(candidates) == 0 {
-		plan.selectionOrder = s.buildOpenAISelectionOrder(req, plan)
+		plan.selectionOrder = s.buildOpenAISelectionOrder(ctx, req, plan)
 		return plan
 	}
 
@@ -1050,11 +1050,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		plan.topK = 1
 	}
 
-	plan.selectionOrder = s.buildOpenAISelectionOrder(req, plan)
+	plan.selectionOrder = s.buildOpenAISelectionOrder(ctx, req, plan)
 	return plan
 }
 
 func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
+	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 	plan openAIAccountLoadPlan,
 ) []openAIAccountCandidateScore {
@@ -1112,7 +1113,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
 		unknown := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
 		for _, candidate := range plan.candidates {
-			switch openAICompactSupportTier(candidate.account) {
+			switch openAICompactSupportTier(ctx, candidate.account) {
 			case 2:
 				supported = append(supported, candidate)
 			case 1:
@@ -1218,7 +1219,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			release(result)
 			continue
 		}
-		if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
+		if req.RequireCompact && openAICompactSupportTier(ctx, fresh) == 0 {
 			compactBlocked = true
 			release(result)
 			continue
@@ -1308,7 +1309,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		if !s.isAccountRequestCompatible(ctx, account, req) || !s.isAccountTransportCompatible(account, req.RequiredTransport) {
 			continue
 		}
-		if req.RequireCompact && openAICompactSupportTier(account) == 0 {
+		if req.RequireCompact && openAICompactSupportTier(ctx, account) == 0 {
 			continue
 		}
 		// Keep weighted sticky fallback subject to the same free-tier gate as the
@@ -1562,7 +1563,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	budget *openAISelectionProbeBudget,
 ) openAIAccountLoadSelectionAttempt {
 	plan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, loadMap)
-	if openAICostOverflowExpanded(req, plan) {
+	if openAICostOverflowExpanded(ctx, req, plan) {
 		budget.enableLimit()
 	}
 	attempt := openAIAccountLoadSelectionAttempt{
@@ -1601,7 +1602,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 		loadReq := buildOpenAIAccountLoadRequest(filtered)
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
-			if openAICostOverflowExpanded(req, freshPlan) {
+			if openAICostOverflowExpanded(ctx, req, freshPlan) {
 				budget.enableLimit()
 			}
 			if len(freshPlan.selectionOrder) > 0 {
@@ -1630,7 +1631,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	return attempt
 }
 
-func openAICostOverflowExpanded(req OpenAIAccountScheduleRequest, plan openAIAccountLoadPlan) bool {
+func openAICostOverflowExpanded(ctx context.Context, req OpenAIAccountScheduleRequest, plan openAIAccountLoadPlan) bool {
 	if !plan.includeOverflowFallback || plan.topK <= 0 {
 		return false
 	}
@@ -1639,7 +1640,7 @@ func openAICostOverflowExpanded(req OpenAIAccountScheduleRequest, plan openAIAcc
 	}
 	supported, unknown := 0, 0
 	for _, candidate := range plan.candidates {
-		switch openAICompactSupportTier(candidate.account) {
+		switch openAICompactSupportTier(ctx, candidate.account) {
 		case 2:
 			supported++
 		case 1:
@@ -1716,7 +1717,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 			if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 				continue
 			}
-			if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
+			if req.RequireCompact && openAICompactSupportTier(ctx, fresh) == 0 {
 				compactBlocked = true
 				continue
 			}

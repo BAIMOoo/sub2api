@@ -292,7 +292,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_NonRemoteV2BodySignalPromoted(t 
 			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), tt.body)
 			require.True(t, ok)
 			require.Equal(t, "/v1/responses/compact", c.Request.URL.Path)
-			require.False(t, gjson.GetBytes(normalized, "stream").Exists())
+			require.Equal(t, tt.body, normalized)
 
 			marked, exists := c.Get(service.OpenAICompactClientStreamKeyForTest())
 			require.Equal(t, tt.wantMarked, exists)
@@ -324,8 +324,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_PathBasedNoDoubleSuffix(t *testi
 	normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), body)
 	require.True(t, ok)
 	require.Equal(t, "/v1/responses/compact", c.Request.URL.Path)
-	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
-	require.False(t, gjson.GetBytes(normalized, "store").Exists())
+	require.Equal(t, body, normalized)
 }
 
 func TestNormalizeOpenAIResponsesCompactRequest_SubpathNotPromoted(t *testing.T) {

@@ -165,7 +165,7 @@ func TestCodexHTTPModeSelectionUsesFinalCapabilityAndRecordsUnverifiedFallback(t
 	require.False(t, logs.ContainsFieldValue("request_body", "caller task"))
 }
 
-func TestCodexHTTPModeBodyLeavesCompactForDedicatedAdapter(t *testing.T) {
+func TestCodexHTTPModeBodyAdaptsCompactForStreamingResponses(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","instructions":"keep compact task","input":[{"role":"user","content":"compact me"}],"tools":[{"type":"function","name":"read_file","description":"Read","parameters":{"type":"object"}}]}`)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader(body))
@@ -173,7 +173,9 @@ func TestCodexHTTPModeBodyLeavesCompactForDedicatedAdapter(t *testing.T) {
 
 	normalized, _, err := normalizeCodexHTTPBody(c, codexBodyEncodingTestAccount(1005), body)
 	require.NoError(t, err)
-	require.Equal(t, body, normalized)
+	require.True(t, gjson.GetBytes(normalized, "stream").Bool())
+	require.Equal(t, "keep compact task", gjson.GetBytes(normalized, "instructions").String())
+	require.Equal(t, "compaction_trigger", gjson.GetBytes(normalized, "input.1.type").String())
 }
 
 func TestCodexHTTPStandardRejectsUnrepresentableAdditionalToolsCarrier(t *testing.T) {

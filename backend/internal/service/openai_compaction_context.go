@@ -3,6 +3,17 @@ package service
 import "context"
 
 type openAIForwardModelContextKey struct{}
+type openAIDirectHTTPCompactKey struct{}
+
+// WithOpenAIDirectHTTPCompact marks scheduling for the direct HTTP compact
+// adapter. Codex accounts use Responses V2, not the legacy capability probe.
+func WithOpenAIDirectHTTPCompact(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAIDirectHTTPCompactKey{}, true)
+}
+
+func isOpenAIDirectHTTPCompact(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(openAIDirectHTTPCompactKey{}) == true
+}
 
 type openAIForwardModel struct {
 	model                  string

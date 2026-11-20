@@ -20,6 +20,23 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	httpPolicy := codexHTTPPolicyForRequest(c, account)
+	compactPath := isOpenAIResponsesCompactPath(c)
+	if compactPath && GetOpenAIClientTransport(c) == OpenAIClientTransportHTTP {
+		if httpPolicy.usesFixedExecContract() {
+			if openAIResponsesRequestPathSuffix(c) != "/compact" {
+				err := newOpenAIResponsesLiteValidationError("request", "unsupported compact subpath for the Codex HTTP contract")
+				writeCodexHTTPCompatibilityError(c, err)
+				return nil, err
+			}
+		} else {
+			normalized, _, err := normalizeOpenAICompactRequestBody(body)
+			if err != nil {
+				return nil, err
+			}
+			body = normalized
+		}
+	}
 	preparedBody, prepareErr := prepareCodexHTTPIngress(c, account, body)
 	if prepareErr != nil {
 		return nil, prepareErr
@@ -121,9 +138,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
-	compactPath := isOpenAIResponsesCompactPath(c)
-	httpContractIsFixed := codexHTTPPolicyForRequest(c, account).usesFixedExecContract()
-	if !httpContractIsFixed &&
+	if !httpPolicy.usesFixedExecContract() &&
 		shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
 		body, err = flattenOpenAIResponsesNamespaces(c, body)
 		if err != nil {
@@ -134,7 +149,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, err
 		}
 	}
-	if !httpContractIsFixed &&
+	if !httpPolicy.usesFixedExecContract() &&
 		shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
 		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
 			account, wsDecision.Transport, passthroughEnabled, compactPath, body,
@@ -207,8 +222,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
-	httpPolicy := codexHTTPPolicyForRequest(c, account)
 	normalizeAsExec := httpPolicy.usesFixedExecContract()
+	if compactPath && normalizeAsExec {
+		reqStream = false
+	}
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
 		if !httpPolicy.usesFixedExecContract() {
 			normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
@@ -596,7 +613,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Account namespace is orthogonal to fingerprint convergence: preserve
 		// each client's identity cardinality, but never reuse it across OAuth
 		// credentials after scheduler failover.
-		if !isCompactRequest && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c)) {
+		if (!isCompactRequest || normalizeAsExec) && applyCodexAccountIdentityClientMetadataMap(decoded, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c)) {
 			markDecodedModified()
 		}
 		stageCodexFingerprintIDs(c, nil)
@@ -783,12 +800,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	// Run after orphan-output filtering and all request-map rebuilds so a
 	// compaction trigger cannot remain ahead of surviving history items.
-	if normalizedBody, changed, normalizeErr := NormalizeCompactionTriggerInputOrder(body); normalizeErr != nil {
-		return nil, fmt.Errorf("normalize compaction trigger order: %w", normalizeErr)
-	} else if changed {
-		body = normalizedBody
-		requestView = newOpenAIRequestView(body)
-		reqBody = nil
+	if !isCompactRequest || !normalizeAsExec {
+		if normalizedBody, changed, normalizeErr := NormalizeCompactionTriggerInputOrder(body); normalizeErr != nil {
+			return nil, fmt.Errorf("normalize compaction trigger order: %w", normalizeErr)
+		} else if changed {
+			body = normalizedBody
+			requestView = newOpenAIRequestView(body)
+			reqBody = nil
+		}
 	}
 	// 剥离本会话已被上游判定失效的加密项（invalid_encrypted_content lineage），
 	// 阻断同一失效密文随客户端历史在每一轮重复触发"被拒→剥离→重试/重连"。
@@ -1472,7 +1491,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	default:
 		targetURL = openaiPlatformAPIURL
 	}
-	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	targetURL = openAIHTTPResponsesUpstreamURL(c, account, targetURL)
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。

@@ -508,10 +508,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		)
 	}
 
-	reqStream, ok := parseOpenAICompatibleStream(body)
-	if !ok {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)
-		return
+	reqStream := false
+	if !legacyCompact {
+		reqStream, ok = parseOpenAICompatibleStream(body)
+		if !ok {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)
+			return
+		}
 	}
 	if _, err := service.ValidateOpenAIServiceTierField(body); err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -653,6 +656,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		c.Request.Context(), c, sessionHashBody, reqModel,
 	))
 	requireCompact := legacyCompact
+	if requireCompact {
+		c.Request = c.Request.WithContext(service.WithOpenAIDirectHTTPCompact(c.Request.Context()))
+	}
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -1090,14 +1096,12 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 	if compactSeed := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); compactSeed != "" {
 		c.Set(service.OpenAICompactSessionSeedKeyForTest(), compactSeed)
 	}
-	normalizedCompactBody, normalizedCompact, compactErr := service.NormalizeOpenAICompactRequestBodyForTest(body)
-	if compactErr != nil {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to normalize compact request body")
+	if !gjson.ValidBytes(body) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse compact request body")
 		return nil, false
 	}
-	if normalizedCompact {
-		body = normalizedCompactBody
-	}
+	// Legacy body projection runs after account selection, so the fixed V2
+	// adapter still sees the caller's full task and protocol metadata.
 	return body, true
 }
 

@@ -174,6 +174,35 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NativeCompactionIgnores
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_DirectCompactUsesCodexResponsesCapability(t *testing.T) {
+	for _, advanced := range []bool{false, true} {
+		t.Run(boolString(advanced), func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			groupID := int64(91011)
+			svc := newOpenAICompactionSchedulerTestService([]Account{
+				{
+					ID: 71017, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+					Status: StatusActive, Schedulable: true, Concurrency: 1,
+					Extra: map[string]any{"openai_compact_supported": false, "openai_responses_supported": true},
+				},
+				{
+					ID: 71018, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+					Status: StatusActive, Schedulable: true, Concurrency: 1,
+					Extra: map[string]any{"openai_compact_supported": false},
+				},
+			}, advanced)
+
+			selection, _, err := svc.SelectAccountWithSchedulerForCapability(
+				WithOpenAIDirectHTTPCompact(context.Background()), &groupID, "", "", "gpt-5.6-sol", nil,
+				OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityResponses, true, false, false,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.EqualValues(t, 71018, selection.Account.ID)
+		})
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_NativeCompactionAllowsForceOff(t *testing.T) {
 	for _, advanced := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy_scheduler", true: "advanced_scheduler"}[advanced], func(t *testing.T) {
@@ -494,7 +523,7 @@ func TestOpenAICompactSupportTier(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := openAICompactSupportTier(tt.account); got != tt.want {
+			if got := openAICompactSupportTier(context.Background(), tt.account); got != tt.want {
 				t.Fatalf("openAICompactSupportTier(...) = %d, want %d", got, tt.want)
 			}
 		})

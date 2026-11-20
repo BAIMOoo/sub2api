@@ -614,7 +614,7 @@ func (s *OpenAIGatewayService) buildOpenAIPassthroughBaseRequest(
 			targetURL = buildOpenAIResponsesURLForPlatform(account.Platform, validatedURL)
 		}
 	}
-	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
+	targetURL = openAIHTTPResponsesUpstreamURL(c, account, targetURL)
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
@@ -2453,7 +2453,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// The ChatGPT OAuth upstream may omit Content-Type while still sending SSE,
 	// so OAuth accounts also fall back to the body framing (same rule as
 	// handleNonStreamingResponse).
-	if isEventStreamResponse(resp.Header) || (account != nil && account.Type == AccountTypeOAuth && bodyHasSSEFraming(body)) {
+	if isCodexHTTPCompactRequest(c, account) || isEventStreamResponse(resp.Header) || (account != nil && account.Type == AccountTypeOAuth && bodyHasSSEFraming(body)) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
@@ -2522,9 +2522,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
-	finalResponse, ok := extractCodexFinalResponse(bodyText)
-	if !ok && terminalOK {
-		finalResponse, ok = extractOpenAINonCompletedTerminalResponse(terminalType, terminalPayload)
+	finalResponse, ok, err := extractOpenAIUnarySSEOutput(c, account, terminalType, terminalPayload, bodyText)
+	if err != nil {
+		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, err.Error())
 	}
 
 	usage := s.parseSSEUsageFromBody(bodyText)
@@ -2532,22 +2532,14 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
 		}
-		// When the terminal event has an empty output array, reconstruct
-		// output from accumulated delta events so the client gets full content.
-		if len(gjson.GetBytes(finalResponse, "output").Array()) == 0 {
-			if outputJSON, reconstructed := reconstructResponseOutputFromSSE(bodyText); reconstructed {
-				if patched, err := sjson.SetRawBytes(finalResponse, "output", outputJSON); err == nil {
-					finalResponse = patched
-				}
-			}
-		}
-		finalResponse = supplementCompactionItemFromSSE(c, finalResponse, bodyText)
 		body = finalResponse
 		if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 			body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 		}
 		// Correct tool calls in final response
-		body = s.correctToolCallsInResponseBody(body)
+		if !codexHTTPPolicyForRequest(c, account).usesFixedExecContract() {
+			body = s.correctToolCallsInResponseBody(body)
+		}
 		restoredBody, restoreErr := restoreOpenAIResponsesNamespacePayload(c, body)
 		if restoreErr != nil {
 			return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", restoreErr)

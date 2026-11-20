@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -135,10 +134,7 @@ func normalizeCodexHTTPBody(
 
 	model := gjson.GetBytes(body, "model").String()
 	mode = resolveCodexHTTPMode(c, account, model, body)
-	if isOpenAIResponsesCompactPath(c) {
-		logCodexHTTPModeSelection(account, body, mode)
-		return body, mode, nil
-	}
+	compact := isOpenAIResponsesCompactPath(c)
 	var request map[string]any
 	if err := decodeOpenAIJSONUseNumber(body, &request); err != nil {
 		return nil, mode, fmt.Errorf("decode Codex HTTP body: %w", err)
@@ -212,6 +208,11 @@ func normalizeCodexHTTPBody(
 			request["tools"] = []any{}
 		}
 	}
+	if compact {
+		if err := setCodexHTTPCompactionTrigger(request); err != nil {
+			return nil, mode, err
+		}
+	}
 	toolNameReverse, _, err := aliasOpenAIOAuthReservedToolNames(request)
 	if err != nil {
 		return nil, mode, err
@@ -245,6 +246,10 @@ func applyCodexHTTPMode(c *gin.Context, account *Account, req *http.Request, bod
 	req.Header.Del(responsesLiteHeader)
 	if mode.lite {
 		req.Header.Set(responsesLiteHeader, "true")
+	}
+	if isOpenAIResponsesCompactPath(c) {
+		req.Header.Set("Accept", "text/event-stream")
+		ensureOpenAIRemoteCompactionV2BetaFeature(req.Header)
 	}
 	session := gjson.GetBytes(body, "prompt_cache_key").String()
 	applyCodexSessionIdentityHeaders(req.Header, session)
@@ -310,7 +315,7 @@ func ensureCodexHTTPSession(c *gin.Context, account *Account, request map[string
 
 	turn := map[string]any{}
 	if raw, ok := metadata["x-codex-turn-metadata"].(string); ok && raw != "" {
-		if err := json.Unmarshal([]byte(raw), &turn); err != nil {
+		if err := decodeOpenAIJSONUseNumber([]byte(raw), &turn); err != nil {
 			return newOpenAIResponsesLiteValidationError(
 				"client_metadata",
 				"invalid Codex turn metadata",
@@ -322,6 +327,9 @@ func ensureCodexHTTPSession(c *gin.Context, account *Account, request map[string
 	}
 	turn["session_id"], turn["thread_id"] = session, session
 	turn["window_id"] = metadata["x-codex-window-id"]
+	if isOpenAIResponsesCompactPath(c) {
+		turn["request_kind"] = "compaction"
+	}
 
 	turnID := firstNonEmptyString(metadata["turn_id"], turn["turn_id"])
 	if turnID == "" {

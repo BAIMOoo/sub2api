@@ -172,14 +172,14 @@ func TestOpenAICostOverflowExpandedOnlyWhenCostAddsCandidates(t *testing.T) {
 		{account: &Account{ID: 2}},
 	}
 	plan := openAIAccountLoadPlan{candidates: candidates, topK: 1, includeOverflowFallback: true}
-	require.True(t, openAICostOverflowExpanded(OpenAIAccountScheduleRequest{}, plan))
-	require.False(t, openAICostOverflowExpanded(OpenAIAccountScheduleRequest{RequireCompact: true}, plan),
+	require.True(t, openAICostOverflowExpanded(context.Background(), OpenAIAccountScheduleRequest{}, plan))
+	require.False(t, openAICostOverflowExpanded(context.Background(), OpenAIAccountScheduleRequest{RequireCompact: true}, plan),
 		"one candidate per compact tier does not expand either tier's top-k")
 	plan.topK = len(candidates)
-	require.False(t, openAICostOverflowExpanded(OpenAIAccountScheduleRequest{}, plan))
+	require.False(t, openAICostOverflowExpanded(context.Background(), OpenAIAccountScheduleRequest{}, plan))
 	plan.includeOverflowFallback = false
 	plan.topK = 1
-	require.False(t, openAICostOverflowExpanded(OpenAIAccountScheduleRequest{}, plan))
+	require.False(t, openAICostOverflowExpanded(context.Background(), OpenAIAccountScheduleRequest{}, plan))
 }
 
 func TestAdvancedSchedulerKnownFullOverflowStillFindsAvailableAccount(t *testing.T) {
@@ -770,13 +770,13 @@ func TestBuildOpenAISelectionOrderIncludesOverflowOnlyForCostScheduling(t *testi
 		{account: &Account{ID: 3}, loadInfo: &AccountLoadInfo{}, score: 1},
 	}
 
-	legacy := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
+	legacy := scheduler.buildOpenAISelectionOrder(context.Background(), OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
 		candidates: candidates,
 		topK:       1,
 	})
 	require.Len(t, legacy, 1)
 
-	costAware := scheduler.buildOpenAISelectionOrder(OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
+	costAware := scheduler.buildOpenAISelectionOrder(context.Background(), OpenAIAccountScheduleRequest{}, openAIAccountLoadPlan{
 		candidates:              candidates,
 		topK:                    1,
 		includeOverflowFallback: true,

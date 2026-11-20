@@ -585,10 +585,6 @@ func OpenAICompactSessionSeedKeyForTest() string {
 	return openAICompactSessionSeedKey
 }
 
-func NormalizeOpenAICompactRequestBodyForTest(body []byte) ([]byte, bool, error) {
-	return normalizeOpenAICompactRequestBody(body)
-}
-
 func isOpenAIResponsesCompactPath(c *gin.Context) bool {
 	suffix := strings.TrimSpace(openAIResponsesRequestPathSuffix(c))
 	return suffix == "/compact" || strings.HasPrefix(suffix, "/compact/")
@@ -900,7 +896,7 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body []byte, knownSto
 }
 
 func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, account *Account, body []byte) ([]byte, bool, error) {
-	if account == nil || !account.IsOpenAIOAuthLike() || !isOpenAIResponsesCompactPath(c) {
+	if account == nil || !account.IsOpenAIOAuthLike() || !isOpenAIResponsesCompactPath(c) || isCodexHTTPCompactRequest(c, account) {
 		return body, false, nil
 	}
 
