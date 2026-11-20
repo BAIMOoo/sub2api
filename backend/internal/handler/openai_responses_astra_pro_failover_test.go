@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,6 @@ const astraProForbiddenResponse = `{"error":{"type":"forbidden_error","code":"fo
 
 // astraProCapturedUpstream records URL/accountID/body per forwarded attempt.
 type astraProCapturedUpstream struct {
-	service.HTTPUpstream
 	mu         sync.Mutex
 	urls       []string
 	accountIDs []int64
@@ -84,6 +84,10 @@ func (u *astraProCapturedUpstream) Do(req *http.Request, _ string, accountID int
 		resp = &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(bytes.NewReader(nil))}
 	}
 	return resp, nil
+}
+
+func (u *astraProCapturedUpstream) DoWithTLS(req *http.Request, proxy string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxy, accountID, concurrency)
 }
 
 func (u *astraProCapturedUpstream) snapshot() ([]string, []int64, [][]byte) {
