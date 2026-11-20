@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -70,53 +69,27 @@ func (e *codexLiveResponseEvidence) Write(p []byte) (int, error) {
 func (e *codexLiveResponseEvidence) completed() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.overflow {
-		return false
-	}
-	completed := false
-	for line := range bytes.Lines(e.body.Bytes()) {
-		data, ok := bytes.CutPrefix(line, []byte("data:"))
-		if !ok {
-			continue
-		}
-		data = bytes.TrimSpace(data)
-		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
-			continue
-		}
-		var event struct {
-			Type     string `json:"type"`
-			Response struct {
-				Status string `json:"status"`
-			} `json:"response"`
-		}
-		if json.Unmarshal(data, &event) != nil {
-			return false
-		}
-		switch event.Type {
-		case "response.completed":
-			if completed || event.Response.Status != "completed" {
-				return false
-			}
-			completed = true
-		case "response.incomplete", "response.failed", "response.cancelled", "response.canceled", "error":
-			return false
-		}
-	}
-	return completed
+	return !e.overflow && service.CodexLiveSSECompleted(e.body.String())
 }
 
 func TestCodexLiveRequiresUpstreamCompletionEvidence(t *testing.T) {
-	const complete = "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\r\n\r\n"
+	const completeLine = "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}"
+	const complete = completeLine + "\r\n\r\n"
 	const incomplete = "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\"}}\n\n"
+	const namedIncomplete = "event: response.incomplete\ndata: {\"response\":{\"status\":\"incomplete\"}}\n\n"
 	for _, tc := range []struct {
 		name, stream string
 		completed    bool
 	}{
 		{"completed", complete + "data: [DONE]\n\n", true},
+		{"named multiline completion", "event: response.completed\r\ndata: {\"response\":\r\ndata:  {\"status\":\"completed\"}}\r\n\r\n", true},
 		{"incomplete", incomplete, false},
+		{"named incomplete", namedIncomplete, false},
 		{"missing status", "data: {\"type\":\"response.completed\"}\n\n", false},
 		{"missing event", "data: [DONE]\n\n", false},
+		{"completion after done", "data: [DONE]\n\n" + complete, false},
 		{"conflicting terminal", complete + incomplete, false},
+		{"malformed completed frame then named incomplete", completeLine + "\ndata: {}\n\n" + namedIncomplete, false},
 		{"oversize", complete + strings.Repeat("x", codexLiveEvidenceLimit), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
