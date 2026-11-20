@@ -107,6 +107,79 @@ func TestCodexHTTPResponsesPreservesEmptyLegacyToolResult(t *testing.T) {
 	}
 }
 
+func TestCodexHTTPResponsesDoesNotBroadenExplicitToolChoice(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		selection  string
+		wantChoice string
+		wantParam  string
+	}{
+		{
+			name:       "native named selection from replay context",
+			selection:  `"tool_choice":{"type":"function","name":"lookup"}`,
+			wantChoice: `{"type":"function","name":"lookup"}`,
+		},
+		{
+			name:       "native hosted selection from replay context",
+			selection:  `"tool_choice":{"type":"web_search"}`,
+			wantChoice: `{"type":"web_search"}`,
+		},
+		{
+			name:       "legacy nested selection",
+			selection:  `"tool_choice":{"type":"function","function":{"name":"lookup"}}`,
+			wantChoice: `{"type":"function","name":"lookup"}`,
+		},
+		{
+			name:       "legacy function call",
+			selection:  `"function_call":{"name":"lookup"}`,
+			wantChoice: `{"type":"function","name":"lookup"}`,
+		},
+		{
+			name:      "legacy fields cannot disappear",
+			selection: `"tool_choice":{"type":"function","function":{"name":"lookup","description":"keep"}}`,
+			wantParam: "tool_choice",
+		},
+		{
+			name:      "legacy function call fields cannot disappear",
+			selection: `"function_call":{"name":"lookup","description":"keep"}`,
+			wantParam: "function_call",
+		},
+		{
+			name:      "conflicting formats",
+			selection: `"tool_choice":"none","function_call":{"name":"lookup"}`,
+			wantParam: "tool_choice",
+		},
+	} {
+		for _, passthrough := range []bool{false, true} {
+			t.Run(test.name+"/passthrough="+boolString(passthrough), func(t *testing.T) {
+				body := []byte(`{"model":"gpt-5.5","previous_response_id":"resp_prior","input":"continue",` + test.selection + `}`)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+				account := codexBodyEncodingTestAccount(2106)
+				account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+				upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+				_, err := svc.Forward(context.Background(), c, account, body)
+				require.Error(t, err)
+				if test.wantParam != "" {
+					require.Nil(t, upstream.lastReq)
+					require.Equal(t, http.StatusBadRequest, rec.Code)
+					require.Equal(t, "invalid_request_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+					require.Equal(t, test.wantParam, gjson.GetBytes(rec.Body.Bytes(), "error.param").String())
+					return
+				}
+				require.NotNil(t, upstream.lastReq, "request must reach the synthetic upstream: %v", err)
+				require.Equal(t, "resp_prior", gjson.GetBytes(upstream.lastBody, "previous_response_id").String())
+				require.JSONEq(t, test.wantChoice, gjson.GetBytes(upstream.lastBody, "tool_choice").Raw)
+				require.False(t, gjson.GetBytes(upstream.lastBody, "function_call").Exists())
+			})
+		}
+	}
+}
+
 func TestCodexHTTPChatPreservesAgentSemantics(t *testing.T) {
 	for _, lite := range []bool{false, true} {
 		t.Run("lite="+boolString(lite), func(t *testing.T) {

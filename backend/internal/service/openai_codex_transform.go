@@ -272,7 +272,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 		result.Modified = true
 	}
 
-	if fcRaw, ok := reqBody["function_call"]; ok {
+	if fcRaw, ok := reqBody["function_call"]; ok && !opts.HTTPPolicy.usesFixedExecContract() {
 		if fcStr, ok := fcRaw.(string); ok {
 			// e.g. "auto", "none"
 			reqBody["tool_choice"] = fcStr
@@ -306,7 +306,7 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 			result.Modified = true
 		}
 	}
-	if normalizeCodexToolChoice(reqBody) {
+	if !opts.HTTPPolicy.usesFixedExecContract() && normalizeCodexToolChoice(reqBody) {
 		result.Modified = true
 	}
 

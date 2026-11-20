@@ -143,6 +143,9 @@ func (policy codexHTTPPolicy) normalizeBody(
 	normalizeOpenAIResponsesStringInput(request)
 	normalizeCodexSystemRoleMessagesInInput(request)
 	request["store"], request["stream"] = false, true
+	if err := normalizeCodexHTTPToolChoice(request); err != nil {
+		return nil, mode, err
+	}
 	if _, exists := request["tool_choice"]; !exists {
 		request["tool_choice"] = "auto"
 	}
@@ -218,6 +221,46 @@ func (policy codexHTTPPolicy) normalizeBody(
 	}
 	logCodexHTTPModeSelection(account, normalized, mode)
 	return normalized, mode, nil
+}
+
+// Native selections may reference tools in replay context. Never widen a
+// selection to auto based on the tools declared in this attempt alone.
+func normalizeCodexHTTPToolChoice(request map[string]any) error {
+	if legacy, exists := request["function_call"]; exists {
+		if _, hasChoice := request["tool_choice"]; hasChoice {
+			return newOpenAIResponsesLiteValidationError("tool_choice", "tool_choice and legacy function_call cannot both define selection")
+		}
+		choice := legacy
+		if mode, ok := legacy.(string); !ok || (mode != "auto" && mode != "none") {
+			name, ok := codexHTTPFunctionChoiceName(legacy)
+			if !ok {
+				return newOpenAIResponsesLiteValidationError("function_call", "legacy function_call must be auto, none, or a single named function")
+			}
+			choice = map[string]any{"type": "function", "name": name}
+		}
+		request["tool_choice"] = choice
+		delete(request, "function_call")
+		return nil
+	}
+
+	choice, _ := request["tool_choice"].(map[string]any)
+	nested, hasNested := choice["function"]
+	if choice["type"] != "function" || !hasNested {
+		return nil
+	}
+	name, valid := codexHTTPFunctionChoiceName(nested)
+	if _, hasFlat := choice["name"]; hasFlat || !valid {
+		return newOpenAIResponsesLiteValidationError("tool_choice", "nested function selection cannot be losslessly converted to a single name")
+	}
+	choice["name"] = name
+	delete(choice, "function")
+	return nil
+}
+
+func codexHTTPFunctionChoiceName(raw any) (string, bool) {
+	function, _ := raw.(map[string]any)
+	name, _ := function["name"].(string)
+	return name, len(function) == 1 && strings.TrimSpace(name) != ""
 }
 
 func logCodexHTTPModeSelection(account *Account, body []byte, mode codexHTTPMode) {
