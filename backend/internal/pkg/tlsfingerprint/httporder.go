@@ -30,13 +30,16 @@ type HTTPHeaderOrder struct {
 //
 // 采集（两轮，均在东京机做受控劫持：记录 req.rawHeaders 即原样线上顺序，
 // 并对 WS 升级回可重试的 503 逼其回退到 HTTPS POST）：
+//
 //   - 2026-09-28：官方 codex-cli 0.157.0 与 0.158.0 各 2 条样本（model=gpt-5.1-codex，
 //     该模型不是 Responses Lite 模型，报文里没有 lite 头），四次完全一致。
+//
 //   - 2026-09-29：换成我们实际用的模型串重采（model=gpt-6-astra，官方内置模型目录里
 //     该模型的 use_responses_lite=true），0.157.0 与 0.158.0 各 2 条，四次完全一致 ——
 //     报文里出现 x-openai-internal-codex-responses-lite，位置固定在
 //     x-codex-turn-metadata 之后、x-codex-routing-hint 之前（第 5 位），
 //     并非排在 host 之前。
+//
 //   - 2026-09-29（同日第三轮）：用"伪造一次成功开始"的办法逼客户端回放
 //     x-codex-turn-state —— 劫持下把主请求回成 200 + 该响应头 + 一条 response.created，
 //     再在 response.completed 之前掐断连接（官方把这种断流归为可重试的

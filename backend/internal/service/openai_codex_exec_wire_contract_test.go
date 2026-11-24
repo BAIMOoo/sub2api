@@ -173,9 +173,15 @@ func TestForward_CodexExec0158LegacyStandardInstructionsPromotedTo0171Layout(t *
 			require.True(t, ok)
 			require.Equal(t, "message", promoted["type"])
 			require.Equal(t, "developer", promoted["role"])
-			require.Equal(t, legacyInstructions, promoted["content"].([]any)[0].(map[string]any)["text"])
-			require.Equal(t, []any{"model.base_instructions"},
-				promoted["internal_chat_message_metadata_passthrough"].(map[string]any)["content_item_kinds"])
+			promotedContent, ok := promoted["content"].([]any)
+			require.True(t, ok)
+			require.Len(t, promotedContent, 1)
+			promotedPart, ok := promotedContent[0].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, legacyInstructions, promotedPart["text"])
+			promotedMeta, ok := promoted["internal_chat_message_metadata_passthrough"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, []any{"model.base_instructions"}, promotedMeta["content_item_kinds"])
 			require.Equal(t, legacyInput, forwardedInput[1:])
 		})
 	}
