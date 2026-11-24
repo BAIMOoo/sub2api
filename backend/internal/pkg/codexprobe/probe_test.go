@@ -62,7 +62,7 @@ func testProbe(t *testing.T, limit int) (context.Context, Config) {
 func TestProbeFragmentedWireRedactionAndRestartBudget(t *testing.T) {
 	ctx, cfg := testProbe(t, 1)
 	body := `{"input":"private prompt","prompt_cache_key":"session","client_metadata":{"session_id":"session","thread_id":"thread","x-codex-window-id":"window"},"unknown_field":"must remain visible"}`
-	head := fmt.Sprintf("POST /backend-api/codex/responses HTTP/1.1\r\nversion: 0.158.0\r\nauthorization: Bearer NEVER_SAVE_ME\r\ncookie: secret-cookie\r\nsession-id: session\r\nthread-id: thread\r\nx-codex-window-id: window\r\nhost: chatgpt.com\r\ncontent-type: application/json\r\ncontent-length: %d\r\n\r\n", len(body))
+	head := fmt.Sprintf("POST /backend-api/codex/responses HTTP/1.1\r\nversion: 0.171.0\r\nauthorization: Bearer NEVER_SAVE_ME\r\ncookie: secret-cookie\r\nsession-id: session\r\nthread-id: thread\r\nx-codex-window-id: window\r\nhost: chatgpt.com\r\ncontent-type: application/json\r\ncontent-length: %d\r\n\r\n", len(body))
 	dst := &memoryConn{}
 	conn := WrapHTTP(ctx, dst)
 	wire := head + body

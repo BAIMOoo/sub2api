@@ -2,9 +2,9 @@ package tlsfingerprint
 
 // OpenAICodexLinuxProfile 返回官方 codex 客户端在 Linux 上的 ClientHello 形态。
 //
-// 参照 2026-09-28 实测：在东京机用官方 codex-cli 打本机 ClientHello 捕获监听
-// （0.157.0 采 48 次、0.158.0 采 49 次），两次采集的 JA3 与逐字段完全一致，
-// 即官方 Linux 客户端是 OpenSSL 栈（native-tls），形态稳定：
+// 参照 2026-09-28（0.157.0/0.158.0）与 2026-11-24（0.171.0 Linux x86_64 隔离实采
+// 60 次 HTTP 回退 ClientHello，无自定义 CA/代理）实测：各版本采集的 JA3 与逐字段
+// 完全一致，即官方 Linux 客户端仍是 OpenSSL 栈（native-tls），形态稳定：
 //
 //	JA3          0b85eb0d4981e69064e40753e4f0ac5f
 //	记录层版本    TLS1.0（OpenSSL 约定），legacy_version TLS1.2
@@ -19,7 +19,9 @@ package tlsfingerprint
 func OpenAICodexLinuxProfile() *Profile {
 	return &Profile{
 		Name: "Codex CLI (Linux, OpenSSL)",
-		// 官方不发 Accept-Encoding，而 Go 的 Transport 默认会自动加 “Accept-Encoding: gzip”。
+		// 始终禁用 Go Transport 的隐式 “Accept-Encoding: gzip” 注入；0.171.0 固定
+		// 出站由应用层显式写入实采头 `accept-encoding: zstd,gzip`，响应解压统一由
+		// repository.decompressResponseBody 处理。
 		DisableCompression: true,
 		EnableGREASE:       false,
 		// 官方 HTTP/1.1 POST /backend-api/codex/responses 的头顺序（实测，见 httporder.go）。

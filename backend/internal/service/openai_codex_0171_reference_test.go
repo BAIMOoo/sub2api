@@ -21,15 +21,16 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestCodex0158HTTPWireReference(t *testing.T) {
-	raw, err := os.ReadFile("testdata/codex_exec_0158_linux_amd64/http.json")
+func TestCodex0171HTTPWireReference(t *testing.T) {
+	raw, err := os.ReadFile("testdata/codex_exec_0171_linux_amd64/http.json")
 	require.NoError(t, err)
 	var ref struct {
-		RequestLine   string            `json:"request_line"`
-		Headers       map[string]string `json:"headers"`
-		StandardOrder []string          `json:"standard_and_compact_order"`
-		LiteOrder     []string          `json:"lite_order"`
-		ZstdHeaderHex string            `json:"zstd_header_hex"`
+		RequestLine             string            `json:"request_line"`
+		Headers                 map[string]string `json:"headers"`
+		StandardOrder           []string          `json:"standard_and_compact_order"`
+		LiteOrder               []string          `json:"lite_order"`
+		StandardWithCookieOrder []string          `json:"standard_with_cookie_order"`
+		ZstdHeaderHex           string            `json:"zstd_header_hex"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &ref))
 	frameHeader, err := hex.DecodeString(ref.ZstdHeaderHex)
@@ -40,12 +41,13 @@ func TestCodex0158HTTPWireReference(t *testing.T) {
 	t.Cleanup(decoder.Close)
 
 	for _, tc := range []struct {
-		name, path string
-		lite       bool
+		name, path   string
+		lite, cookie bool
 	}{
-		{"Standard", "/v1/responses", false},
-		{"Lite", "/v1/responses", true},
-		{"Compact V2", "/v1/responses/compact", false},
+		{"Standard", "/v1/responses", false, false},
+		{"Standard With Cookie", "/v1/responses", false, true},
+		{"Lite", "/v1/responses", true, false},
+		{"Compact V2", "/v1/responses/compact", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			compact := tc.path == "/v1/responses/compact"
@@ -55,7 +57,7 @@ func TestCodex0158HTTPWireReference(t *testing.T) {
 				input = []byte(codexHTTPCompactInput)
 				reply = codexHTTPCompactSSEItem + reply
 			}
-			account := codexBodyEncodingTestAccount(158)
+			account := codexBodyEncodingTestAccount(171)
 			setCodexHTTPTestMode(account, "gpt-5.5", tc.lite)
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, tc.path, bytes.NewReader(input))
@@ -77,6 +79,9 @@ func TestCodex0158HTTPWireReference(t *testing.T) {
 			require.True(t, profile.DisableCompression)
 
 			req := upstream.lastReq.Clone(t.Context())
+			if tc.cookie {
+				req.Header.Set("Cookie", "__cf_bm=fixture-cookie")
+			}
 			req.Body, err = req.GetBody()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = req.Body.Close() })
@@ -95,7 +100,9 @@ func TestCodex0158HTTPWireReference(t *testing.T) {
 				headers[name] = value
 			}
 			wantOrder := ref.StandardOrder
-			if tc.lite {
+			if tc.cookie {
+				wantOrder = ref.StandardWithCookieOrder
+			} else if tc.lite {
 				wantOrder = ref.LiteOrder
 				require.Equal(t, "true", headers[strings.ToLower(responsesLiteHeader)])
 			}

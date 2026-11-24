@@ -290,6 +290,7 @@ func (policy codexHTTPPolicy) applyModeHeaders(c *gin.Context, account *Account,
 		}
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Accept-Encoding", codexExecHTTPAcceptEncoding)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Del(responsesLiteHeader)
 	if mode.lite {
