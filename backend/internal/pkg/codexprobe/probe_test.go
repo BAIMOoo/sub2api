@@ -227,3 +227,136 @@ func TestProbeExplicitDirectEgressMode(t *testing.T) {
 		}
 	}
 }
+
+func TestProbeAccountIDsAllowlist(t *testing.T) {
+	signReq := func(cfg Config) *http.Request {
+		ticket := Ticket{Run: fmt.Sprintf("run-acct-%d", time.Now().UnixNano()), Sample: "native-multi", Expires: time.Now().Add(time.Hour).Unix()}
+		raw, _ := json.Marshal(ticket)
+		encoded := base64.RawURLEncoding.EncodeToString(raw)
+		mac := hmac.New(sha256.New, []byte(cfg.Secret))
+		_, _ = mac.Write([]byte(encoded))
+		req := httptest.NewRequest("POST", "https://gateway/v1/responses", nil)
+		req.Header.Set(Header, encoded+"."+hex.EncodeToString(mac.Sum(nil)))
+		return req
+	}
+
+	dir := t.TempDir()
+	secret := strings.Repeat("s", 40)
+	for _, cfg := range []Config{
+		{Secret: secret, APIKeyID: 22, AccountIDs: []int64{8, 9}, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+		{Secret: secret, APIKeyID: 22, AccountID: 9, AccountIDs: []int64{8, 9}, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+	} {
+		auth, err := authenticate(signReq(cfg), 22, cfg, time.Now())
+		if err != nil {
+			t.Fatalf("allowlist config rejected: %v", err)
+		}
+		ctx := auth.Context()
+		p := FromContext(ctx)
+		upstreamReq := httptest.NewRequest("POST", "https://chatgpt.com/backend-api/codex/responses", nil)
+		for _, allowed := range []int64{8, 9} {
+			if err := CheckSelection(ctx, allowed, 0, true); err != nil {
+				t.Fatalf("allowed account %d rejected in selection: %v", allowed, err)
+			}
+			if err := p.CheckTransport(upstreamReq, allowed, ""); err != nil {
+				t.Fatalf("allowed account %d rejected in transport: %v", allowed, err)
+			}
+		}
+		if err := CheckSelection(ctx, 8, 0, true); err != nil {
+			t.Fatalf("re-select account 8: %v", err)
+		}
+		if err := p.Emit("tls", map[string]any{"ok": true}); err != nil {
+			t.Fatalf("emit evidence: %v", err)
+		}
+		files, _ := filepath.Glob(filepath.Join(dir, p.ticket.Run, "*-tls-*.json"))
+		if len(files) != 1 {
+			t.Fatalf("expected 1 tls evidence file, got %v", files)
+		}
+		raw, _ := os.ReadFile(files[0])
+		var emitted struct {
+			AccountID int64 `json:"account_id"`
+		}
+		if err := json.Unmarshal(raw, &emitted); err != nil || emitted.AccountID != 8 {
+			t.Fatalf("emitted account_id = %d (err=%v), want 8", emitted.AccountID, err)
+		}
+		for _, denied := range []int64{0, 7, 10} {
+			if CheckSelection(ctx, denied, 0, true) == nil {
+				t.Fatalf("disallowed account %d accepted in selection", denied)
+			}
+			if p.CheckTransport(upstreamReq, denied, "") == nil {
+				t.Fatalf("disallowed account %d accepted in transport", denied)
+			}
+		}
+	}
+
+	tooMany := make([]int64, maxAllowedAccounts+1)
+	for i := range tooMany {
+		tooMany[i] = int64(i + 1)
+	}
+	for _, bad := range []Config{
+		{Secret: secret, APIKeyID: 22, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+		{Secret: secret, APIKeyID: 22, AccountID: -1, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+		{Secret: secret, APIKeyID: 22, AccountIDs: []int64{8, 0}, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+		{Secret: secret, APIKeyID: 22, AccountIDs: []int64{8, -9}, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+		{Secret: secret, APIKeyID: 22, AccountID: 7, AccountIDs: []int64{8, 9}, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+		{Secret: secret, APIKeyID: 22, AccountIDs: tooMany, DirectEgress: true, OutputDir: dir, MaxRequests: 3},
+	} {
+		if _, err := authenticate(signReq(bad), 22, bad, time.Now()); err == nil {
+			t.Fatalf("invalid account allowlist accepted: %+v", bad)
+		}
+	}
+}
+
+func TestProbeUserAgentContractCapture(t *testing.T) {
+	alpine := "codex_exec/0.171.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.171.0)"
+	ubuntu := "codex_exec/0.171.0 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.171.0)"
+	want := "codex_exec/0.171.0 (<linux-os>; x86_64) unknown (codex_exec; 0.171.0)"
+	if got := userAgentContract(alpine); got != want {
+		t.Fatalf("alpine contract = %q, want %q", got, want)
+	}
+	if got := userAgentContract(ubuntu); got != want {
+		t.Fatalf("ubuntu contract = %q, want %q", got, want)
+	}
+	if got := userAgentContract("codex_exec/0.172.0 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.172.0)"); got == want {
+		t.Fatal("different codex version collapsed into same contract")
+	}
+	for _, nonLinuxOrUnexpected := range []string{
+		"codex_exec/0.171.0 (macOS 15.1; x86_64) unknown (codex_exec; 0.171.0)",
+		"codex_exec/0.171.0 (Windows 11; x86_64) unknown (codex_exec; 0.171.0)",
+		"curl/8.7.1",
+		"",
+	} {
+		if got := userAgentContract(nonLinuxOrUnexpected); got != "" {
+			t.Fatalf("unexpected contract %q for %q", got, nonLinuxOrUnexpected)
+		}
+	}
+
+	ctx, cfg := testProbe(t, 1)
+	body := `{"input":[],"prompt_cache_key":"session"}`
+	head := fmt.Sprintf("POST /backend-api/codex/responses HTTP/1.1\r\nhost: chatgpt.com\r\nuser-agent: %s\r\ncontent-type: application/json\r\ncontent-length: %d\r\n\r\n", alpine, len(body))
+	dst := &memoryConn{}
+	conn := WrapHTTP(ctx, dst)
+	if _, err := conn.Write([]byte(head + body)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	files, _ := filepath.Glob(filepath.Join(cfg.OutputDir, "*", "*-http-*.json"))
+	if len(files) != 1 {
+		t.Fatalf("evidence files: %v", files)
+	}
+	raw, _ := os.ReadFile(files[0])
+	if bytes.Contains(raw, []byte("Alpine Linux 3.24.4")) {
+		t.Fatal("raw Linux distro leaked into captured evidence")
+	}
+	var parsed struct {
+		AccountID int64 `json:"account_id"`
+		Data      struct {
+			UserAgentContract string `json:"user_agent_contract"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal evidence: %v", err)
+	}
+	if parsed.Data.UserAgentContract != want {
+		t.Fatalf("user_agent_contract = %q, want %q", parsed.Data.UserAgentContract, want)
+	}
+}

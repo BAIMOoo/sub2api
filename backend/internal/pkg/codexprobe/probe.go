@@ -17,16 +17,51 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const Header = "X-Sub2API-Alignment"
 const maxBody = 2 << 20
+const maxAllowedAccounts = 32
 
 var ErrProbe = errors.New("alignment probe environment or evidence unavailable")
 var safeID = regexp.MustCompile("^[a-zA-Z0-9_-]{1,80}$")
 var uuidID = regexp.MustCompile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 var hexID = regexp.MustCompile("^[0-9a-f]{32}$")
+var codexUserAgentPattern = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?) \(([^();]+); ([A-Za-z0-9_.-]+)\) ([^()]+ \([A-Za-z0-9_.-]+; [0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?\))$`)
+var safeLinuxOSChars = regexp.MustCompile(`^[A-Za-z0-9 ._+!-]+$`)
+var linuxOSPrefixes = []string{
+	"linux", "alpine", "ubuntu", "debian", "fedora", "centos", "red hat", "rhel",
+	"rocky", "almalinux", "arch", "opensuse", "suse", "amazon linux", "oracle linux",
+	"nixos", "gentoo", "void", "manjaro", "mint", "pop!_os", "kali", "raspbian",
+}
+
+func isLinuxOSName(osName string) bool {
+	trimmed := strings.TrimSpace(osName)
+	if trimmed == "" || len(trimmed) > 64 || !safeLinuxOSChars.MatchString(trimmed) {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range linuxOSPrefixes {
+		if lower == prefix || strings.HasPrefix(lower, prefix+" ") || strings.HasPrefix(lower, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// userAgentContract normalizes only the Linux distribution/version string inside
+// an official Codex User-Agent so a Linux container (e.g. Alpine) can be compared
+// against a native Linux host (e.g. Ubuntu) while still strictly verifying client
+// prefix, version, CPU architecture, terminal token, and trailing client identity.
+func userAgentContract(value string) string {
+	m := codexUserAgentPattern.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil || !isLinuxOSName(m[2]) {
+		return ""
+	}
+	return fmt.Sprintf("%s (<linux-os>; %s) %s", m[1], m[3], m[4])
+}
 
 func identityFormat(s string) string {
 	if uuidID.MatchString(s) {
@@ -39,14 +74,49 @@ func identityFormat(s string) string {
 }
 
 type Config struct {
-	Secret       string `json:"secret"`
-	APIKeyID     int64  `json:"api_key_id"`
-	AccountID    int64  `json:"account_id"`
-	DirectEgress bool   `json:"direct_egress,omitempty"`
-	ProxyID      int64  `json:"proxy_id"`
-	ProxySHA256  string `json:"proxy_sha256"`
-	OutputDir    string `json:"output_dir"`
-	MaxRequests  int    `json:"max_requests"`
+	Secret       string  `json:"secret"`
+	APIKeyID     int64   `json:"api_key_id"`
+	AccountID    int64   `json:"account_id,omitempty"`
+	AccountIDs   []int64 `json:"account_ids,omitempty"`
+	DirectEgress bool    `json:"direct_egress,omitempty"`
+	ProxyID      int64   `json:"proxy_id"`
+	ProxySHA256  string  `json:"proxy_sha256"`
+	OutputDir    string  `json:"output_dir"`
+	MaxRequests  int     `json:"max_requests"`
+}
+
+func (c Config) validAccounts() bool {
+	if c.AccountID < 0 || len(c.AccountIDs) > maxAllowedAccounts {
+		return false
+	}
+	if len(c.AccountIDs) == 0 {
+		return c.AccountID > 0
+	}
+	matchedSingle := c.AccountID == 0
+	for _, id := range c.AccountIDs {
+		if id <= 0 {
+			return false
+		}
+		if id == c.AccountID {
+			matchedSingle = true
+		}
+	}
+	return matchedSingle
+}
+
+func (c Config) allowsAccount(accountID int64) bool {
+	if accountID <= 0 {
+		return false
+	}
+	if len(c.AccountIDs) == 0 {
+		return accountID == c.AccountID
+	}
+	for _, id := range c.AccountIDs {
+		if id == accountID {
+			return true
+		}
+	}
+	return false
 }
 
 type Ticket struct {
@@ -63,9 +133,10 @@ type runState struct {
 	expires  int64
 }
 type Probe struct {
-	cfg    Config
-	ticket Ticket
-	run    *runState
+	cfg       Config
+	ticket    Ticket
+	run       *runState
+	accountID atomic.Int64
 }
 
 var registry = struct {
@@ -108,7 +179,7 @@ func authenticate(req *http.Request, keyID int64, cfg Config, now time.Time) (*h
 		validEgress = cfg.ProxyID == 0 && cfg.ProxySHA256 == ""
 	}
 	if len(cfg.Secret) < 32 || cfg.APIKeyID <= 0 || keyID != cfg.APIKeyID ||
-		cfg.AccountID <= 0 || !validEgress ||
+		!cfg.validAccounts() || !validEgress ||
 		!filepath.IsAbs(cfg.OutputDir) || cfg.MaxRequests < 1 || cfg.MaxRequests > 256 {
 		return nil, ErrProbe
 	}
@@ -169,15 +240,16 @@ func CheckSelection(ctx context.Context, accountID, proxyID int64, oauth bool) e
 	if p == nil {
 		return nil
 	}
-	if !oauth || accountID != p.cfg.AccountID || proxyID != p.cfg.ProxyID ||
+	if !oauth || !p.cfg.allowsAccount(accountID) || proxyID != p.cfg.ProxyID ||
 		time.Now().Unix() >= p.ticket.Expires {
 		return ErrProbe
 	}
+	p.accountID.Store(accountID)
 	return nil
 }
 
 func (p *Probe) CheckTransport(req *http.Request, accountID int64, proxyURL string) error {
-	if accountID != p.cfg.AccountID ||
+	if !p.cfg.allowsAccount(accountID) ||
 		req.URL.Scheme != "https" || req.URL.Host != "chatgpt.com" ||
 		!allowedPath(req.Method, req.URL.Path) || time.Now().Unix() >= p.ticket.Expires {
 		return ErrProbe
@@ -186,12 +258,14 @@ func (p *Probe) CheckTransport(req *http.Request, accountID int64, proxyURL stri
 		if proxyURL != "" {
 			return ErrProbe
 		}
+		p.accountID.Store(accountID)
 		return nil
 	}
 	digest := sha256.Sum256([]byte(proxyURL))
 	if proxyURL == "" || !hmac.Equal([]byte(hex.EncodeToString(digest[:])), []byte(p.cfg.ProxySHA256)) {
 		return ErrProbe
 	}
+	p.accountID.Store(accountID)
 	return nil
 }
 
@@ -242,10 +316,14 @@ func (p *Probe) Emit(kind string, data any) error {
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return ErrProbe
 	}
+	acctID := p.accountID.Load()
+	if acctID == 0 {
+		acctID = p.cfg.AccountID
+	}
 	record := map[string]any{
 		"schema": 1, "run": p.ticket.Run, "sample": p.ticket.Sample,
 		"kind": kind, "at": time.Now().UTC().Format(time.RFC3339Nano),
-		"account_id": p.cfg.AccountID, "proxy_id": p.cfg.ProxyID,
+		"account_id": acctID, "proxy_id": p.cfg.ProxyID,
 		"attempts": count, "data": data,
 	}
 	raw, err := json.Marshal(record)

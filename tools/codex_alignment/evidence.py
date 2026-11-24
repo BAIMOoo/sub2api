@@ -22,6 +22,33 @@ PUBLIC_INPUT_ITEM_TYPES = {
     'mcp_tool_call_output', 'message', 'reasoning', 'tool_call',
     'tool_search_call', 'tool_search_output', 'user', 'web_search_call',
 }
+CODEX_USER_AGENT_RE = re.compile(
+    r'^([A-Za-z0-9_.-]+/[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?) '
+    r'\(([^();]+); ([A-Za-z0-9_.-]+)\) '
+    r'([^()]+ \([A-Za-z0-9_.-]+; [0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?\))$'
+)
+SAFE_LINUX_OS_RE = re.compile(r'^[A-Za-z0-9 ._+!-]+$')
+LINUX_OS_PREFIXES = (
+    'linux', 'alpine', 'ubuntu', 'debian', 'fedora', 'centos', 'red hat', 'rhel',
+    'rocky', 'almalinux', 'arch', 'opensuse', 'suse', 'amazon linux', 'oracle linux',
+    'nixos', 'gentoo', 'void', 'manjaro', 'mint', 'pop!_os', 'kali', 'raspbian',
+)
+
+
+def is_linux_os_name(os_name):
+    trimmed = os_name.strip()
+    if not trimmed or len(trimmed) > 64 or not SAFE_LINUX_OS_RE.fullmatch(trimmed):
+        return False
+    lower = trimmed.lower()
+    return any(lower == p or lower.startswith(p + ' ') or lower.startswith(p + '/') for p in LINUX_OS_PREFIXES)
+
+
+def user_agent_contract(value):
+    """Normalize only Linux distro/version inside an official Codex User-Agent."""
+    match = CODEX_USER_AGENT_RE.fullmatch((value or '').strip())
+    if not match or not is_linux_os_name(match.group(2)):
+        return ''
+    return '%s (<linux-os>; %s) %s' % (match.group(1), match.group(3), match.group(4))
 
 
 def canonical(value):
@@ -128,11 +155,15 @@ def http_evidence(secret, method, path, pairs, body, wire_size, source):
     for key in ('session-id', 'thread-id', 'x-codex-window-id'):
         if key in plain:
             formats[key] = identity_format(plain[key])
-    return {'method': method, 'path': path, 'header_order': [k for k, _ in pairs],
-            'headers': headers, 'wire_body_bytes': wire_size, 'body': sanitize(secret, body),
-            'body_structure': input_structure(body),
-            'identity_checks': checks, 'identity_formats': formats, 'evidence': source,
-            'cold_connection': True}
+    evidence = {'method': method, 'path': path, 'header_order': [k for k, _ in pairs],
+                'headers': headers, 'wire_body_bytes': wire_size, 'body': sanitize(secret, body),
+                'body_structure': input_structure(body),
+                'identity_checks': checks, 'identity_formats': formats, 'evidence': source,
+                'cold_connection': True}
+    ua_contract = user_agent_contract(plain.get('user-agent', ''))
+    if ua_contract:
+        evidence['user_agent_contract'] = ua_contract
+    return evidence
 
 
 def identity_format(value):
@@ -276,6 +307,10 @@ def compare_replay(native, gateway):
                 identity.append('unexpected_identity_format:' + key)
     headers = differences(native['headers'], gateway['headers'])
     comparable = []
+    native_ua_contract = native.get('user_agent_contract')
+    gateway_ua_contract = gateway.get('user_agent_contract')
+    use_ua_contract = (isinstance(native_ua_contract, str) and bool(native_ua_contract)
+                       and isinstance(gateway_ua_contract, str) and bool(gateway_ua_contract))
     for evidence in (native, gateway):
         values = copy.deepcopy(evidence['headers'])
         # Scoped identities and compressed byte counts are deliberately dynamic.
@@ -284,6 +319,8 @@ def compare_replay(native, gateway):
                     'x-codex-turn-metadata', 'content-length'):
             if key in values:
                 values[key] = '<dynamic>'
+        if use_ua_contract and 'user-agent' in values:
+            values['user-agent'] = evidence['user_agent_contract']
         comparable.append(values)
     header_contract = differences(*comparable)
     # Device/turn values are deliberately scoped by the existing contract.
