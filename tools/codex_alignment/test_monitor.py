@@ -15,7 +15,8 @@ from unittest.mock import patch
 from tools.codex_alignment.capture import Budget, Capture, connect_upstream, parse_hello, read_head, resolve_egress, socks_connect
 from tools.codex_alignment.protocol import completion
 from tools.codex_alignment.runner import (apply_reasoning_coverage, compaction_observed, gateway,
-                                          native_answer_matches, reasoning_replay_observed)
+                                          native, native_answer_matches, reasoning_replay_observed,
+                                          repository_state)
 from tools.codex_alignment.evidence import (atomic_json, compare_replay, decode_body, differences,
                                             http_evidence, retain, sanitize, ticket)
 from tools.codex_alignment.notifications import Outbox, read_env
@@ -594,6 +595,95 @@ class CaptureTests(unittest.TestCase):
             self.assertIs(connect_upstream(None, 'chatgpt.com', 443, timeout=15), sentinel)
             direct.assert_called_once_with(('chatgpt.com', 443), timeout=15)
             socks.assert_not_called()
+
+    def test_native_closes_stdin_with_devnull(self):
+        import subprocess
+        from contextlib import contextmanager
+
+        class FakeCapture:
+            hello_only = False
+            cert = Path('/tmp/fake-ca.pem')
+            hellos = []
+
+            @contextmanager
+            def serve(self):
+                yield 'http://127.0.0.1:18080'
+
+        class FakeProc:
+            pid = 99999
+            returncode = 0
+            stdout = io.BytesIO(b'{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}\n')
+            stderr = io.BytesIO(b'')
+
+            def poll(self):
+                return 0
+
+        with tempfile.TemporaryDirectory() as home, \
+                patch('tools.codex_alignment.runner.subprocess.Popen', return_value=FakeProc()) as popen:
+            cap = FakeCapture()
+            code = native(Path('/tmp/codex'), Path(home), 'gpt-6-astra', cap, 10)
+            self.assertEqual(code, 0)
+            self.assertTrue(cap.answer_verified)
+            self.assertEqual(popen.call_args.kwargs.get('stdin'), subprocess.DEVNULL)
+
+    def test_repository_state_handles_version_only_skip_ci_and_fails_closed_otherwise(self):
+        runs = {'workflow_runs': [
+            {'id': 100, 'head_sha': 'parent_sha', 'event': 'push', 'status': 'completed', 'conclusion': 'success'},
+        ]}
+
+        def fake_gh(commit_obj):
+            def _fetch(path):
+                if path.endswith('/commits/main'):
+                    return commit_obj
+                return runs
+            return _fetch
+
+        version_sync = {
+            'sha': 'sync_sha',
+            'commit': {'message': 'chore: sync VERSION to 0.2.27 [skip ci]'},
+            'parents': [{'sha': 'parent_sha'}],
+            'files': [{'filename': 'backend/cmd/server/VERSION'}],
+        }
+        with patch('tools.codex_alignment.runner.github', side_effect=fake_gh(version_sync)):
+            state = repository_state('BAIMOoo/sub2api')
+            self.assertEqual(state['head'], 'sync_sha')
+            self.assertEqual(state['checked_sha'], 'parent_sha')
+            self.assertTrue(state['version_sync_skip_ci'])
+            self.assertEqual(state['conclusion'], 'success')
+            self.assertEqual(state['run_id'], 100)
+
+        # Any non-VERSION file or merge commit must fail closed even with [skip ci].
+        for unsafe in (
+            {
+                'sha': 'code_skip_sha',
+                'commit': {'message': 'chore: sync VERSION to 0.2.27 [skip ci]'},
+                'parents': [{'sha': 'parent_sha'}],
+                'files': [{'filename': 'backend/cmd/server/VERSION'}, {'filename': 'backend/go.mod'}],
+            },
+            {
+                'sha': 'merge_skip_sha',
+                'commit': {'message': 'chore: sync VERSION to 0.2.27 [skip ci]'},
+                'parents': [{'sha': 'parent_sha'}, {'sha': 'other_sha'}],
+                'files': [{'filename': 'backend/cmd/server/VERSION'}],
+            },
+            {
+                'sha': 'empty_files_sha',
+                'commit': {'message': 'chore: sync VERSION to 0.2.27 [skip ci]'},
+                'parents': [{'sha': 'parent_sha'}],
+                'files': [],
+            },
+            {
+                'sha': 'other_msg_sha',
+                'commit': {'message': 'fix: quick tweak [skip ci]'},
+                'parents': [{'sha': 'parent_sha'}],
+                'files': [{'filename': 'backend/cmd/server/VERSION'}],
+            },
+        ):
+            with patch('tools.codex_alignment.runner.github', side_effect=fake_gh(unsafe)):
+                state = repository_state('BAIMOoo/sub2api')
+                self.assertEqual(state['status'], 'missing', unsafe['sha'])
+                self.assertIsNone(state['conclusion'], unsafe['sha'])
+                self.assertNotIn('version_sync_skip_ci', state)
 
 
 class KeeperOverlayTests(unittest.TestCase):

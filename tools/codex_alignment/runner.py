@@ -45,8 +45,8 @@ def native(binary, home, model, capture, timeout, scenario='basic'):
         if scenario == 'compact':
             command += ['-c', 'model_auto_compact_token_limit=1']
         command.append(prompt)
-        proc = subprocess.Popen(command, cwd=work, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, start_new_session=True)
+        proc = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         buffers = [bytearray(), bytearray()]
         def drain(stream, buffer):
             while True:
@@ -190,10 +190,32 @@ def apply_reasoning_coverage(row, scenario, observed):
             row['status'] = 'unverified'
 
 
+VERSION_SYNC_FILES = frozenset({'VERSION', 'backend/cmd/server/VERSION'})
+
+
+def _version_sync_parent_sha(commit):
+    """Return immediate parent SHA only for a VERSION-only [skip ci] sync commit."""
+    if not isinstance(commit, dict):
+        return None
+    message = ((commit.get('commit') or {}).get('message') or '').strip()
+    if '[skip ci]' not in message.lower() or not message.startswith('chore: sync VERSION to '):
+        return None
+    parents = commit.get('parents') or []
+    files = commit.get('files') or []
+    if len(parents) != 1 or not files:
+        return None
+    changed = {f.get('filename') for f in files if isinstance(f, dict) and f.get('filename')}
+    if len(changed) != len(files) or not changed or not changed <= VERSION_SYNC_FILES:
+        return None
+    parent_sha = parents[0].get('sha') if isinstance(parents[0], dict) else None
+    return parent_sha if isinstance(parent_sha, str) and parent_sha else None
+
+
 def repository_state(repo):
     if repo != 'BAIMOoo/sub2api':
         raise ValueError('unexpected_repository')
-    head = github('repos/' + repo + '/commits/main')['sha']
+    commit = github('repos/' + repo + '/commits/main')
+    head = commit['sha']
     try:
         runs = github('repos/' + repo + '/actions/workflows/codex-alignment.yml/runs?branch=main&per_page=20')['workflow_runs']
     except HTTPError as exc:
@@ -201,9 +223,23 @@ def repository_state(repo):
             raise
         runs = []
     matching = [r for r in runs if r['head_sha'] == head and r['event'] in {'push', 'workflow_dispatch'}]
+    checked_sha = head
+    version_sync_skip_ci = False
+    if not matching:
+        parent_sha = _version_sync_parent_sha(commit)
+        if parent_sha:
+            parent_matching = [r for r in runs if r['head_sha'] == parent_sha and r['event'] in {'push', 'workflow_dispatch'}]
+            if parent_matching:
+                matching = parent_matching
+                checked_sha = parent_sha
+                version_sync_skip_ci = True
     latest = max(matching, key=lambda r: r['id']) if matching else None
-    return {'head': head, 'status': latest['status'] if latest else 'missing',
-            'conclusion': latest['conclusion'] if latest else None, 'run_id': latest['id'] if latest else None}
+    state = {'head': head, 'status': latest['status'] if latest else 'missing',
+             'conclusion': latest['conclusion'] if latest else None, 'run_id': latest['id'] if latest else None}
+    if version_sync_skip_ci:
+        state['checked_sha'] = checked_sha
+        state['version_sync_skip_ci'] = True
+    return state
 
 
 class Runner:

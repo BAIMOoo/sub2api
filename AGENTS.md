@@ -17,3 +17,7 @@ This repo uses the canonical five-role triage vocabulary. See `docs/agents/triag
 ### Domain docs
 
 Use the single-context root glossary and ADR layout. See `docs/agents/domain.md`.
+
+### Codex HTTP alignment
+
+For pinned Codex direct HTTP baseline upgrades, fixture capture, `codexlive` verification, and host alignment monitor maintenance, see `.agents/skills/align-codex-http/SKILL.md`.
