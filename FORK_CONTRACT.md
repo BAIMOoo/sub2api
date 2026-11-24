@@ -59,7 +59,7 @@
 ## 其他 Fork 不变量
 
 1. **账号隔离：** 按账号隔离上游 Cookie、连接状态、会话值、模型模式、重试和故障切换。重连或重启后，也不得让一个账号复用另一个账号的状态。
-2. **Codex 监控：** 保留严格的正文、头、会话和 TLS 漂移检测、脱敏、隐私限制、证据保留以及中文可读报告。支持显式 `direct_egress: true` 直连巡检模式（与代理模式互斥，保持 fail-closed，代理失效时绝不静默回退到直连）。监控只报告结果，不得自动合并、部署或批准基线。
+2. **Codex 监控：** 保留严格的正文、头、会话和 TLS 漂移检测、脱敏、隐私限制、证据保留以及中文可读报告。支持显式 `direct_egress: true` 直连巡检模式（与代理模式互斥，保持 fail-closed，代理失效时绝不静默回退到直连）、探针显式 `account_ids` 多账号白名单，以及仅忽略已知 Linux 发行版名差异的 `user_agent_contract`（版本、架构、前缀与终端继续严格校验）。监控只报告结果，不得自动合并、部署或批准基线。
 3. **更新与回滚来源：** 在线更新和回滚版本查询必须指向 `BAIMOoo/sub2api`，不得静默切换到 `Wei-Shaw/sub2api`。
 4. **安全下限：** 吸收上游依赖时保留 fork 已提高的依赖最低版本和审计策略。不得通过放宽 fork 安全检查来解决上游冲突。
 5. **Desktop 上下文：** 保留首轮、多页分片、历史与工具结果语义。只有在同时满足 fork 和上游用例后才选一种实现，不得保留两套转换器。
@@ -85,10 +85,10 @@
 
 | 项目 | 2026-11-24 状态 |
 | --- | --- |
-| 当前 `main` | 已包含固定直接 HTTP `codex_exec 0.171.0 / Linux x86_64` 出站、版本滞后门禁与 400 防误杀（`v0.2.25` @ `c5c096125`），并已获所有者批准合入 Codex 监控与服务端探针显式 `direct_egress` 直连模式（来源分支 `codex/alignment-direct-egress` @ `39c2ad834`，已通过全套远端 CI）；进入 `v0.2.26` 发布流程。 |
-| 当前生产运行态 | 已完成停机升级并运行 `v0.2.25`（PostgreSQL `schema_migrations=306`，镜像 `ghcr.io/baimooo/sub2api@sha256:772bf4596c8c29768eb2fec7023d344d55b778e9e563052939b8b84565175e5a`，公网与内部验收通过）；待所有者单独批准后再停机升级到 `v0.2.26` 以启用探针直连模式。 |
+| 当前 `main` | 已包含固定直接 HTTP `codex_exec 0.171.0 / Linux x86_64` 出站（`v0.2.25`）、显式 `direct_egress` 对齐监控（`v0.2.26`），并已获所有者批准合入探针多账号白名单 `account_ids` 与 Linux 发行版 `user_agent_contract`（来源分支 `codex/alignment-multi-account-and-ua` @ `d6238795f`，已通过全套远端 CI）；进入 `v0.2.27` 发布流程。 |
+| 当前生产运行态 | 已完成停机升级并运行 `v0.2.26`（PostgreSQL `schema_migrations=306`，镜像 `ghcr.io/baimooo/sub2api@sha256:6c8be563c831ba718484e6ce17ae75f758c0f288409ec87c162f8a242d20d232`，公网、内部与直连探针验收通过）；待所有者单独批准后再停机升级到 `v0.2.27` 并放开 `account_ids: [8, 9]`。 |
 | fork 更新源、监控、Cookie、HTTP 回归、Desktop 覆盖与依赖加固 | 已在 `main`；后续合并继续保护。 |
-| 宿主机私有 `codex-alignment` Approved Alignment Baseline | 已在 `v0.2.25` 验收通过后显式切换至 `0.171.0`，并已配置显式 `direct_egress: true` 与刷新匹配 9 号账号的原生登录态；`codex-alignment.timer` 暂缓开启，待 `v0.2.26` 线上升级并切换 `observer.json` 后恢复并完成直连验收。 |
+| 宿主机私有 `codex-alignment` Approved Alignment Baseline | 已切换至 `0.171.0` 并启用显式 `direct_egress: true` 与匹配 9 号账号的原生登录态，已跑通首轮直连 `acceptance`（`0.171.0` 命中 9 号账号的 3/3 轮正文/头序/压缩/TLS 均 0 差异）；待 `v0.2.27` 上线后切换 `observer.json` 为 `account_ids: [8, 9]` 并复验。 |
 
 只有实现真正集成，且最终 `main` 的同一 SHA 已通过相关检查，才更新上表。
 
