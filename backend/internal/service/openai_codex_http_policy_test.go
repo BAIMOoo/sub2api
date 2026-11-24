@@ -152,11 +152,15 @@ func TestCodexHTTPModeSelectionUsesFinalCapabilityAndRecordsUnverifiedFallback(t
 			require.Equal(t, test.wantStatus, string(mode.alignment))
 			require.Equal(t, originalBody, body)
 			require.Equal(t, originalHeaders, c.Request.Header)
+			require.False(t, gjson.GetBytes(normalized, "instructions").Exists())
 			if test.wantLite {
-				require.False(t, gjson.GetBytes(normalized, "instructions").Exists())
 				require.Equal(t, "read_file", gjson.GetBytes(normalized, "input.0.tools.0.tools.0.name").String())
+				require.Equal(t, "developer", gjson.GetBytes(normalized, "input.1.role").String())
+				require.Equal(t, "caller task", gjson.GetBytes(normalized, "input.1.content.0.text").String())
 			} else {
 				require.Equal(t, "read_file", gjson.GetBytes(normalized, "tools.0.name").String())
+				require.Equal(t, "developer", gjson.GetBytes(normalized, "input.0.role").String())
+				require.Equal(t, "caller task", gjson.GetBytes(normalized, "input.0.content.0.text").String())
 			}
 		})
 	}
@@ -174,8 +178,30 @@ func TestCodexHTTPModeBodyAdaptsCompactForStreamingResponses(t *testing.T) {
 	normalized, _, err := codexHTTPExec.normalizeBody(c, codexBodyEncodingTestAccount(1005), body)
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(normalized, "stream").Bool())
-	require.Equal(t, "keep compact task", gjson.GetBytes(normalized, "instructions").String())
-	require.Equal(t, "compaction_trigger", gjson.GetBytes(normalized, "input.1.type").String())
+	require.False(t, gjson.GetBytes(normalized, "instructions").Exists())
+	require.Equal(t, "developer", gjson.GetBytes(normalized, "input.0.role").String())
+	require.Equal(t, "keep compact task", gjson.GetBytes(normalized, "input.0.content.0.text").String())
+	require.Equal(t, "user", gjson.GetBytes(normalized, "input.1.role").String())
+	require.Equal(t, "compaction_trigger", gjson.GetBytes(normalized, "input.2.type").String())
+}
+
+func TestCodexHTTPRejectsNonStringInstructions(t *testing.T) {
+	for _, lite := range []bool{false, true} {
+		t.Run("lite="+boolString(lite), func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","instructions":123,"input":[{"role":"user","content":"hi"}]}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			account := codexBodyEncodingTestAccount(1007)
+			setCodexHTTPTestMode(account, "gpt-5.5", lite)
+
+			_, _, err := codexHTTPExec.normalizeBody(c, account, body)
+			require.Error(t, err)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Equal(t, "instructions", gjson.GetBytes(rec.Body.Bytes(), "error.param").String())
+		})
+	}
 }
 
 func TestCodexHTTPRejectsUnrepresentableAdditionalToolsCarrier(t *testing.T) {

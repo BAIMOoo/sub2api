@@ -391,6 +391,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if sentBody, aligned := codexHTTPAttemptBody(upstreamReq); aligned {
 			body = sentBody
 			rejectedFieldRetryState.remember(body)
+			syncOpenAIResponsesInstructionsEcho(c, body)
 		}
 
 		upstreamStart := time.Now()

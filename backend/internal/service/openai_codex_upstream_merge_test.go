@@ -18,7 +18,7 @@ import (
 )
 
 // Exercise system-message preservation and upstream search-history repair
-// through both transform branches. Codex exec 0.158.0 declares standard tools
+// through both transform branches. Codex exec 0.171.0 declares standard tools
 // at the top level and Lite tools in input additional_tools.
 func TestForward_CodexForkIdentityWithUpstreamSearchHistory(t *testing.T) {
 	gin.SetMode(gin.TestMode)

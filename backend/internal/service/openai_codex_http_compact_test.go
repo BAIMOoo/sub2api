@@ -57,8 +57,17 @@ func TestCodexHTTPCompactAdaptsToRemoteCompactionV2(t *testing.T) {
 				require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 				require.Contains(t, upstream.lastReq.Header.Get("x-codex-beta-features"), "remote_compaction_v2")
 				require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+				require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 				input := gjson.GetBytes(upstream.lastBody, "input").Array()
 				require.Equal(t, "compaction_trigger", input[len(input)-1].Get("type").String())
+				if lite {
+					require.Equal(t, "additional_tools", input[0].Get("type").String())
+					require.Equal(t, "developer", input[1].Get("role").String())
+					require.Equal(t, "caller task", input[1].Get("content.0.text").String())
+				} else {
+					require.Equal(t, "developer", input[0].Get("role").String())
+					require.Equal(t, "caller task", input[0].Get("content.0.text").String())
+				}
 				require.Contains(t, string(upstream.lastBody), "caller task")
 				require.Contains(t, string(upstream.lastBody), "caller history")
 				require.Contains(t, string(upstream.lastBody), "read_file")

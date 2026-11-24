@@ -108,6 +108,7 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 				require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists())
 				require.False(t, gjson.GetBytes(upstream.lastBody, "top_k").Exists())
 				require.Equal(t, "priority", gjson.GetBytes(upstream.lastBody, "service_tier").String())
+				require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 				require.Equal(t, lite, isOpenAIResponsesLiteHeader(upstream.lastReq.Header.Get(responsesLiteHeader)))
 				if lite {
 					require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
@@ -120,6 +121,42 @@ func TestCodexHTTPMessagesPreservesCallerSemanticsWithoutInjection(t *testing.T)
 	}
 	for _, field := range []string{"max_tokens", "temperature", "top_k", "thinking.budget_tokens"} {
 		require.True(t, logs.ContainsFieldValue("ignored_parameters", field), field)
+	}
+}
+
+func TestCodexHTTPMessagesLiteWithoutToolsOmitsAdditionalToolsCarrier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, credential := range []struct {
+		name string
+		kind string
+		mode string
+	}{
+		{name: "oauth", kind: AccountTypeOAuth},
+		{name: "pat", kind: AccountTypeOAuth, mode: OpenAIAuthModePersonalAccessToken},
+		{name: "setup token", kind: AccountTypeSetupToken},
+	} {
+		t.Run(credential.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-6.2-sol","max_tokens":16,"system":"KEEP SYSTEM BLOCK","messages":[{"role":"user","content":"KEEP USER TASK"}],"stream":false}`)
+			account := codexBodyEncodingTestAccount(4205)
+			account.Type = credential.kind
+			account.Credentials[openAIAuthModeCredentialKey] = credential.mode
+			setCodexHTTPTestMode(account, "gpt-6.2-sol", true)
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+			upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+			_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+			require.Error(t, err)
+			require.NotNil(t, upstream.lastReq)
+			require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+			require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+			require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+			require.Contains(t, gjson.GetBytes(upstream.lastBody, "input.0").Raw, "KEEP SYSTEM BLOCK")
+		})
 	}
 }
 

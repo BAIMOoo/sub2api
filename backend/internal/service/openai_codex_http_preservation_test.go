@@ -36,7 +36,9 @@ func TestCodexHTTPIngressLogsIgnoredGenerationControlsWithoutChangingTask(t *tes
 	})
 
 	require.NotNil(t, recorder)
-	require.Equal(t, "KEEP TASK", gjson.GetBytes(upstream.lastBody, "instructions").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+	require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+	require.Equal(t, "KEEP TASK", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
 	require.Contains(t, string(upstream.lastBody), "KEEP HISTORY")
 	require.NotContains(t, string(upstream.lastBody), "REPLACE THE AGENT PROMPT")
 	require.Equal(t, "read_file", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
@@ -198,6 +200,7 @@ func TestCodexHTTPChatPreservesAgentSemantics(t *testing.T) {
 			require.Error(t, err)
 			require.NotNil(t, upstream.lastReq)
 			require.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
+			require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 			require.Contains(t, string(upstream.lastBody), "KEEP CHAT SYSTEM")
 			require.Contains(t, string(upstream.lastBody), "KEEP CHAT TASK")
 			require.Contains(t, string(upstream.lastBody), "KEEP CHAT METADATA")
@@ -207,6 +210,26 @@ func TestCodexHTTPChatPreservesAgentSemantics(t *testing.T) {
 			require.Contains(t, string(upstream.lastBody), "9007199254740993")
 		})
 	}
+
+	t.Run("lite_without_tools_omits_empty_carrier", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-6.2-sol","messages":[{"role":"system","content":"KEEP CHAT SYSTEM"},{"role":"user","content":"KEEP CHAT TASK"}],"stream":false}`)
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+		account := codexBodyEncodingTestAccount(2107)
+		setCodexHTTPTestMode(account, "gpt-6.2-sol", true)
+		upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+		_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+		require.Error(t, err)
+		require.NotNil(t, upstream.lastReq)
+		require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+		require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+		require.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+		require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+		require.Contains(t, gjson.GetBytes(upstream.lastBody, "input.0").Raw, "KEEP CHAT SYSTEM")
+	})
 }
 
 func TestCodexHTTPChatRejectsUnrepresentableFieldsBeforeUpstream(t *testing.T) {
@@ -372,12 +395,16 @@ func TestCodexHTTPForwardPreservesAgentTaskAndToolContinuation(t *testing.T) {
 				require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
 				require.False(t, gjson.GetBytes(upstream.lastBody, "store").Bool())
 				require.Equal(t, lite, isOpenAIResponsesLiteHeader(upstream.lastReq.Header.Get(responsesLiteHeader)))
+				require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 				if lite {
 					require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
-					require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+					require.Equal(t, "additional_tools", gjson.GetBytes(upstream.lastBody, "input.0.type").String())
+					require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.1.role").String())
+					require.Equal(t, "AGENT SYSTEM KEEP EXACTLY", gjson.GetBytes(upstream.lastBody, "input.1.content.0.text").String())
 				} else {
 					require.Equal(t, "read_file", gjson.GetBytes(upstream.lastBody, "tools.0.name").String())
-					require.Equal(t, "AGENT SYSTEM KEEP EXACTLY", gjson.GetBytes(upstream.lastBody, "instructions").String())
+					require.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+					require.Equal(t, "AGENT SYSTEM KEEP EXACTLY", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
 				}
 
 				session := upstream.lastReq.Header.Get("session-id")
@@ -684,14 +711,24 @@ func TestCodexHTTPResponseRestoresCallerToolNameAndStreamMode(t *testing.T) {
 func TestCodexHTTPIndexedRetryUsesSentLayout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, passthrough := range []bool{false, true} {
-		for _, lite := range []bool{false, true} {
-			t.Run("passthrough="+boolString(passthrough)+"/lite="+boolString(lite), func(t *testing.T) {
-				body := []byte(`{"model":"gpt-5.5","instructions":"AGENT INSTRUCTIONS","input":[{"type":"message","role":"user","status":"completed","content":"KEEP USER"},{"type":"custom_tool_call","name":"exec_command","id":"ctc_item","call_id":"call_a","status":"completed","input":"pwd"},{"type":"custom_tool_call_output","call_id":"call_a","output":"KEEP OUTPUT","status":"completed"}]}`)
-				original := bytes.Clone(body)
-				index := 2
-				if lite {
-					index = 4
+		for _, tc := range []struct {
+			name  string
+			lite  bool
+			tools bool
+			index int
+		}{
+			{name: "standard", lite: false, tools: false, index: 3},
+			{name: "lite_no_tools", lite: true, tools: false, index: 3},
+			{name: "lite_with_tools", lite: true, tools: true, index: 4},
+		} {
+			t.Run("passthrough="+boolString(passthrough)+"/"+tc.name, func(t *testing.T) {
+				toolsField := ""
+				if tc.tools {
+					toolsField = `"tools":[{"type":"function","name":"exec_command","description":"Run","parameters":{"type":"object"}}],`
 				}
+				body := []byte(`{"model":"gpt-5.5","instructions":"AGENT INSTRUCTIONS",` + toolsField + `"input":[{"type":"message","role":"user","status":"completed","content":"KEEP USER"},{"type":"custom_tool_call","name":"exec_command","id":"ctc_item","call_id":"call_a","status":"completed","input":"pwd"},{"type":"custom_tool_call_output","call_id":"call_a","output":"KEEP OUTPUT","status":"completed"}]}`)
+				original := bytes.Clone(body)
+				index := tc.index
 				c, _ := gin.CreateTestContext(httptest.NewRecorder())
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
@@ -704,7 +741,7 @@ func TestCodexHTTPIndexedRetryUsesSentLayout(t *testing.T) {
 				}}
 				account := codexBodyEncodingTestAccount(2005)
 				account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
-				setCodexHTTPTestMode(account, "gpt-5.5", lite)
+				setCodexHTTPTestMode(account, "gpt-5.5", tc.lite)
 				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 
 				_, err := svc.Forward(context.Background(), c, account, body)
@@ -727,10 +764,10 @@ func TestCodexHTTPDoesNotRetryByDroppingTaskContent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rejections := []string{
 		`{"error":{"code":"invalid_encrypted_content","message":"invalid encrypted content"}}`,
-		`{"error":{"code":"array_above_max_length","param":"input[0].content","message":"Invalid content: array too long. Maximum length 0"}}`,
+		`{"error":{"code":"array_above_max_length","param":"input[1].content","message":"Invalid content: array too long. Maximum length 0"}}`,
 		`{"error":{"code":"unknown_parameter","param":"tools","message":"Unsupported tools namespace"}}`,
 		`{"error":{"code":"invalid_parameter","param":"prompt_cache_breakpoint","message":"prompt_cache_breakpoint is not supported on this model"}}`,
-		`{"error":{"code":"invalid_parameter","param":"input[0].prompt_cache_breakpoint","message":"input[0].prompt_cache_breakpoint is not supported on this model"}}`,
+		`{"error":{"code":"invalid_parameter","param":"input[1].prompt_cache_breakpoint","message":"input[1].prompt_cache_breakpoint is not supported on this model"}}`,
 	}
 	for _, passthrough := range []bool{false, true} {
 		for _, rejection := range rejections {
@@ -752,10 +789,12 @@ func TestCodexHTTPDoesNotRetryByDroppingTaskContent(t *testing.T) {
 				_, err := svc.Forward(context.Background(), c, account, body)
 				require.Error(t, err)
 				require.Len(t, upstream.bodies, 1)
+				require.False(t, gjson.GetBytes(upstream.bodies[0], "instructions").Exists())
+				require.Equal(t, "developer", gjson.GetBytes(upstream.bodies[0], "input.0.role").String())
 				require.Contains(t, string(upstream.bodies[0]), "KEEP REASONING")
 				require.Contains(t, string(upstream.bodies[0]), "read_file")
 				require.Equal(t, "message_start", gjson.GetBytes(upstream.bodies[0], "prompt_cache_breakpoint.type").String())
-				require.Equal(t, "message_end", gjson.GetBytes(upstream.bodies[0], "input.0.prompt_cache_breakpoint.type").String())
+				require.Equal(t, "message_end", gjson.GetBytes(upstream.bodies[0], "input.1.prompt_cache_breakpoint.type").String())
 			})
 		}
 	}

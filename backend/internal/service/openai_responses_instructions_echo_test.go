@@ -50,18 +50,23 @@ func instructionsEchoOAuthAccount(passthrough bool) *Account {
 	return account
 }
 
-func instructionsEchoForward(t *testing.T, account *Account, upstream *httpUpstreamRecorder, body string) (*OpenAIForwardResult, *httptest.ResponseRecorder, error) {
+func instructionsEchoForwardWithTransport(t *testing.T, account *Account, upstream *httpUpstreamRecorder, transport OpenAIClientTransport, body string) (*OpenAIForwardResult, *httptest.ResponseRecorder, error) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
 	c.Request.Header.Set("User-Agent", "OpenAI/Python 2.8.0")
-	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	SetOpenAIClientTransport(c, transport)
 	// This suite exercises upstream SDK behavior. The zero-config fork contract is tested separately.
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAIUpstreamInstructionsCompat: true}}, httpUpstream: upstream}
 	result, err := svc.Forward(context.Background(), c, account, []byte(body))
 	return result, rec, err
+}
+
+func instructionsEchoForward(t *testing.T, account *Account, upstream *httpUpstreamRecorder, body string) (*OpenAIForwardResult, *httptest.ResponseRecorder, error) {
+	t.Helper()
+	return instructionsEchoForwardWithTransport(t, account, upstream, OpenAIClientTransportHTTP, body)
 }
 
 func sseResponseInstructions(t *testing.T, body, eventType string) gjson.Result {
@@ -122,19 +127,42 @@ func TestOpenAIResponsesInstructionsEchoRestoreHelpers(t *testing.T) {
 	require.Equal(t, event, restoreOpenAIResponsesInstructionsEchoInEvent(c, event), "a new attempt clears the previous restore value")
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_CodexBlankInstructionsForwardedAsIs(t *testing.T) {
-	for _, raw := range []string{`""`, `" "`, `{"text":"x"}`} {
-		t.Run(raw, func(t *testing.T) {
-			upstream := instructionsEchoUpstream(raw)
+func TestOpenAIGatewayService_OAuthPassthrough_CodexBlankInstructionsHandledPer0171Layout(t *testing.T) {
+	for _, raw := range []string{`""`, `" "`} {
+		t.Run("fixed_http_blank/"+raw, func(t *testing.T) {
+			upstream := instructionsEchoUpstream("null")
 			result, rec, err := instructionsEchoForward(t, instructionsEchoOAuthAccount(true), upstream,
 				`{"model":"gpt-5.3-codex","stream":true,"instructions":`+raw+`,"input":[{"type":"message","role":"user","content":"Hi"}]}`)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, http.StatusOK, rec.Code)
-			require.JSONEq(t, raw, gjson.GetBytes(upstream.lastBody, "instructions").Raw)
+			require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists(), "codex exec 0.171.0 omits blank top-level instructions")
+			require.Len(t, gjson.GetBytes(upstream.lastBody, "input").Array(), 1, "blank instructions must not inject an empty developer message")
 			require.JSONEq(t, raw, sseResponseInstructions(t, rec.Body.String(), "response.completed").Raw)
 		})
 	}
+
+	t.Run("fixed_http_non_string_rejected", func(t *testing.T) {
+		upstream := instructionsEchoUpstream(`{"text":"x"}`)
+		_, rec, err := instructionsEchoForward(t, instructionsEchoOAuthAccount(true), upstream,
+			`{"model":"gpt-5.3-codex","stream":true,"instructions":{"text":"x"},"input":[{"type":"message","role":"user","content":"Hi"}]}`)
+		require.Error(t, err)
+		require.Nil(t, upstream.lastReq)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Equal(t, "instructions", gjson.GetBytes(rec.Body.Bytes(), "error.param").String())
+	})
+
+	t.Run("legacy_transport_non_string_forwarded_as_is", func(t *testing.T) {
+		const raw = `{"text":"x"}`
+		upstream := instructionsEchoUpstream(raw)
+		result, rec, err := instructionsEchoForwardWithTransport(t, instructionsEchoOAuthAccount(true), upstream, OpenAIClientTransportUnknown,
+			`{"model":"gpt-5.3-codex","stream":true,"instructions":`+raw+`,"input":[{"type":"message","role":"user","content":"Hi"}]}`)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.JSONEq(t, raw, gjson.GetBytes(upstream.lastBody, "instructions").Raw)
+		require.JSONEq(t, raw, sseResponseInstructions(t, rec.Body.String(), "response.completed").Raw)
+	})
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_MissingInstructionsForwardedWithoutField(t *testing.T) {
@@ -170,24 +198,38 @@ func TestOpenAIGatewayService_OAuthPassthrough_DoesNotInjectCodexInstructions(t 
 }
 
 func TestOpenAIGatewayService_OAuthResponses_MultiLineInstructionsEchoKeepsSSEFraming(t *testing.T) {
-	upstream := instructionsEchoUpstream(`"` + instructionsEchoMarker + `"`)
-	result, rec, err := instructionsEchoForward(t, instructionsEchoOAuthAccount(false), upstream,
-		"{\"model\":\"gpt-6.1-sol\",\"stream\":true,\"instructions\": [\n  {\"role\": \"developer\", \"content\": \"x\"}\n],\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hi\"}]}")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotContains(t, rec.Body.String(), instructionsEchoMarker)
-	for _, line := range strings.Split(rec.Body.String(), "\n") {
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "event:") || strings.HasPrefix(line, ":") {
-			continue
+	t.Run("legacy_upstream_compat_multiline_array", func(t *testing.T) {
+		upstream := instructionsEchoUpstream(`"` + instructionsEchoMarker + `"`)
+		result, rec, err := instructionsEchoForwardWithTransport(t, instructionsEchoOAuthAccount(false), upstream, OpenAIClientTransportUnknown,
+			"{\"model\":\"gpt-6.1-sol\",\"stream\":true,\"instructions\": [\n  {\"role\": \"developer\", \"content\": \"x\"}\n],\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hi\"}]}")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotContains(t, rec.Body.String(), instructionsEchoMarker)
+		for _, line := range strings.Split(rec.Body.String(), "\n") {
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "event:") || strings.HasPrefix(line, ":") {
+				continue
+			}
+			data, ok := extractOpenAISSEDataLine(line)
+			require.True(t, ok, "unexpected non-data line %q", line)
+			if data == "[DONE]" {
+				continue
+			}
+			require.True(t, gjson.Valid(data), "data line must stay a complete JSON document: %q", data)
 		}
-		data, ok := extractOpenAISSEDataLine(line)
-		require.True(t, ok, "unexpected non-data line %q", line)
-		if data == "[DONE]" {
-			continue
-		}
-		require.True(t, gjson.Valid(data), "data line must stay a complete JSON document: %q", data)
-	}
-	require.JSONEq(t, `[{"role":"developer","content":"x"}]`, sseResponseInstructions(t, rec.Body.String(), "response.completed").Raw)
+		require.JSONEq(t, `[{"role":"developer","content":"x"}]`, sseResponseInstructions(t, rec.Body.String(), "response.completed").Raw)
+	})
+
+	t.Run("fixed_http_multiline_string_promoted_and_restored", func(t *testing.T) {
+		upstream := instructionsEchoUpstream(`"` + instructionsEchoMarker + `"`)
+		result, rec, err := instructionsEchoForward(t, instructionsEchoOAuthAccount(false), upstream,
+			"{\"model\":\"gpt-6.1-sol\",\"stream\":true,\"instructions\":\"line 1\\nline 2\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":\"Hi\"}]}")
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+		require.Equal(t, "line 1\nline 2", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
+		require.NotContains(t, rec.Body.String(), instructionsEchoMarker)
+		require.Equal(t, "line 1\nline 2", sseResponseInstructions(t, rec.Body.String(), "response.completed").String())
+	})
 }
 
 func TestOpenAIGatewayService_OAuthResponses_DoesNotInjectInstructions(t *testing.T) {

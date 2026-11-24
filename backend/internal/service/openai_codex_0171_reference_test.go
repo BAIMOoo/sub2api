@@ -41,17 +41,21 @@ func TestCodex0171HTTPWireReference(t *testing.T) {
 	t.Cleanup(decoder.Close)
 
 	for _, tc := range []struct {
-		name, path   string
-		lite, cookie bool
+		name, path          string
+		lite, cookie, tools bool
 	}{
-		{"Standard", "/v1/responses", false, false},
-		{"Standard With Cookie", "/v1/responses", false, true},
-		{"Lite", "/v1/responses", true, false},
-		{"Compact V2", "/v1/responses/compact", false, false},
+		{"Standard", "/v1/responses", false, false, false},
+		{"Standard With Cookie", "/v1/responses", false, true, false},
+		{"Lite No Tools", "/v1/responses", true, false, false},
+		{"Lite With Tools", "/v1/responses", true, false, true},
+		{"Compact V2", "/v1/responses/compact", false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			compact := tc.path == "/v1/responses/compact"
 			input := []byte(`{"model":"gpt-5.5","instructions":"caller task","input":"caller history","stream":false}`)
+			if tc.tools {
+				input = []byte(`{"model":"gpt-5.5","instructions":"caller task","input":"caller history","tools":[{"type":"function","name":"read_file","description":"Read file","parameters":{"type":"object"}}],"stream":false}`)
+			}
 			reply := codexHTTPCompactSSECompleted
 			if compact {
 				input = []byte(codexHTTPCompactInput)
@@ -120,7 +124,27 @@ func TestCodex0171HTTPWireReference(t *testing.T) {
 			require.Contains(t, string(decoded), "caller task")
 			require.Contains(t, string(decoded), "caller history")
 			require.Equal(t, compact, HasCompactionTriggerInInput(decoded))
-			require.Equal(t, !tc.lite, gjson.GetBytes(decoded, "instructions").Exists())
+			require.False(t, gjson.GetBytes(decoded, "instructions").Exists(), "codex exec 0.171.0 never sends top-level instructions")
+			if tc.lite {
+				require.False(t, gjson.GetBytes(decoded, "tools").Exists(), "Lite mode never sends top-level tools")
+				if tc.tools {
+					require.Equal(t, "additional_tools", gjson.GetBytes(decoded, "input.0.type").String())
+					require.Equal(t, "developer", gjson.GetBytes(decoded, "input.1.role").String())
+					require.Equal(t, "caller task", gjson.GetBytes(decoded, "input.1.content.0.text").String())
+					require.Equal(t, "model.base_instructions", gjson.GetBytes(decoded, "input.1.internal_chat_message_metadata_passthrough.content_item_kinds.0").String())
+				} else {
+					require.False(t, gjson.GetBytes(decoded, `input.#(type=="additional_tools")`).Exists(), "Lite mode without tools must omit empty additional_tools carrier")
+					require.Equal(t, "developer", gjson.GetBytes(decoded, "input.0.role").String())
+					require.Equal(t, "caller task", gjson.GetBytes(decoded, "input.0.content.0.text").String())
+					require.Equal(t, "model.base_instructions", gjson.GetBytes(decoded, "input.0.internal_chat_message_metadata_passthrough.content_item_kinds.0").String())
+				}
+			} else {
+				require.True(t, gjson.GetBytes(decoded, "tools").Exists(), "Standard mode retains top-level tools")
+				require.False(t, gjson.GetBytes(decoded, `input.#(type=="additional_tools")`).Exists())
+				require.Equal(t, "developer", gjson.GetBytes(decoded, "input.0.role").String())
+				require.Equal(t, "caller task", gjson.GetBytes(decoded, "input.0.content.0.text").String())
+				require.Equal(t, "model.base_instructions", gjson.GetBytes(decoded, "input.0.internal_chat_message_metadata_passthrough.content_item_kinds.0").String())
+			}
 		})
 	}
 }

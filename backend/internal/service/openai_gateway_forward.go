@@ -1137,6 +1137,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			requestView = newOpenAIRequestView(body)
 			reqBody = nil
 			rejectedFieldRetryState.remember(body)
+			syncOpenAIResponsesInstructionsEcho(c, body)
 		}
 
 		// Get proxy URL
