@@ -6,9 +6,8 @@ import sys
 import time
 
 from .capture import resolve_egress
-from .evidence import atomic_json
 from .notifications import Outbox, email_send, read_env, wechat_send
-from .runner import Runner, repository_state
+from .runner import Runner
 from .reporting import notification_signature, operation_document, save_document
 from .schedule import Schedule, change_generation, lock
 
@@ -74,15 +73,7 @@ def run_cli(argv=None):
             return int(bool(pending))
         now = time.time()
         snapshot = json.loads(Path(cfg['snapshot_file']).read_text())
-        cache = root / 'repository.json'
-        if not cache.exists() or now - cache.stat().st_mtime > 300:
-            try:
-                atomic_json(cache, repository_state(cfg['repository']))
-            except Exception:
-                # Daily production checks still run during a GitHub outage.
-                pass
-        repo = json.loads(cache.read_text()) if cache.exists() else {'head': None, 'conclusion': None}
-        generation = change_generation(snapshot, repo, cfg)
+        generation = change_generation(snapshot, cfg)
         schedule = Schedule(root / 'schedule.json')
         schedule.observe(generation, now)
         if schedule.state.get('running'):

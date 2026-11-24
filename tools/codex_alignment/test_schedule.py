@@ -34,8 +34,12 @@ class TriggerTests(unittest.TestCase):
         runner = patch('tools.codex_alignment.__main__.Runner.run', side_effect=self.report)
         self.runner = runner.start()
         self.addCleanup(runner.stop)
+        repo_state = patch('tools.codex_alignment.runner.repository_state', side_effect=lambda _: self.repository)
+        self.repo_state = repo_state.start()
+        self.addCleanup(repo_state.stop)
         self.tick(0)  # Establish a completed daily run with the installed trigger policy.
         self.runner.reset_mock()
+        self.repo_state.reset_mock()
 
     def report(self, reason, generation):
         return {'run': 'synthetic-run', 'status': 'pass', 'findings': [], 'scenarios': [],
@@ -46,7 +50,6 @@ class TriggerTests(unittest.TestCase):
         atomic_json(self.root / 'snapshot.json', self.snapshot)
         atomic_json(self.root / 'repository.json', self.repository)
         with patch('tools.codex_alignment.__main__.time.time', return_value=self.now + seconds), \
-             patch('tools.codex_alignment.__main__.repository_state', return_value=self.repository), \
              patch('sys.stdout', new_callable=io.StringIO):
             self.assertEqual(run_cli(['--config', str(self.config_path), command]), 0)
 
@@ -77,12 +80,32 @@ class TriggerTests(unittest.TestCase):
             self.tick(index * 600 + 300)
             self.runner.assert_called_once()
 
-    def test_repository_and_ci_bursts_coalesce_to_latest_state(self):
+    def test_repository_and_ci_changes_do_not_trigger_or_poll_github(self):
         self.repository.update(head='commit-b', conclusion=None)
         self.tick(60)
         self.repository['head'] = 'commit-c'
         self.tick(180)
         self.repository['conclusion'] = 'success'
+        self.tick(240)
+        self.repository.update(head='commit-d', conclusion='failure')
+        self.tick(540)
+        self.tick(900)
+        self.runner.assert_not_called()
+        self.repo_state.assert_not_called()
+        state = json.loads((self.root / 'schedule.json').read_text())
+        self.assertIsNone(state['pending'])
+        self.tick(23 * 3600 - 1)  # Next day, 08:59:59 Asia/Shanghai.
+        self.runner.assert_not_called()
+        self.tick(23 * 3600)
+        self.runner.assert_called_once()
+        self.repo_state.assert_not_called()
+
+    def test_deployment_and_config_bursts_coalesce_to_latest_state(self):
+        self.snapshot['image'] = 'image-b'
+        self.tick(60)
+        self.snapshot['binary_sha256'] = 'binary-b'
+        self.tick(180)
+        self.config['watchdog_seconds'] = 1800
         self.tick(240)
         self.tick(539)
         self.runner.assert_not_called()
