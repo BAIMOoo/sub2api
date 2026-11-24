@@ -81,21 +81,21 @@ func TestCodexLiveToolContinuationExtraction(t *testing.T) {
 		{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"},
 		{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup_service_port","arguments":"{\"service\":\"cedar\"}"}
 	]`)
-	items, callIDs, hasReasoning, hasMessage, err := inspectCodexLiveOutputItems(rawOutput)
+	items, callIDs, reasoningIDs, hasMessage, err := inspectCodexLiveOutputItems(rawOutput)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(items) != 2 || len(callIDs) != 1 || callIDs[0] != "call_1" || !hasReasoning || hasMessage {
-		t.Fatalf("unexpected turn1 inspection: items=%d calls=%v reasoning=%t message=%t", len(items), callIDs, hasReasoning, hasMessage)
+	if len(items) != 2 || len(callIDs) != 1 || callIDs[0] != "call_1" || len(reasoningIDs) != 1 || reasoningIDs[0] != "rs_1" || hasMessage {
+		t.Fatalf("unexpected turn1 inspection: items=%d calls=%v reasoning=%v message=%t", len(items), callIDs, reasoningIDs, hasMessage)
 	}
 
 	finalOutput := json.RawMessage(`[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"8123"}]}]`)
-	_, callIDs, hasReasoning, hasMessage, err = inspectCodexLiveOutputItems(finalOutput)
+	_, callIDs, reasoningIDs, hasMessage, err = inspectCodexLiveOutputItems(finalOutput)
 	if err != nil {
 		t.Fatalf("unexpected final error: %v", err)
 	}
-	if len(callIDs) != 0 || hasReasoning || !hasMessage {
-		t.Fatalf("unexpected turn2 inspection: calls=%v reasoning=%t message=%t", callIDs, hasReasoning, hasMessage)
+	if len(callIDs) != 0 || len(reasoningIDs) != 0 || !hasMessage {
+		t.Fatalf("unexpected turn2 inspection: calls=%v reasoning=%v message=%t", callIDs, reasoningIDs, hasMessage)
 	}
 }
 
@@ -212,18 +212,19 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 				"additionalProperties": false,
 			},
 		}}
-		const instructions = "You must call lookup_service_port before answering any question about a service port."
+		const instructions = "Think carefully step by step before calling lookup_service_port, then reply concisely with the final result after receiving the tool output."
 		userMessage := map[string]any{
 			"type":    "message",
 			"role":    "user",
-			"content": "What port is configured for service cedar? Call lookup_service_port first, then reply with only the number.",
+			"content": "Three services exist: alpha uses port 1007, beta uses (alpha * 2) + 19, and cedar is stored externally. First check whether beta is prime or composite, then call lookup_service_port for cedar so you can compute beta + cedar.",
 		}
+		reasoning := map[string]any{"effort": "medium", "summary": "auto"}
 		turn1Payload := map[string]any{
 			"model":            live.Model,
 			"stream":           false,
 			"prompt_cache_key": sessionID,
 			"instructions":     instructions,
-			"reasoning":        map[string]any{"effort": "medium"},
+			"reasoning":        reasoning,
 			"tools":            tools,
 			"tool_choice":      "auto",
 			"input":            []any{userMessage},
@@ -231,11 +232,11 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 		attemptAccount := account
 		attemptAccount.Extra = map[string]any{"openai_passthrough": false}
 		turn1 := runCodexLiveTurn(t, upstream, &attemptAccount, "/v1/responses", "object", "response", turn1Payload, gateway.Forward)
-		outputItems, callIDs, replayedReasoning, _, parseErr := inspectCodexLiveOutputItems(turn1.reply["output"])
-		if !turn1.complete || parseErr != nil || len(callIDs) == 0 {
-			t.Logf("credential_type=%s route=tool-continuation turn1_status=%d turn2_status=0 wire_mode=%s tool_calls=%d replayed_reasoning=%t final_message=false completed=false",
-				live.CredentialType, turn1.statusCode, turn1.wireMode, len(callIDs), replayedReasoning)
-			t.Fatal("live tool-continuation turn 1 did not emit a tool call; response and provider error withheld")
+		outputItems, callIDs, reasoningIDs, _, parseErr := inspectCodexLiveOutputItems(turn1.reply["output"])
+		if !turn1.complete || parseErr != nil || len(callIDs) == 0 || len(reasoningIDs) == 0 {
+			t.Logf("credential_type=%s route=tool-continuation turn1_status=%d turn2_status=0 wire_mode=%s tool_calls=%d reasoning_items=%d wire_replayed_reasoning=false final_message=false completed=false",
+				live.CredentialType, turn1.statusCode, turn1.wireMode, len(callIDs), len(reasoningIDs))
+			t.Fatal("live tool-continuation turn 1 did not emit both an ID-bearing reasoning item and a tool call; response and provider error withheld")
 		}
 
 		turn2Input := make([]any, 0, 1+len(outputItems)+len(callIDs))
@@ -255,18 +256,19 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 			"stream":           false,
 			"prompt_cache_key": sessionID,
 			"instructions":     instructions,
-			"reasoning":        map[string]any{"effort": "medium"},
+			"reasoning":        reasoning,
 			"tools":            tools,
 			"tool_choice":      "auto",
 			"input":            turn2Input,
 		}
 		turn2 := runCodexLiveTurn(t, upstream, &attemptAccount, "/v1/responses", "object", "response", turn2Payload, gateway.Forward)
+		wireReplayedReasoning := upstream.evidence != nil && upstream.evidence.replayedAllReasoningIDs(reasoningIDs)
 		_, _, _, hasFinalMessage, turn2ParseErr := inspectCodexLiveOutputItems(turn2.reply["output"])
-		complete := turn2.complete && turn2ParseErr == nil && hasFinalMessage
-		t.Logf("credential_type=%s route=tool-continuation turn1_status=%d turn2_status=%d wire_mode=%s tool_calls=%d replayed_reasoning=%t final_message=%t completed=%t",
-			live.CredentialType, turn1.statusCode, turn2.statusCode, turn2.wireMode, len(callIDs), replayedReasoning, hasFinalMessage, complete)
+		complete := turn2.complete && turn2ParseErr == nil && wireReplayedReasoning && hasFinalMessage
+		t.Logf("credential_type=%s route=tool-continuation turn1_status=%d turn2_status=%d wire_mode=%s tool_calls=%d reasoning_items=%d wire_replayed_reasoning=%t final_message=%t completed=%t",
+			live.CredentialType, turn1.statusCode, turn2.statusCode, turn2.wireMode, len(callIDs), len(reasoningIDs), wireReplayedReasoning, hasFinalMessage, complete)
 		if !complete {
-			t.Fatal("live tool-continuation turn 2 did not complete with a final message; response and provider error withheld")
+			t.Fatal("live tool-continuation turn 2 did not complete with wire-verified ID-bearing reasoning replay and final message; response and provider error withheld")
 		}
 	})
 }
@@ -296,7 +298,7 @@ func runCodexLiveTurn(
 	}
 	receipt := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(receipt)
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -328,16 +330,17 @@ func runCodexLiveTurn(
 	}
 }
 
-func inspectCodexLiveOutputItems(raw json.RawMessage) ([]json.RawMessage, []string, bool, bool, error) {
+func inspectCodexLiveOutputItems(raw json.RawMessage) ([]json.RawMessage, []string, []string, bool, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, nil, false, false, nil
+		return nil, nil, nil, false, nil
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, nil, false, false, err
+		return nil, nil, nil, false, err
 	}
 	var callIDs []string
-	var hasReasoning, hasMessage bool
+	var reasoningIDs []string
+	var hasMessage bool
 	for _, item := range items {
 		var meta struct {
 			Type             string `json:"type"`
@@ -346,7 +349,7 @@ func inspectCodexLiveOutputItems(raw json.RawMessage) ([]json.RawMessage, []stri
 			EncryptedContent string `json:"encrypted_content"`
 		}
 		if err := json.Unmarshal(item, &meta); err != nil {
-			return nil, nil, false, false, err
+			return nil, nil, nil, false, err
 		}
 		switch meta.Type {
 		case "function_call":
@@ -354,14 +357,14 @@ func inspectCodexLiveOutputItems(raw json.RawMessage) ([]json.RawMessage, []stri
 				callIDs = append(callIDs, id)
 			}
 		case "reasoning":
-			if strings.TrimSpace(meta.ID) != "" && strings.TrimSpace(meta.EncryptedContent) != "" {
-				hasReasoning = true
+			if id := strings.TrimSpace(meta.ID); id != "" && strings.TrimSpace(meta.EncryptedContent) != "" {
+				reasoningIDs = append(reasoningIDs, id)
 			}
 		case "message":
 			hasMessage = true
 		}
 	}
-	return items, callIDs, hasReasoning, hasMessage, nil
+	return items, callIDs, reasoningIDs, hasMessage, nil
 }
 
 func configureCodexLiveLogging(t *testing.T) {
