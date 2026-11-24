@@ -1037,10 +1037,9 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
-	// 已保证不切号），其文案对客户端可操作（如触发自动压缩）；在净化信封内保留
-	// 脱敏后的上游消息，而不是抹成通用文案。
-	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
+	// context-window 超限与 Codex 客户端版本拒绝都是确定性请求失败（不切号），
+	// 其文案对客户端/排查者直接可操作；在净化信封内保留脱敏后的上游消息，而不是抹成通用文案。
+	if (isOpenAIContextWindowError(upstreamMsg, body) || isOpenAICodexClientVersionMismatchError(resp.StatusCode, body)) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
 		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)

@@ -85,7 +85,7 @@ python -m pip install -r tools/codex_alignment/requirements.txt
 python -m unittest discover -s tools/codex_alignment -p 'test_*.py' -v
 cd backend
 GOMAXPROCS=2 go test -p 1 -race ./internal/pkg/codexprobe
-GOMAXPROCS=2 go test -p 1 -parallel 1 -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
+GOMAXPROCS=2 go test -p 1 -parallel 1 -tags=unit ./internal/pkg/openai ./internal/pkg/tlsfingerprint ./internal/repository \
   ./internal/service ./internal/server/middleware \
   -run 'Codex|Zstd|Compact|OpenAI.*(Retry|Failover|Timeout|401|429|5xx)|HTTPUpstream.*(Disconnect|Timeout)|Alignment' -count=1
 ```

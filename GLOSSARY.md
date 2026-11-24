@@ -1,6 +1,6 @@
 # Sub2API Codex Egress
 
-Shared terminology for Codex and ChatGPT outbound client versioning, model version floors, alignment monitoring baselines, and model catalog queries in this fork. Owner decisions live exclusively in `FORK_CONTRACT.md`.
+Shared terminology for Codex and ChatGPT outbound client versioning, Model Minimal Client Version requirements, alignment monitoring baselines, and model catalog queries in this fork. Owner decisions live exclusively in `FORK_CONTRACT.md`.
 
 ## Language
 

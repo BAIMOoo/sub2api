@@ -39,7 +39,7 @@ jobs:
       - name: HTTP request and abnormal-path regressions
         working-directory: backend
         run: >-
-          go test -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository
+          go test -tags=unit ./internal/pkg/openai ./internal/pkg/tlsfingerprint ./internal/repository
           ./internal/service ./internal/server/middleware
           -run 'Codex|Zstd|Compact|OpenAI.*(Retry|Failover|Timeout|401|429|5xx)|HTTPUpstream.*(Disconnect|Timeout)|Alignment' -count=1
       - name: Record immutable provenance

@@ -1,11 +1,17 @@
 package openai
 
 import (
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"maps"
+	"sort"
 	"strings"
 	"sync"
 )
+
+//go:embed codex_*.json
+var bundledCodexManifestFS embed.FS
 
 var (
 	bundledCodexMinimalClientVersionsOnce sync.Once
@@ -13,14 +19,17 @@ var (
 )
 
 func loadBundledCodexMinimalClientVersions() {
-	descriptors := [][]byte{
-		CodexGPT61SolMetadata,
-		CodexGPT61TerraMetadata,
-		CodexGPT62SolMetadata,
-		CodexGPT62AstraMetadata,
+	entries, err := fs.Glob(bundledCodexManifestFS, "codex_*.json")
+	if err != nil {
+		panic(err)
 	}
-	versions := make(map[string]string, len(descriptors))
-	for _, raw := range descriptors {
+	sort.Strings(entries)
+	versions := make(map[string]string, len(entries))
+	for _, name := range entries {
+		raw, readErr := bundledCodexManifestFS.ReadFile(name)
+		if readErr != nil {
+			panic(readErr)
+		}
 		var meta struct {
 			Slug                 string `json:"slug"`
 			MinimalClientVersion string `json:"minimal_client_version"`
@@ -56,9 +65,10 @@ func BundledCodexMinimalClientVersion(model string) string {
 	if version, ok := bundledCodexMinimalClientVersions[canonical]; ok {
 		return version
 	}
+	if id := GPT62ModelID(canonical); id != "" {
+		return bundledCodexMinimalClientVersions[id]
+	}
 	switch {
-	case GPT62ModelID(canonical) != "":
-		return bundledCodexMinimalClientVersions[GPT62ModelID(canonical)]
 	case IsGPT61SolModelSpelling(canonical):
 		return bundledCodexMinimalClientVersions["gpt-6.1-sol"]
 	case IsGPT61TerraModelSpelling(canonical):

@@ -69,7 +69,7 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 		if carrier == nil {
 			carrier = item
 			carrierIndex = index
-		} else if _, hasID := item["id"]; hasID {
+		} else if hasCodexAdditionalToolsCarrierID(item) {
 			return false, newOpenAIResponsesLiteValidationError("input", "additional_tools carrier id cannot be preserved when merging Lite carriers")
 		}
 		carrierCount++
@@ -88,7 +88,7 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 			delete(reqBody, "tools")
 			return true, nil
 		}
-		if _, hasID := carrier["id"]; !hasID {
+		if !hasCodexAdditionalToolsCarrierID(carrier) {
 			delete(reqBody, "tools")
 			reqBody["input"] = filteredInput
 			return true, nil
@@ -108,6 +108,10 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 	carrier["tools"] = mergedTools
 	reqBody["input"] = append([]any{carrier}, filteredInput...)
 	return true, nil
+}
+
+func hasCodexAdditionalToolsCarrierID(item map[string]any) bool {
+	return item != nil && strings.TrimSpace(firstNonEmptyString(item["id"])) != ""
 }
 
 func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]any, bool, error) {

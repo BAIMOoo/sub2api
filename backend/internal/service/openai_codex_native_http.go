@@ -24,7 +24,7 @@ func (policy codexHTTPPolicy) usesFixedExecContract() bool {
 }
 
 func codexExecHTTPUserAgent() string {
-	return "codex_exec/0.171.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.171.0)"
+	return "codex_exec/" + codexExecHTTPVersion + " (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; " + codexExecHTTPVersion + ")"
 }
 
 const codexHTTPIdentityEpoch = "01a00000-0000-7000-8000-000000000000"

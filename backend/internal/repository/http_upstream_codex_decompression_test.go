@@ -14,6 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type codexWriteFlushCloser interface {
+	io.WriteCloser
+	Flush() error
+}
+
+func newCodexCompressedTestWriter(w io.Writer, encoding string) (codexWriteFlushCloser, error) {
+	switch encoding {
+	case "gzip":
+		return gzip.NewWriter(w), nil
+	case "zstd":
+		return zstd.NewWriter(w)
+	default:
+		return nil, fmt.Errorf("unsupported test encoding %q", encoding)
+	}
+}
+
 func TestHTTPUpstreamCodexCompressedSSEStreamsWithoutBufferingStallOrLeak(t *testing.T) {
 	const (
 		firstEvent  = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stream\"}}\n\n"
@@ -22,42 +38,31 @@ func TestHTTPUpstreamCodexCompressedSSEStreamsWithoutBufferingStallOrLeak(t *tes
 	for _, encoding := range []string{"gzip", "zstd"} {
 		t.Run("complete/"+encoding, func(t *testing.T) {
 			releaseSecond := make(chan struct{})
+			gotAcceptEncoding := make(chan string, 1)
+			handlerErrCh := make(chan error, 1)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "zstd,gzip", r.Header.Get("Accept-Encoding"))
+				gotAcceptEncoding <- r.Header.Get("Accept-Encoding")
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Content-Encoding", encoding)
 				rc := http.NewResponseController(w)
-				switch encoding {
-				case "gzip":
-					zw := gzip.NewWriter(w)
-					_, _ = io.WriteString(zw, firstEvent)
-					_ = zw.Flush()
-					_ = rc.Flush()
-					select {
-					case <-releaseSecond:
-					case <-r.Context().Done():
-						_ = zw.Close()
-						return
-					}
-					_, _ = io.WriteString(zw, secondEvent)
-					_ = zw.Close()
-				case "zstd":
-					zw, err := zstd.NewWriter(w)
-					if err != nil {
-						return
-					}
-					_, _ = io.WriteString(zw, firstEvent)
-					_ = zw.Flush()
-					_ = rc.Flush()
-					select {
-					case <-releaseSecond:
-					case <-r.Context().Done():
-						_ = zw.Close()
-						return
-					}
-					_, _ = io.WriteString(zw, secondEvent)
-					_ = zw.Close()
+				zw, err := newCodexCompressedTestWriter(w, encoding)
+				if err != nil {
+					handlerErrCh <- err
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
 				}
+				handlerErrCh <- nil
+				_, _ = io.WriteString(zw, firstEvent)
+				_ = zw.Flush()
+				_ = rc.Flush()
+				select {
+				case <-releaseSecond:
+				case <-r.Context().Done():
+					_ = zw.Close()
+					return
+				}
+				_, _ = io.WriteString(zw, secondEvent)
+				_ = zw.Close()
 			}))
 			defer srv.Close()
 			defer srv.CloseClientConnections()
@@ -71,6 +76,8 @@ func TestHTTPUpstreamCodexCompressedSSEStreamsWithoutBufferingStallOrLeak(t *tes
 
 			resp, err := do(req)
 			require.NoError(t, err)
+			require.Equal(t, "zstd,gzip", <-gotAcceptEncoding)
+			require.NoError(t, <-handlerErrCh)
 			require.Empty(t, resp.Header.Get("Content-Encoding"))
 
 			// First SSE event must arrive before the server emits the second event or closes the stream.
@@ -103,29 +110,23 @@ func TestHTTPUpstreamCodexCompressedSSEStreamsWithoutBufferingStallOrLeak(t *tes
 		})
 
 		t.Run("early_close/"+encoding, func(t *testing.T) {
+			handlerErrCh := make(chan error, 1)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Content-Encoding", encoding)
 				rc := http.NewResponseController(w)
-				switch encoding {
-				case "gzip":
-					zw := gzip.NewWriter(w)
-					_, _ = io.WriteString(zw, firstEvent)
-					_ = zw.Flush()
-					_ = rc.Flush()
-					<-r.Context().Done()
-					_ = zw.Close()
-				case "zstd":
-					zw, err := zstd.NewWriter(w)
-					if err != nil {
-						return
-					}
-					_, _ = io.WriteString(zw, firstEvent)
-					_ = zw.Flush()
-					_ = rc.Flush()
-					<-r.Context().Done()
-					_ = zw.Close()
+				zw, err := newCodexCompressedTestWriter(w, encoding)
+				if err != nil {
+					handlerErrCh <- err
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
 				}
+				handlerErrCh <- nil
+				_, _ = io.WriteString(zw, firstEvent)
+				_ = zw.Flush()
+				_ = rc.Flush()
+				<-r.Context().Done()
+				_ = zw.Close()
 			}))
 			defer srv.Close()
 			defer srv.CloseClientConnections()
@@ -137,6 +138,7 @@ func TestHTTPUpstreamCodexCompressedSSEStreamsWithoutBufferingStallOrLeak(t *tes
 
 			resp, err := do(req)
 			require.NoError(t, err)
+			require.NoError(t, <-handlerErrCh)
 			prefix := make([]byte, len(firstEvent))
 			_, err = io.ReadFull(resp.Body, prefix)
 			require.NoError(t, err)
@@ -172,23 +174,19 @@ func TestHTTPUpstreamCodexCompressedErrorBodiesDecompressCleanly(t *testing.T) {
 		for _, statusCode := range []int{http.StatusBadRequest, http.StatusTooManyRequests, http.StatusBadGateway} {
 			t.Run(fmt.Sprintf("%s/%d", encoding, statusCode), func(t *testing.T) {
 				wantBody := fmt.Sprintf(`{"error":{"type":"upstream_error","message":"status %d detail"}}`, statusCode)
+				handlerErrCh := make(chan error, 1)
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.Header().Set("Content-Encoding", encoding)
 					w.WriteHeader(statusCode)
-					switch encoding {
-					case "gzip":
-						zw := gzip.NewWriter(w)
-						_, _ = io.WriteString(zw, wantBody)
-						_ = zw.Close()
-					case "zstd":
-						zw, err := zstd.NewWriter(w)
-						if err != nil {
-							return
-						}
-						_, _ = io.WriteString(zw, wantBody)
-						_ = zw.Close()
+					zw, err := newCodexCompressedTestWriter(w, encoding)
+					if err != nil {
+						handlerErrCh <- err
+						return
 					}
+					handlerErrCh <- nil
+					_, _ = io.WriteString(zw, wantBody)
+					_ = zw.Close()
 				}))
 				defer srv.Close()
 				defer srv.CloseClientConnections()
@@ -200,6 +198,7 @@ func TestHTTPUpstreamCodexCompressedErrorBodiesDecompressCleanly(t *testing.T) {
 
 				resp, err := do(req)
 				require.NoError(t, err)
+				require.NoError(t, <-handlerErrCh)
 				require.Equal(t, statusCode, resp.StatusCode)
 				require.Empty(t, resp.Header.Get("Content-Encoding"))
 				gotBody, err := io.ReadAll(resp.Body)

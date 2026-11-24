@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | 工作区指令 | 移除顶层 `instructions`；非空指令置入 `input` 开头的 `developer` message（`content_item_kinds: ["model.base_instructions"]`） | 移除顶层 `instructions`；非空指令置入 `input` 内的 `developer` message（位于已声明工具的 `additional_tools` 之后） |
 | 工具声明 | 保留顶层 `tools`（无工具时为 `[]`） | 有工具声明时位于 `input` 前缀的 `additional_tools` 且无顶层 `tools`；未声明工具时不插入空的 `additional_tools` 载体 |
-| 传输字段 | `store=false`、`stream=true` | 同左，另有 `x-openai-responses-lite: true`、`parallel_tool_calls=false`、`reasoning.context="all_turns"` |
+| 传输字段 | `store=false`、`stream=true` | 同左，另有 `x-openai-internal-codex-responses-lite: true`、`parallel_tool_calls=false`、`reasoning.context="all_turns"` |
 
 模式由最终账号和模型能力决定。能力未知时保留请求声明，未声明则用 Standard，记录 `alignment_status=unverified`；`baseline_selected` 仅说明选择了已知布局，不代表实测通过。出站只发送调用方的任务、历史、推理状态、元数据和工具语义，不附加强制指令、todo guard 或新工具。无法无损表达的内容或引用（包括非字符串顶层 `instructions`）返回 400；仅不支持的生成控制可忽略并记录字段名。会话、Cookie 和重试属于各自账号；会话头与正文元数据检查格式和关联关系，不要求每次随机值相同。
 

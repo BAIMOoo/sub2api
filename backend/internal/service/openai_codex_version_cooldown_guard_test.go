@@ -112,27 +112,91 @@ func TestRateLimitService_HandleUpstreamError_CodexFixedHTTPVersionLagFromBundle
 	require.True(t, codexVersionLagsRequirement("0.158.0", minVersion))
 	require.False(t, codexVersionLagsRequirement("0.171.0", minVersion))
 
-	// On any pinned egress version below 0.166.0, HandleUpstreamError must skip cooldown & failover
-	// using the bundled manifest floor without requiring an account snapshot.
-	if CompareVersions(codexExecHTTPVersion, "0.166.0") < 0 {
-		previous := slog.Default()
-		var logs bytes.Buffer
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		t.Cleanup(func() { slog.SetDefault(previous) })
+	// Simulate a pinned egress version below 0.166.0 so HandleUpstreamError
+	// unconditionally exercises the bundled_manifest skip path without an account snapshot.
+	previousPinned := codexPinnedEgressVersion
+	codexPinnedEgressVersion = func() string { return "0.158.0" }
+	t.Cleanup(func() { codexPinnedEgressVersion = previousPinned })
 
-		repo := &modelNotFoundAccountRepoStub{}
-		svc := &RateLimitService{accountRepo: repo}
-		handled := svc.HandleUpstreamError(
+	previous := slog.Default()
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	handled := svc.HandleUpstreamError(
+		withCodexFixedHTTPEgress(context.Background()),
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"detail":"The 'gpt-6.2-sol' model is not supported when using Codex with a ChatGPT account."}`),
+		"sol-alias",
+	)
+	require.False(t, handled)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.Contains(t, logs.String(), "source=bundled_manifest")
+}
+
+func TestIsOpenAICodexClientVersionMismatchError_StructuredJSONIgnoresNonErrorFields(t *testing.T) {
+	body := []byte(`{"error":{"type":"invalid_request_error","message":"Invalid input field"},"echo":"please update codex"}`)
+	require.False(t, isOpenAICodexClientVersionMismatchError(http.StatusBadRequest, body))
+
+	plainText := []byte("Your Codex client version is too old; please upgrade Codex.")
+	require.True(t, isOpenAICodexClientVersionMismatchError(http.StatusBadRequest, plainText))
+}
+
+func TestRateLimitService_HandleUpstreamError_CodexVersionLagSkipsTempUnschedulableRules(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAICodexPlanGatedOAuthAccount()
+	account.Extra = map[string]any{
+		"temp_unschedulable_enabled": true,
+		"temp_unschedulable_rules": []any{
+			map[string]any{
+				"error_code":       http.StatusBadRequest,
+				"keywords":         []any{"not supported", "upgrade codex"},
+				"duration_minutes": 30,
+			},
+		},
+	}
+	account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{
+		Source:   "upstream",
+		SyncedAt: time.Now().UTC().Format(time.RFC3339),
+		Models: map[string]UpstreamModelMetadata{
+			"gpt-6.9-future": {
+				ID:                   "gpt-6.9-future",
+				MinimalClientVersion: "0.999.0",
+			},
+		},
+	})
+
+	// Explicit client-version 400 (Guard 1) must bypass 400 temp_unschedulable_rules.
+	handled := svc.HandleUpstreamError(
+		withCodexFixedHTTPEgress(context.Background()),
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"detail":"Please upgrade Codex to 0.166.0 or newer."}`),
+		"gpt-6.2-sol",
+	)
+	require.False(t, handled)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.Zero(t, repo.tempCalls)
+
+	// Known version-lag 400 with effort/prefixed alias (Guard 2) must also bypass temp_unschedulable_rules.
+	for _, alias := range []string{"gpt-6.9-future-high", "openai/gpt-6.9-future"} {
+		handled = svc.HandleUpstreamError(
 			withCodexFixedHTTPEgress(context.Background()),
 			account,
 			http.StatusBadRequest,
 			http.Header{},
-			[]byte(`{"detail":"The 'gpt-6.2-sol' model is not supported when using Codex with a ChatGPT account."}`),
-			"sol-alias",
+			[]byte(`{"detail":"The 'gpt-6.9-future' model is not supported when using Codex with a ChatGPT account."}`),
+			alias,
 		)
-		require.False(t, handled)
-		require.Empty(t, repo.modelRateLimitCalls)
-		require.Contains(t, logs.String(), "source=bundled_manifest")
+		require.False(t, handled, alias)
+		require.Empty(t, repo.modelRateLimitCalls, alias)
+		require.Zero(t, repo.tempCalls, alias)
 	}
 }
 
@@ -160,7 +224,7 @@ func TestRateLimitService_HandleUpstreamError_CodexFixedHTTPGenuinePlanGatedKeep
 		"gpt-6.1-sol",
 	)
 
-	require.True(t, handled, "genuine plan-gated 400 when version satisfies floor must keep failover")
+	require.True(t, handled, "genuine plan-gated 400 when version satisfies Model Minimal Client Version must keep failover")
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, "gpt-6.1-sol", repo.modelRateLimitCalls[0].scope)
 	require.Equal(t, upstreamCodexPlanGatedModelReason, repo.modelRateLimitCalls[0].reason)
@@ -198,7 +262,7 @@ func TestRateLimitService_HandleUpstreamError_NonFixedHTTPKeepsPlanGatedCooldown
 	require.Equal(t, upstreamCodexPlanGatedModelReason, repo.modelRateLimitCalls[0].reason)
 }
 
-func TestExtractUpstreamModelCatalogPreservesMinimalClientVersion(t *testing.T) {
+func TestExtractUpstreamModelCatalogCodexMinimalClientVersion(t *testing.T) {
 	body := []byte(`{"models":[{"slug":"gpt-6.2-sol","display_name":"GPT-6.2-Sol","minimal_client_version":"0.166.0","context_window":500000,"input_modalities":["text"],"supported_reasoning_levels":[{"effort":"low"}]}]}`)
 	models, metadata, err := extractUpstreamModelCatalog(body, false)
 	require.NoError(t, err)
@@ -246,9 +310,27 @@ func TestOpenAIGateway_FixedHTTP400VersionLagSurfaces400WithoutCooldownOrFailove
 			},
 		},
 		{
+			name: "chat_completions_effort_alias",
+			path: "/v1/chat/completions",
+			body: `{"model":"openai/gpt-6.9-future-high","messages":[{"role":"user","content":"hi"}],"stream":false}`,
+			call: func(svc *OpenAIGatewayService, c *gin.Context, account *Account, body []byte) error {
+				_, err := svc.ForwardAsChatCompletions(c.Request.Context(), c, account, body, "", "")
+				return err
+			},
+		},
+		{
 			name: "messages",
 			path: "/v1/messages",
 			body: `{"model":"gpt-6.9-future","max_tokens":32,"messages":[{"role":"user","content":"hi"}],"stream":false}`,
+			call: func(svc *OpenAIGatewayService, c *gin.Context, account *Account, body []byte) error {
+				_, err := svc.ForwardAsAnthropic(c.Request.Context(), c, account, body, "", "")
+				return err
+			},
+		},
+		{
+			name: "messages_effort_alias",
+			path: "/v1/messages",
+			body: `{"model":"gpt-6.9-future-high","max_tokens":32,"messages":[{"role":"user","content":"hi"}],"stream":false}`,
 			call: func(svc *OpenAIGatewayService, c *gin.Context, account *Account, body []byte) error {
 				_, err := svc.ForwardAsAnthropic(c.Request.Context(), c, account, body, "", "")
 				return err
@@ -269,7 +351,17 @@ func TestOpenAIGateway_FixedHTTP400VersionLagSurfaces400WithoutCooldownOrFailove
 				rateLimitService: rateLimit,
 			}
 			account := codexBodyEncodingTestAccount(158)
-			account.Extra = map[string]any{"openai_oauth_passthrough": tc.passthrough}
+			account.Extra = map[string]any{
+				"openai_oauth_passthrough":   tc.passthrough,
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules": []any{
+					map[string]any{
+						"error_code":       http.StatusBadRequest,
+						"keywords":         []any{"not supported"},
+						"duration_minutes": 30,
+					},
+				},
+			}
 			account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{
 				Source:   "upstream",
 				SyncedAt: time.Now().UTC().Format(time.RFC3339),
@@ -294,6 +386,37 @@ func TestOpenAIGateway_FixedHTTP400VersionLagSurfaces400WithoutCooldownOrFailove
 			require.NotErrorAs(t, err, &failoverErr, "version-lag 400 must not trigger account failover")
 			require.Equal(t, http.StatusBadRequest, rec.Code, "upstream 400 must surface directly to client")
 			require.Empty(t, repo.modelRateLimitCalls, "account must not be cooled down for 30 minutes")
+			require.Zero(t, repo.tempCalls, "account must not be temporarily unscheduled")
 		})
 	}
+
+	t.Run("passthrough_preserves_explicit_client_version_rejection_message", func(t *testing.T) {
+		const versionErr = `{"detail":"Your Codex client version 0.158.0 is too old for this model. Please upgrade Codex to 0.166.0 or newer."}`
+		repo := &modelNotFoundAccountRepoStub{}
+		rateLimit := &RateLimitService{accountRepo: repo}
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(versionErr)),
+		}}
+		svc := &OpenAIGatewayService{
+			cfg:              &config.Config{},
+			httpUpstream:     upstream,
+			rateLimitService: rateLimit,
+		}
+		account := codexBodyEncodingTestAccount(159)
+		account.Extra = map[string]any{"openai_oauth_passthrough": true}
+
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-6.2-sol","input":"hi","stream":false}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+
+		_, err := svc.Forward(c.Request.Context(), c, account, []byte(`{"model":"gpt-6.2-sol","input":"hi","stream":false}`))
+		require.Error(t, err)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "upgrade Codex to 0.166.0")
+		require.Empty(t, repo.modelRateLimitCalls)
+	})
 }
