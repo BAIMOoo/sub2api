@@ -1,0 +1,4 @@
+interface:
+  display_name: "Align Codex HTTP"
+  short_description: "Upgrade pinned Codex direct HTTP egress baseline and host alignment monitor"
+  default_prompt: "Use $align-codex-http to upgrade or verify the pinned Codex direct HTTP egress baseline and host alignment monitor in BAIMOoo/sub2api."
