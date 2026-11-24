@@ -2652,6 +2652,14 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
 	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
+	case isOpenAIOAuthAccount(account) && isOpenAICodexClientVersionMismatchError(statusCode, responseBody):
+		slog.Warn("codex_client_version_mismatch_cooldown_skipped",
+			"account_id", account.ID,
+			"requested_model", strings.TrimSpace(requestedModel),
+			"status_code", statusCode,
+			"pinned_egress_version", codexExecHTTPVersion,
+		)
+		return false
 	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
 		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
 	default:
@@ -2659,6 +2667,10 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	}
 	modelKey := modelRateLimitKeyForUpstreamModelNotFound(ctx, account, requestedModel)
 	if modelKey == "" {
+		return false
+	}
+	if reason == upstreamCodexPlanGatedModelReason &&
+		shouldSkipCodexFixedHTTPVersionLagCooldown(ctx, account, requestedModel, modelKey) {
 		return false
 	}
 	if shouldSkipCodexPlanGatedImageModelCooldown(ctx, reason, requestedModel, modelKey) {

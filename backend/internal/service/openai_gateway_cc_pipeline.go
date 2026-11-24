@@ -155,7 +155,7 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	})
 	shouldDisable := tempUnscheduled
 	if account.Platform != PlatformGrok && !tempUnscheduled {
-		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+		shouldDisable = s.handleOpenAIAccountUpstreamError(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	}
 	return s.newOpenAIAccountFailoverError(
 		account,
