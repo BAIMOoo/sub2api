@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import time
 
+from .capture import resolve_egress
 from .evidence import atomic_json
 from .notifications import Outbox, email_send, read_env, wechat_send
 from .runner import Runner, repository_state
@@ -14,10 +15,11 @@ from .schedule import Schedule, change_generation, lock
 
 def outbox(cfg):
     senders = {}
+    proxy_url = resolve_egress(cfg)
     mail_path = Path(cfg['smtp_env'])
     if mail_path.exists():
         mail = read_env(mail_path)
-        senders['email'] = lambda text, event: email_send(mail, text, event, cfg['proxy_url'])
+        senders['email'] = lambda text, event: email_send(mail, text, event, proxy_url)
     wx_path = Path(cfg['wechat_config'])
     if wx_path.exists():
         if wx_path.stat().st_mode & 0o077:
@@ -37,8 +39,9 @@ def run_cli(argv=None):
     if path.stat().st_mode & 0o077:
         raise ValueError('config_file_permissions')
     cfg = json.loads(path.read_text())
+    proxy_url = resolve_egress(cfg)
     from .egress import configure
-    configure(cfg['proxy_url'])
+    configure(proxy_url)
     root = Path(cfg['state_dir'])
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     guard = lock(root / 'run.lock')

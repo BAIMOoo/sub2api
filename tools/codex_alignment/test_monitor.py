@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from tools.codex_alignment.capture import Budget, Capture, parse_hello, read_head, socks_connect
+from tools.codex_alignment.capture import Budget, Capture, connect_upstream, parse_hello, read_head, resolve_egress, socks_connect
 from tools.codex_alignment.protocol import completion
 from tools.codex_alignment.runner import (apply_reasoning_coverage, compaction_observed, gateway,
                                           native_answer_matches, reasoning_replay_observed)
@@ -540,6 +540,26 @@ class CaptureTests(unittest.TestCase):
                     b'POST / HTTP/1.1\r\n folded: yes\r\n\r\n'):
             with self.assertRaises(ValueError):
                 read_head(io.BytesIO(raw))
+
+    def test_explicit_direct_egress_resolution_and_fail_closed_validation(self):
+        self.assertIsNone(resolve_egress({'direct_egress': True, 'proxy_id': None, 'proxy_url': ''}))
+        self.assertIsNone(resolve_egress({'direct_egress': True}))
+        self.assertEqual(resolve_egress({'proxy_url': 'socks5h://127.0.0.1:1080'}), 'socks5h://127.0.0.1:1080')
+        for bad in (
+            {'direct_egress': True, 'proxy_id': 1},
+            {'direct_egress': True, 'proxy_url': 'socks5h://127.0.0.1:1080'},
+            {'direct_egress': False, 'proxy_url': ''},
+            {'proxy_url': 'http://127.0.0.1:8080'},
+            {},
+        ):
+            with self.assertRaises(ValueError):
+                resolve_egress(bad)
+        sentinel = object()
+        with patch('tools.codex_alignment.capture.socket.create_connection', return_value=sentinel) as direct, \
+                patch('tools.codex_alignment.capture.socks_connect') as socks:
+            self.assertIs(connect_upstream(None, 'chatgpt.com', 443, timeout=15), sentinel)
+            direct.assert_called_once_with(('chatgpt.com', 443), timeout=15)
+            socks.assert_not_called()
 
 
 class KeeperOverlayTests(unittest.TestCase):

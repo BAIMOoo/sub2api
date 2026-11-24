@@ -39,13 +39,14 @@ func identityFormat(s string) string {
 }
 
 type Config struct {
-	Secret      string `json:"secret"`
-	APIKeyID    int64  `json:"api_key_id"`
-	AccountID   int64  `json:"account_id"`
-	ProxyID     int64  `json:"proxy_id"`
-	ProxySHA256 string `json:"proxy_sha256"`
-	OutputDir   string `json:"output_dir"`
-	MaxRequests int    `json:"max_requests"`
+	Secret       string `json:"secret"`
+	APIKeyID     int64  `json:"api_key_id"`
+	AccountID    int64  `json:"account_id"`
+	DirectEgress bool   `json:"direct_egress,omitempty"`
+	ProxyID      int64  `json:"proxy_id"`
+	ProxySHA256  string `json:"proxy_sha256"`
+	OutputDir    string `json:"output_dir"`
+	MaxRequests  int    `json:"max_requests"`
 }
 
 type Ticket struct {
@@ -102,8 +103,12 @@ func Authenticate(req *http.Request, keyID int64) (*http.Request, error) {
 }
 
 func authenticate(req *http.Request, keyID int64, cfg Config, now time.Time) (*http.Request, error) {
+	validEgress := cfg.ProxyID > 0 && len(cfg.ProxySHA256) == 64
+	if cfg.DirectEgress {
+		validEgress = cfg.ProxyID == 0 && cfg.ProxySHA256 == ""
+	}
 	if len(cfg.Secret) < 32 || cfg.APIKeyID <= 0 || keyID != cfg.APIKeyID ||
-		cfg.AccountID <= 0 || cfg.ProxyID <= 0 || len(cfg.ProxySHA256) != 64 ||
+		cfg.AccountID <= 0 || !validEgress ||
 		!filepath.IsAbs(cfg.OutputDir) || cfg.MaxRequests < 1 || cfg.MaxRequests > 256 {
 		return nil, ErrProbe
 	}
@@ -172,11 +177,19 @@ func CheckSelection(ctx context.Context, accountID, proxyID int64, oauth bool) e
 }
 
 func (p *Probe) CheckTransport(req *http.Request, accountID int64, proxyURL string) error {
-	digest := sha256.Sum256([]byte(proxyURL))
-	if accountID != p.cfg.AccountID || proxyURL == "" ||
-		!hmac.Equal([]byte(hex.EncodeToString(digest[:])), []byte(p.cfg.ProxySHA256)) ||
+	if accountID != p.cfg.AccountID ||
 		req.URL.Scheme != "https" || req.URL.Host != "chatgpt.com" ||
 		!allowedPath(req.Method, req.URL.Path) || time.Now().Unix() >= p.ticket.Expires {
+		return ErrProbe
+	}
+	if p.cfg.DirectEgress {
+		if proxyURL != "" {
+			return ErrProbe
+		}
+		return nil
+	}
+	digest := sha256.Sum256([]byte(proxyURL))
+	if proxyURL == "" || !hmac.Equal([]byte(hex.EncodeToString(digest[:])), []byte(p.cfg.ProxySHA256)) {
 		return ErrProbe
 	}
 	return nil

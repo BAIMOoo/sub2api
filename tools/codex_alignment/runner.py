@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-from .capture import Budget, Capture
+from .capture import Budget, Capture, resolve_egress
 from .evidence import (atomic_json, canonical, compare_replay, differences, digest, opaque,
                        retain, sanitize, ticket)
 from .releases import install, release, github, prune_binaries
@@ -238,7 +238,9 @@ class Runner:
             report['production'] = snapshot
             if not (snapshot.get('running') and snapshot.get('oauth') and snapshot.get('account_available')):
                 raise ValueError('production_account_unavailable')
-            if snapshot.get('account_id') != self.cfg['account_id'] or snapshot.get('proxy_id') != self.cfg['proxy_id']:
+            proxy_url = resolve_egress(self.cfg)
+            expected_proxy_id = None if self.cfg.get('direct_egress') else self.cfg.get('proxy_id')
+            if snapshot.get('account_id') != self.cfg['account_id'] or snapshot.get('proxy_id') != expected_proxy_id:
                 raise ValueError('production_probe_binding_changed')
             if snapshot.get('oauth_account_sha256') != self.cfg['oauth_account_sha256']:
                 raise ValueError('production_oauth_identity_changed')
@@ -270,7 +272,7 @@ class Runner:
                 binary, provenance = install(self.root / 'binaries', info)
                 _, host_provenance = install(self.root / 'binaries', info, component='codex-code-mode-host')
                 version = provenance['version']
-                hello = Capture(self.cfg['proxy_url'], self.cfg['secret'], directory / version / 'tls',
+                hello = Capture(proxy_url, self.cfg['secret'], directory / version / 'tls',
                                 self.root / 'ca', hello_only=True)
                 native(binary, home, next(iter(self.cfg['models'].values())), hello, 30)
                 tls = hello.hellos[0] if hello.hellos else None
@@ -282,7 +284,7 @@ class Runner:
                         if time.time() >= expires - 30:
                             raise TimeoutError('run_deadline')
                         name = 'v' + version.replace('.', '_') + '-' + expected_mode + '-' + scenario
-                        cap = Capture(self.cfg['proxy_url'], self.cfg['secret'], directory / name,
+                        cap = Capture(proxy_url, self.cfg['secret'], directory / name,
                                       self.root / 'ca', max_requests=self.cfg.get('native_max_requests', 16),
                                       budget=native_budget)
                         phase = time.monotonic()
