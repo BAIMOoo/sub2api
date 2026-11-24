@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "captured_date": "2026-11-24",
+  "purpose": "fixed official codex exec 0.171.0 Linux x86_64 layered local reference",
+  "release_tag": "rust-v0.171.0",
+  "release_id": 452122665,
+  "release_url": "https://github.com/openai/codex/releases/tag/rust-v0.171.0",
+  "binary_version": "codex-cli 0.171.0",
+  "binary_target": "x86_64-unknown-linux-musl",
+  "binaries": {
+    "codex": {
+      "asset": "codex-x86_64-unknown-linux-musl.tar.gz",
+      "archive_sha256": "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d",
+      "extracted_binary_sha256": "b76a027d6b210f9a8da7aaf321dd235c700f0ef7a794d4a5314b9af6c134f0f0"
+    },
+    "codex_code_mode_host": {
+      "asset": "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "archive_sha256": "d78619030c1b8d0a4d9c9c67667c1bfa23ad9d9edc63d87ffeaa86796f3d868c",
+      "extracted_binary_sha256": "f49bd4f0c0cc73cf1ec3a719009e07ce5b6e100520d023c760cc203fb37e5c6f"
+    }
+  },
+  "distribution": "Alpine Linux 3.24.4",
+  "container_image": "python@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e",
+  "docker_platform": "linux/amd64",
+  "kernel": "6.12.76-linuxkit",
+  "isolation": {
+    "network_mode": "none",
+    "read_only_rootfs": true,
+    "hosts_override": {
+      "chatgpt.com": "127.0.0.1"
+    },
+    "repo_mounted_into_container": false,
+    "real_auth_accessed": false,
+    "real_model_provider_contacted": false
+  },
+  "observed_identity": {
+    "version": "0.171.0",
+    "originator": "codex_exec",
+    "user_agent": "codex_exec/0.171.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.171.0)",
+    "accept_encoding": "zstd,gzip"
+  },
+  "layers": {
+    "http_synthetic_oauth_custom_ca": {
+      "evidence_scope": "HTTP/1.1 request line, lowercase ordered headers, zstd frame header, and decoded Standard/Lite/Compact V2 request bodies",
+      "models": {
+        "standard": "gpt-5.5",
+        "lite": "gpt-6.2-sol",
+        "lite_secondary": "gpt-6-astra",
+        "compact_v2": "gpt-5.5"
+      },
+      "cookie_order_verified_separately": true,
+      "not_native_tls_evidence": true
+    },
+    "native_tls_clienthello_no_ca_no_proxy": {
+      "evidence_scope": "Default Linux x86_64 native-tls/OpenSSL HTTP-fallback ClientHello structural offer",
+      "standard_total_hellos": 37,
+      "lite_total_hellos": 37,
+      "websocket_pre_fallback_per_run": 7,
+      "http_fallback_samples_total": 60,
+      "http_fallback_all_identical": true,
+      "ja3_md5": "0b85eb0d4981e69064e40753e4f0ac5f",
+      "fixture_path": "backend/internal/pkg/tlsfingerprint/testdata/codex_exec_0171_linux_amd64_clienthello.json",
+      "not_negotiated_or_same_transaction_http": true
+    }
+  },
+  "layered_evidence": true,
+  "single_native_end_to_end_capture": false,
+  "limits": [
+    "No authenticated real OAuth, PAT, or SetupToken provider acceptance is proved by these local fixtures.",
+    "Synthetic OAuth HTTPS capture uses a local inspection CA and is strictly HTTP/body/compression evidence, never native TLS evidence.",
+    "Native ClientHello capture terminates before ServerHello and is independent of the HTTP capture.",
+    "Compaction uses streaming Responses V2 (compaction_trigger on /backend-api/codex/responses); legacy /responses/compact is not exercised."
+  ]
+}
