@@ -154,12 +154,16 @@ func (c *httpCapture) capture() error {
 			checks["window_matches"] = meta["x-codex-window-id"] == c.request.Header.Get("x-codex-window-id")
 		}
 	}
-	return c.probe.Emit("http", map[string]any{
+	payload := map[string]any{
 		"method": c.request.Method, "path": c.request.URL.Path,
 		"header_order": order, "headers": headers, "wire_body_bytes": len(c.body),
 		"body": c.probe.sanitize(body), "identity_checks": checks, "identity_formats": formats,
 		"evidence": "gateway_final_http_before_tls", "cold_connection": true,
-	})
+	}
+	if uaContract := userAgentContract(c.request.Header.Get("User-Agent")); uaContract != "" {
+		payload["user_agent_contract"] = uaContract
+	}
+	return c.probe.Emit("http", payload)
 }
 
 func (c *httpCapture) Close() error {

@@ -71,6 +71,40 @@ class EvidenceTests(unittest.TestCase):
         self.assertFalse(result['wire_size_equal'])
         self.assertTrue(result['header_diff'])
 
+    def test_linux_distro_user_agent_contract_normalizes_only_distro_name(self):
+        identity = '12345678-1234-1234-1234-123456789012'
+        body = {'model': 'gpt-6-astra', 'prompt_cache_key': identity, 'input': []}
+        make = lambda ua, src: http_evidence(
+            SECRET, 'POST', '/backend-api/codex/responses',
+            [('Host', 'chatgpt.com'), ('session-id', identity), ('User-Agent', ua)],
+            body, 45, src)
+        native = make('codex_exec/0.171.0 (Ubuntu 24.4.0; x86_64) unknown (codex_exec; 0.171.0)', 'native')
+        gateway_alpine = make('codex_exec/0.171.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.171.0)', 'gateway')
+        self.assertEqual(native['user_agent_contract'], 'codex_exec/0.171.0 (<linux-os>; x86_64) unknown (codex_exec; 0.171.0)')
+        self.assertEqual(native['user_agent_contract'], gateway_alpine['user_agent_contract'])
+        self.assertNotIn('Ubuntu', json.dumps(native))
+        self.assertNotIn('Alpine', json.dumps(gateway_alpine))
+        same_contract = compare_replay(native, gateway_alpine)
+        self.assertEqual(same_contract['status'], 'pass')
+        self.assertEqual(same_contract['header_contract_diff'], [])
+        self.assertTrue(any(p.startswith('$.user-agent') for p in same_contract['header_diff']))
+
+        for drifted_ua in (
+            'codex_exec/0.172.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.172.0)',
+            'codex_exec/0.171.0 (Alpine Linux 3.24.4; aarch64) unknown (codex_exec; 0.171.0)',
+            'codex_exec/0.171.0 (Alpine Linux 3.24.4; x86_64) xterm (codex_exec; 0.171.0)',
+            'codex_exec/0.171.0 (macOS 15.1; x86_64) unknown (codex_exec; 0.171.0)',
+            'codex_cli_rs/0.171.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_cli_rs; 0.171.0)',
+            'curl/8.7.1',
+        ):
+            res = compare_replay(native, make(drifted_ua, 'gateway'))
+            self.assertEqual(res['status'], 'drift', drifted_ua)
+            self.assertTrue(any(p.startswith('$.user-agent') for p in res['header_contract_diff']), drifted_ua)
+
+        legacy_gateway = copy.deepcopy(gateway_alpine)
+        legacy_gateway.pop('user_agent_contract', None)
+        self.assertEqual(compare_replay(native, legacy_gateway)['status'], 'drift')
+
     def test_body_diff_identifies_reasoning_item_without_exposing_values(self):
         identity = '12345678-1234-1234-1234-123456789012'
         common = {'model': 'test-model', 'prompt_cache_key': identity}
