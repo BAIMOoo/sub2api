@@ -13,7 +13,7 @@ from tools.codex_alignment.reporting import document, notification_signature, sa
 def sample():
     return {'run': '20261018T093357Z-example', 'status': 'drift', 'started_at': 1792316037,
             'finished_at': 1792316141, 'elapsed_seconds': 104, 'trigger': 'acceptance',
-            'baseline': {'version': '0.158.0'}, 'latest_stable': 'rust-v0.163.0',
+            'baseline': {'version': '0.171.0'}, 'latest_stable': 'rust-v0.163.0',
             'repository': {'head': 'abcdef', 'conclusion': 'success', 'run_id': 123},
             'production': {'source': 'old+observer', 'health_ok': True},
             'coverage_gaps': {'standard': 'no_supported_standard_model'},

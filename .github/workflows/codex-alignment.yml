@@ -54,7 +54,7 @@ jobs:
           Path('alignment-provenance.json').write_text(json.dumps({
               'source_sha': os.environ['SOURCE_SHA'], 'run_id': os.environ['RUN_ID'],
               'scope': 'offline_http_contracts', 'live_provider_tested': False,
-              'approved_body_fixture_version': '0.158.0'}))
+              'approved_body_fixture_version': '0.171.0'}))
           PY
       - uses: actions/upload-artifact@v6
         if: always()
