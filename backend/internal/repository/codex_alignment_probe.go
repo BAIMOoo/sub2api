@@ -21,9 +21,16 @@ func (s *httpUpstreamService) doAlignmentProbe(req *http.Request, proxyURL strin
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
 	}
-	proxy, err := url.Parse(proxyURL)
-	if err != nil || profile == nil || len(profile.HeaderOrders()) == 0 ||
-		(proxy.Scheme != "socks5" && proxy.Scheme != "socks5h" && proxy.Scheme != "http") {
+	var proxy *url.URL
+	if proxyURL != "" {
+		var err error
+		proxy, err = url.Parse(proxyURL)
+		if err != nil || (proxy.Scheme != "socks5" && proxy.Scheme != "socks5h" && proxy.Scheme != "http") {
+			_ = p.Emit("incomplete", map[string]any{"reason": "unsupported_probe_transport"})
+			return nil, codexprobe.ErrProbe
+		}
+	}
+	if profile == nil || len(profile.HeaderOrders()) == 0 {
 		_ = p.Emit("incomplete", map[string]any{"reason": "unsupported_probe_transport"})
 		return nil, codexprobe.ErrProbe
 	}

@@ -9,7 +9,7 @@ import socketserver
 import subprocess
 import threading
 
-from .capture import read_head, socks_connect
+from .capture import connect_upstream, read_head, resolve_egress
 
 
 @contextmanager
@@ -23,7 +23,7 @@ def login_proxy(proxy_url):
                 allowed = {'auth.openai.com:443', 'auth0.openai.com:443', 'chatgpt.com:443', 'api.openai.com:443'}
                 if method != 'CONNECT' or target not in allowed:
                     return
-                with socks_connect(proxy_url, target.split(':')[0], 443) as upstream:
+                with connect_upstream(proxy_url, target.split(':')[0], 443) as upstream:
                     self.request.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
                     while True:
                         ready, _, _ = select.select([self.request, upstream], [], [], 60)
@@ -58,7 +58,8 @@ def main():
     binary = max(versions, key=lambda p: tuple(int(x) for x in p.name.split('.'))) / 'codex'
     env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(home / 'home'),
            'CODEX_HOME': str(home), 'LANG': 'C.UTF-8', 'TERM': os.environ.get('TERM', 'xterm')}
-    with login_proxy(cfg['proxy_url']) as proxy:
+    proxy_url = resolve_egress(cfg)
+    with login_proxy(proxy_url) as proxy:
         env.update(HTTPS_PROXY=proxy, HTTP_PROXY=proxy, ALL_PROXY=proxy, NO_PROXY='')
         return subprocess.call([str(binary), '-c', 'cli_auth_credentials_store="file"', 'login', '--device-auth'],
                                env=env, cwd=home)

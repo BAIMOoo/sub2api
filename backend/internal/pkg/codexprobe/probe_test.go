@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -172,5 +173,57 @@ func TestProbeClientHelloFragmentation(t *testing.T) {
 	}
 	if !bytes.Contains(raw, []byte("772")) {
 		t.Fatal("TLS supported version missing")
+	}
+}
+
+func TestProbeExplicitDirectEgressMode(t *testing.T) {
+	signReq := func(cfg Config) *http.Request {
+		ticket := Ticket{Run: fmt.Sprintf("run-direct-%d", time.Now().UnixNano()), Sample: "native-direct", Expires: time.Now().Add(time.Hour).Unix()}
+		raw, _ := json.Marshal(ticket)
+		encoded := base64.RawURLEncoding.EncodeToString(raw)
+		mac := hmac.New(sha256.New, []byte(cfg.Secret))
+		_, _ = mac.Write([]byte(encoded))
+		req := httptest.NewRequest("POST", "https://gateway/v1/responses", nil)
+		req.Header.Set(Header, encoded+"."+hex.EncodeToString(mac.Sum(nil)))
+		return req
+	}
+
+	baseCfg := Config{
+		Secret:       strings.Repeat("s", 40),
+		APIKeyID:     31,
+		AccountID:    41,
+		DirectEgress: true,
+		OutputDir:    t.TempDir(),
+		MaxRequests:  3,
+	}
+	auth, err := authenticate(signReq(baseCfg), 31, baseCfg, time.Now())
+	if err != nil {
+		t.Fatalf("explicit direct egress rejected: %v", err)
+	}
+	ctx := auth.Context()
+	if err := CheckSelection(ctx, 41, 0, true); err != nil {
+		t.Fatalf("direct account rejected: %v", err)
+	}
+	if err := CheckSelection(ctx, 41, 1, true); err == nil {
+		t.Fatal("proxied account accepted under direct_egress mode")
+	}
+	upstreamReq := httptest.NewRequest("POST", "https://chatgpt.com/backend-api/codex/responses", nil)
+	p := FromContext(ctx)
+	if err := p.CheckTransport(upstreamReq, 41, ""); err != nil {
+		t.Fatalf("direct transport rejected: %v", err)
+	}
+	if err := p.CheckTransport(upstreamReq, 41, "socks5h://proxy:1080"); err == nil {
+		t.Fatal("proxied transport accepted under direct_egress mode")
+	}
+
+	// Conflicting or implicit configs must fail closed.
+	for _, bad := range []Config{
+		{Secret: baseCfg.Secret, APIKeyID: 31, AccountID: 41, DirectEgress: true, ProxyID: 1, OutputDir: baseCfg.OutputDir, MaxRequests: 3},
+		{Secret: baseCfg.Secret, APIKeyID: 31, AccountID: 41, DirectEgress: true, ProxySHA256: strings.Repeat("a", 64), OutputDir: baseCfg.OutputDir, MaxRequests: 3},
+		{Secret: baseCfg.Secret, APIKeyID: 31, AccountID: 41, DirectEgress: false, OutputDir: baseCfg.OutputDir, MaxRequests: 3},
+	} {
+		if _, err := authenticate(signReq(bad), 31, bad, time.Now()); err == nil {
+			t.Fatalf("invalid egress config accepted: %+v", bad)
+		}
 	}
 }

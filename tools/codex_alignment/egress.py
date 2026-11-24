@@ -1,13 +1,15 @@
-"""Python HTTPS traffic uses the same fixed SOCKS exit as the inspected CLI.
+"""Python HTTPS traffic uses the configured egress (fixed SOCKS or explicit direct).
 
-The service's IPAddressDeny/Allow policy additionally blocks direct egress from
-native child processes. DNS for remote HTTPS targets occurs at the SOCKS exit.
+In SOCKS mode, the service's IPAddressDeny/Allow policy additionally blocks
+direct egress from native child processes and DNS resolves at the SOCKS exit.
+In explicit direct-egress mode, destination allowlists and HTTPS-only checks
+still apply to every outbound request.
 """
 import http.client
 import ssl
 from urllib.request import HTTPSHandler, HTTPHandler, ProxyHandler, build_opener, install_opener
 
-from .capture import socks_connect
+from .capture import connect_upstream
 
 HOSTS = {'api.github.com', 'github.com', 'release-assets.githubusercontent.com',
          'objects.githubusercontent.com', 'ilinkai.weixin.qq.com', 'novac2c.cdn.weixin.qq.com'}
@@ -18,7 +20,7 @@ def configure(proxy_url):
         def connect(self):
             if self.host not in HOSTS or self.port != 443 or self._tunnel_host:
                 raise ValueError('monitor_https_destination_not_allowed')
-            sock = socks_connect(proxy_url, self.host, self.port, timeout=self.timeout)
+            sock = connect_upstream(proxy_url, self.host, self.port, timeout=self.timeout)
             try:
                 self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
             except BaseException:

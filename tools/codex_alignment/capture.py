@@ -37,6 +37,27 @@ def exact(sock, size):
     return bytes(chunks)
 
 
+def resolve_egress(cfg):
+    raw_proxy = cfg.get('proxy_url')
+    proxy_url = raw_proxy.strip() if isinstance(raw_proxy, str) else raw_proxy
+    if cfg.get('direct_egress'):
+        if cfg.get('proxy_id') is not None or proxy_url:
+            raise ValueError('conflicting_direct_egress_config')
+        return None
+    if not isinstance(proxy_url, str) or not proxy_url:
+        raise ValueError('fixed_socks_proxy_required')
+    proxy = urlsplit(proxy_url)
+    if proxy.scheme not in {'socks5', 'socks5h'} or not proxy.hostname or not proxy.port:
+        raise ValueError('fixed_socks_proxy_required')
+    return proxy_url
+
+
+def connect_upstream(proxy_url, host, port, timeout=45):
+    if proxy_url is None:
+        return socket.create_connection((host, port), timeout=timeout)
+    return socks_connect(proxy_url, host, port, timeout=timeout)
+
+
 def socks_connect(proxy_url, host, port, timeout=45):
     proxy = urlsplit(proxy_url)
     if proxy.scheme not in {'socks5', 'socks5h'} or not proxy.hostname or not proxy.port:
@@ -242,7 +263,7 @@ class Capture:
                     if self.auth_tunnels >= 2:
                         raise ValueError('auth_tunnel_budget_exhausted')
                     self.auth_tunnels += 1
-                with socks_connect(self.proxy_url, target.split(':')[0], 443) as upstream:
+                with connect_upstream(self.proxy_url, target.split(':')[0], 443) as upstream:
                     conn.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
                     deadline, total = time.monotonic() + 60, 0
                     while time.monotonic() < deadline:
@@ -338,7 +359,7 @@ class Capture:
                     self.requests.append({'method': method, 'path': clean_path, 'pairs': pairs,
                                           'body': decoded, 'evidence': record, 'status': None})
                     entry = self.requests[-1]
-                with socks_connect(self.proxy_url, 'chatgpt.com', 443) as upstream:
+                with connect_upstream(self.proxy_url, 'chatgpt.com', 443) as upstream:
                     ctx = ssl.create_default_context()
                     ctx.set_alpn_protocols(['http/1.1'])
                     with ctx.wrap_socket(upstream, server_hostname='chatgpt.com') as tls:

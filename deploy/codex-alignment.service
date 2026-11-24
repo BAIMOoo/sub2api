@@ -29,7 +29,8 @@ ReadWritePaths=/var/lib/sub2api-alignment
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 IPAddressDeny=any
 IPAddressAllow=localhost
-# Installer must add the selected SOCKS proxy IP in a private drop-in. Without
-# that explicit allow entry all provider and notification traffic fails closed.
+# Installer must configure egress in a private drop-in: either IPAddressAllow=<proxy-ip>
+# for fixed SOCKS mode, or IPAddressDeny= for explicit direct_egress mode (destination
+# host allowlists remain enforced in capture.py, egress.py, login.py and notifications.py).
 StandardOutput=journal
 StandardError=journal
