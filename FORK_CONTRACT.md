@@ -85,11 +85,10 @@
 
 | 项目 | 2026-11-24 状态 |
 | --- | --- |
-| 当前 `main`（`v0.2.24`） | 已合入固定直接 HTTP `codex_exec 0.158.0 / Linux x86_64` 出站与 WS 上游行为隔离（tag `v0.2.24` 指向 `2950874a3`，`origin/main` 另含自动 `VERSION` 同步提交 `5273e5dd8`）。 |
-| 当前生产运行态 | 因 `0.158.0` 低于 `gpt-6.2-sol` / `gpt-6.2-astra` 要求的 `minimal_client_version: 0.166.0` 且 `400` 触发 30 分钟号池冷却放大为 `429`，生产已临时回退至 `v0.2.23`，PostgreSQL 数据库保持 `schema_migrations=306`。 |
+| 当前 `main` | 已获所有者批准合入固定直接 HTTP `codex_exec 0.171.0 / Linux x86_64` 出站、版本滞后门禁与 400 防误杀（来源分支 `codex/egress-baseline-0171` @ `e3fa0e805`，已通过全套远端 CI 与 24/24 真机 OAuth 实测）；保留历史 tag `v0.2.24`（`2950874a3`）不变，进入新版本 `v0.2.25` 发布流程。 |
+| 当前生产运行态 | 因旧 `v0.2.24` 的 `0.158.0` 低于 `gpt-6.2-sol` / `gpt-6.2-astra` 要求的 `minimal_client_version: 0.166.0` 且 `400` 触发 30 分钟号池冷却放大为 `429`，生产仍维持临时回退的 `v0.2.23`（PostgreSQL `schema_migrations=306`），等待所有者单独批准停机升级。 |
 | fork 更新源、监控、Cookie、HTTP 回归、Desktop 覆盖与依赖加固 | 已在 `main`；后续合并继续保护。 |
-| 升级固定直接 HTTP 至 `codex_exec 0.171.0 / Linux x86_64`、版本滞后门禁与 400 防误杀 | 所有者已在 `BAIMOoo/sub2api#13` 确认需求，正在独立候选分支 `codex/egress-baseline-0171` 实施与验证，**尚未**合入 `main`、发版或部署生产。 |
-| 宿主机私有 `codex-alignment` Approved Alignment Baseline | 保持原有配置，待新版本生产部署验收通过后再由所有者显式切换至 `0.171.0`。 |
+| 宿主机私有 `codex-alignment` Approved Alignment Baseline | 保持原有 `0.158.0` 配置，待 `v0.2.25` 生产部署验收通过后再由所有者显式切换至 `0.171.0`。 |
 
 只有实现真正集成，且最终 `main` 的同一 SHA 已通过相关检查，才更新上表。
 
