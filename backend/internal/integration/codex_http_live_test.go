@@ -99,6 +99,13 @@ func TestCodexLiveToolContinuationExtraction(t *testing.T) {
 	}
 }
 
+func TestCodexLivePrivateLoggingSetup(t *testing.T) {
+	configureCodexLiveLogging(t)
+	if got := logger.CurrentLevel(); got != "error" {
+		t.Fatalf("expected error log level for suppressed live logging, got %q", got)
+	}
+}
+
 func TestCodexHTTPPinnedLive(t *testing.T) {
 	path := os.Getenv("SUB2API_CODEX_LIVE_CONFIG")
 	if path == "" {
@@ -124,14 +131,10 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 		t.Fatal("invalid credential type in private live config")
 	}
 
-	// Provider errors can contain reflected request details. Keep test output
-	// limited to the route, declared credential type and result classification.
-	logger.InitBootstrap()
-	level := logger.CurrentLevel()
-	if err := logger.SetLevel("fatal"); err != nil {
-		t.Fatal("could not configure private live logging")
-	}
-	t.Cleanup(func() { _ = logger.SetLevel(level) })
+	// Provider errors can contain reflected request details. Route all internal
+	// logs to an ephemeral private file at error level so stdout/stderr keep
+	// only the route, declared credential type and result classification.
+	configureCodexLiveLogging(t)
 	ginMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(ginMode) })
@@ -220,6 +223,7 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 			"stream":           false,
 			"prompt_cache_key": sessionID,
 			"instructions":     instructions,
+			"reasoning":        map[string]any{"effort": "medium"},
 			"tools":            tools,
 			"tool_choice":      "auto",
 			"input":            []any{userMessage},
@@ -251,6 +255,7 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 			"stream":           false,
 			"prompt_cache_key": sessionID,
 			"instructions":     instructions,
+			"reasoning":        map[string]any{"effort": "medium"},
 			"tools":            tools,
 			"tool_choice":      "auto",
 			"input":            turn2Input,
@@ -357,6 +362,39 @@ func inspectCodexLiveOutputItems(raw json.RawMessage) ([]json.RawMessage, []stri
 		}
 	}
 	return items, callIDs, hasReasoning, hasMessage, nil
+}
+
+func configureCodexLiveLogging(t *testing.T) {
+	t.Helper()
+	logger.InitBootstrap()
+	prevLevel := logger.CurrentLevel()
+	logFile := filepath.Join(t.TempDir(), "suppressed.log")
+	if err := logger.Init(logger.InitOptions{
+		Level:           "error",
+		Format:          "json",
+		ServiceName:     "sub2api-codexlive",
+		Environment:     "test",
+		StacktraceLevel: "none",
+		Output: logger.OutputOptions{
+			ToStdout: false,
+			ToFile:   true,
+			FilePath: logFile,
+		},
+	}); err != nil {
+		t.Fatal("could not configure private live logging")
+	}
+	t.Cleanup(func() {
+		_ = logger.Init(logger.InitOptions{
+			Level:       prevLevel,
+			Format:      "console",
+			ServiceName: "sub2api",
+			Environment: "bootstrap",
+			Output: logger.OutputOptions{
+				ToStdout: true,
+				ToFile:   false,
+			},
+		})
+	})
 }
 
 func buildCodexLiveProxy(raw string) (*int64, *service.Proxy, error) {
