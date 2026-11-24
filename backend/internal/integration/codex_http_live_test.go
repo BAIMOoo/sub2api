@@ -14,15 +14,18 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type codexLiveConfig struct {
@@ -30,6 +33,7 @@ type codexLiveConfig struct {
 	AccessToken    string `json:"access_token"`
 	ChatGPTAccount string `json:"chatgpt_account_id"`
 	Model          string `json:"model"`
+	ProxyURL       string `json:"proxy_url,omitempty"`
 }
 
 func TestCodexLiveConfigAllowsBearerOnlySetupToken(t *testing.T) {
@@ -39,8 +43,66 @@ func TestCodexLiveConfigAllowsBearerOnlySetupToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	live := readCodexLiveConfig(t, path)
-	if live.CredentialType != "setup-token" || live.ChatGPTAccount != "" {
-		t.Fatal("expected a bearer-only SetupToken")
+	if live.CredentialType != "setup-token" || live.ChatGPTAccount != "" || live.ProxyURL != "" {
+		t.Fatal("expected a bearer-only SetupToken without proxy")
+	}
+}
+
+func TestCodexLiveProxyConfigParsing(t *testing.T) {
+	proxyID, proxyCfg, err := buildCodexLiveProxy("")
+	if err != nil || proxyID != nil || proxyCfg != nil {
+		t.Fatalf("empty proxy_url should select direct egress, got id=%v cfg=%v err=%v", proxyID, proxyCfg, err)
+	}
+
+	proxyID, proxyCfg, err = buildCodexLiveProxy("socks5://user:pass@proxy.example.test:1080")
+	if err != nil || proxyID == nil || *proxyID != 1 || proxyCfg == nil {
+		t.Fatalf("valid socks5 proxy_url failed: id=%v cfg=%v err=%v", proxyID, proxyCfg, err)
+	}
+	if proxyCfg.Protocol != "socks5h" || proxyCfg.Host != "proxy.example.test" || proxyCfg.Port != 1080 ||
+		proxyCfg.Username != "user" || proxyCfg.Password != "pass" || proxyCfg.URL() != "socks5h://user:pass@proxy.example.test:1080" {
+		t.Fatalf("unexpected parsed proxy config: protocol=%s host=%s port=%d", proxyCfg.Protocol, proxyCfg.Host, proxyCfg.Port)
+	}
+
+	for _, invalid := range []string{
+		"https://proxy.example.test:443",
+		"http://proxy.example.test",
+		"http://proxy.example.test:70000",
+		"socks5h://useronly@proxy.example.test:1080",
+		"://broken",
+	} {
+		if _, _, err := buildCodexLiveProxy(invalid); err == nil {
+			t.Fatalf("expected error for invalid proxy_url %q", invalid)
+		}
+	}
+}
+
+func TestCodexLiveToolContinuationExtraction(t *testing.T) {
+	rawOutput := json.RawMessage(`[
+		{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"},
+		{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup_service_port","arguments":"{\"service\":\"cedar\"}"}
+	]`)
+	items, callIDs, reasoningIDs, hasMessage, err := inspectCodexLiveOutputItems(rawOutput)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 || len(callIDs) != 1 || callIDs[0] != "call_1" || len(reasoningIDs) != 1 || reasoningIDs[0] != "rs_1" || hasMessage {
+		t.Fatalf("unexpected turn1 inspection: items=%d calls=%v reasoning=%v message=%t", len(items), callIDs, reasoningIDs, hasMessage)
+	}
+
+	finalOutput := json.RawMessage(`[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"8123"}]}]`)
+	_, callIDs, reasoningIDs, hasMessage, err = inspectCodexLiveOutputItems(finalOutput)
+	if err != nil {
+		t.Fatalf("unexpected final error: %v", err)
+	}
+	if len(callIDs) != 0 || len(reasoningIDs) != 0 || !hasMessage {
+		t.Fatalf("unexpected turn2 inspection: calls=%v reasoning=%v message=%t", callIDs, reasoningIDs, hasMessage)
+	}
+}
+
+func TestCodexLivePrivateLoggingSetup(t *testing.T) {
+	configureCodexLiveLogging(t)
+	if got := logger.CurrentLevel(); got != "error" {
+		t.Fatalf("expected error log level for suppressed live logging, got %q", got)
 	}
 }
 
@@ -50,8 +112,13 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 		t.Skip("no approved test credential supplied; live evidence is unverified")
 	}
 	live := readCodexLiveConfig(t, path)
+	proxyID, proxyCfg, err := buildCodexLiveProxy(live.ProxyURL)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
 	account := service.Account{
 		ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Concurrency: 1,
+		ProxyID: proxyID, Proxy: proxyCfg,
 		Credentials: map[string]any{"access_token": live.AccessToken, "chatgpt_account_id": live.ChatGPTAccount},
 	}
 	switch live.CredentialType {
@@ -64,14 +131,10 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 		t.Fatal("invalid credential type in private live config")
 	}
 
-	// Provider errors can contain reflected request details. Keep test output
-	// limited to the route, declared credential type and result classification.
-	logger.InitBootstrap()
-	level := logger.CurrentLevel()
-	if err := logger.SetLevel("fatal"); err != nil {
-		t.Fatal("could not configure private live logging")
-	}
-	t.Cleanup(func() { _ = logger.SetLevel(level) })
+	// Provider errors can contain reflected request details. Route all internal
+	// logs to an ephemeral private file at error level so stdout/stderr keep
+	// only the route, declared credential type and result classification.
+	configureCodexLiveLogging(t)
 	ginMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(ginMode) })
@@ -121,46 +184,259 @@ func TestCodexHTTPPinnedLive(t *testing.T) {
 		},
 	} {
 		t.Run(route.name, func(t *testing.T) {
-			upstream.evidence = nil
 			payload := map[string]any{"model": live.Model, "stream": false}
 			maps.Copy(payload, route.fields)
-			body, err := json.Marshal(payload)
-			if err != nil {
-				t.Fatal("could not encode synthetic live request")
-			}
 			attemptAccount := account
 			attemptAccount.Extra = map[string]any{"openai_passthrough": route.passthrough}
-			receipt := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(receipt)
-			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
-			defer cancel()
-			c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, route.path, bytes.NewReader(body))
-			c.Request.Header.Set("Content-Type", "application/json")
-			c.Request.Header.Set("User-Agent", "sub2api-candidate-live/1")
-			service.SetOpenAIClientTransport(c, service.OpenAIClientTransportHTTP)
-
-			result, err := route.forward(ctx, c, &attemptAccount, body)
-			media, _, _ := mime.ParseMediaType(receipt.Header().Get("Content-Type"))
-			var reply map[string]json.RawMessage
-			jsonOK := json.Unmarshal(receipt.Body.Bytes(), &reply) == nil
-			var shape, status string
-			shapeOK := json.Unmarshal(reply[route.shapeKey], &shape) == nil && shape == route.shape
-			if route.shape == "response" {
-				shapeOK = shapeOK && json.Unmarshal(reply["status"], &status) == nil && status == "completed"
-			}
-			wireMode, upstreamCompleted := "unverified", false
-			if evidence := upstream.evidence; evidence != nil {
-				wireMode, upstreamCompleted = evidence.wireMode, evidence.completed()
-			}
-			complete := err == nil && result != nil && receipt.Code == http.StatusOK && media == "application/json" &&
-				jsonOK && shapeOK && upstreamCompleted
+			res := runCodexLiveTurn(t, upstream, &attemptAccount, route.path, route.shapeKey, route.shape, payload, route.forward)
 			t.Logf("credential_type=%s route=%s status=%d wire_mode=%s valid_json=%t expected_shape=%t completed=%t",
-				live.CredentialType, route.name, receipt.Code, wireMode, jsonOK, shapeOK, complete)
-			if !complete {
+				live.CredentialType, route.name, res.statusCode, res.wireMode, res.jsonOK, res.shapeOK, res.complete)
+			if !res.complete {
 				t.Fatal("live forwarding did not complete; response and provider error withheld")
 			}
 		})
 	}
+
+	t.Run("tool-continuation", func(t *testing.T) {
+		sessionID := uuid.NewString()
+		tools := []map[string]any{{
+			"type":        "function",
+			"name":        "lookup_service_port",
+			"description": "Return the configured port number for a synthetic service name.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"service": map[string]any{"type": "string"},
+				},
+				"required":             []string{"service"},
+				"additionalProperties": false,
+			},
+		}}
+		const instructions = "Think carefully step by step before calling lookup_service_port, then reply concisely with the final result after receiving the tool output."
+		userMessage := map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": "Three services exist: alpha uses port 1007, beta uses (alpha * 2) + 19, and cedar is stored externally. First check whether beta is prime or composite, then call lookup_service_port for cedar so you can compute beta + cedar.",
+		}
+		reasoning := map[string]any{"effort": "medium", "summary": "auto"}
+		turn1Payload := map[string]any{
+			"model":            live.Model,
+			"stream":           false,
+			"prompt_cache_key": sessionID,
+			"instructions":     instructions,
+			"reasoning":        reasoning,
+			"tools":            tools,
+			"tool_choice":      "auto",
+			"input":            []any{userMessage},
+		}
+		attemptAccount := account
+		attemptAccount.Extra = map[string]any{"openai_passthrough": false}
+		turn1 := runCodexLiveTurn(t, upstream, &attemptAccount, "/v1/responses", "object", "response", turn1Payload, gateway.Forward)
+		outputItems, callIDs, reasoningIDs, _, parseErr := inspectCodexLiveOutputItems(turn1.reply["output"])
+		if !turn1.complete || parseErr != nil || len(callIDs) == 0 || len(reasoningIDs) == 0 {
+			t.Logf("credential_type=%s route=tool-continuation turn1_status=%d turn2_status=0 wire_mode=%s tool_calls=%d reasoning_items=%d wire_replayed_reasoning=false final_message=false completed=false",
+				live.CredentialType, turn1.statusCode, turn1.wireMode, len(callIDs), len(reasoningIDs))
+			t.Fatal("live tool-continuation turn 1 did not emit both an ID-bearing reasoning item and a tool call; response and provider error withheld")
+		}
+
+		turn2Input := make([]any, 0, 1+len(outputItems)+len(callIDs))
+		turn2Input = append(turn2Input, userMessage)
+		for _, item := range outputItems {
+			turn2Input = append(turn2Input, item)
+		}
+		for _, callID := range callIDs {
+			turn2Input = append(turn2Input, map[string]any{
+				"type":    "function_call_output",
+				"call_id": callID,
+				"output":  `{"port":8123}`,
+			})
+		}
+		turn2Payload := map[string]any{
+			"model":            live.Model,
+			"stream":           false,
+			"prompt_cache_key": sessionID,
+			"instructions":     instructions,
+			"reasoning":        reasoning,
+			"tools":            tools,
+			"tool_choice":      "auto",
+			"input":            turn2Input,
+		}
+		turn2 := runCodexLiveTurn(t, upstream, &attemptAccount, "/v1/responses", "object", "response", turn2Payload, gateway.Forward)
+		wireReplayedReasoning := upstream.evidence != nil && upstream.evidence.replayedAllReasoningIDs(reasoningIDs)
+		_, _, _, hasFinalMessage, turn2ParseErr := inspectCodexLiveOutputItems(turn2.reply["output"])
+		complete := turn2.complete && turn2ParseErr == nil && wireReplayedReasoning && hasFinalMessage
+		t.Logf("credential_type=%s route=tool-continuation turn1_status=%d turn2_status=%d wire_mode=%s tool_calls=%d reasoning_items=%d wire_replayed_reasoning=%t final_message=%t completed=%t",
+			live.CredentialType, turn1.statusCode, turn2.statusCode, turn2.wireMode, len(callIDs), len(reasoningIDs), wireReplayedReasoning, hasFinalMessage, complete)
+		if !complete {
+			t.Fatal("live tool-continuation turn 2 did not complete with wire-verified ID-bearing reasoning replay and final message; response and provider error withheld")
+		}
+	})
+}
+
+type codexLiveTurnResult struct {
+	statusCode int
+	wireMode   string
+	jsonOK     bool
+	shapeOK    bool
+	complete   bool
+	reply      map[string]json.RawMessage
+}
+
+func runCodexLiveTurn(
+	t *testing.T,
+	upstream *codexLiveUpstream,
+	account *service.Account,
+	path, shapeKey, wantShape string,
+	payload map[string]any,
+	forward func(context.Context, *gin.Context, *service.Account, []byte) (*service.OpenAIForwardResult, error),
+) codexLiveTurnResult {
+	t.Helper()
+	upstream.evidence = nil
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal("could not encode synthetic live request")
+	}
+	receipt := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(receipt)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "sub2api-candidate-live/1")
+	service.SetOpenAIClientTransport(c, service.OpenAIClientTransportHTTP)
+
+	result, err := forward(ctx, c, account, body)
+	media, _, _ := mime.ParseMediaType(receipt.Header().Get("Content-Type"))
+	var reply map[string]json.RawMessage
+	jsonOK := json.Unmarshal(receipt.Body.Bytes(), &reply) == nil
+	var shape, status string
+	shapeOK := json.Unmarshal(reply[shapeKey], &shape) == nil && shape == wantShape
+	if wantShape == "response" {
+		shapeOK = shapeOK && json.Unmarshal(reply["status"], &status) == nil && status == "completed"
+	}
+	wireMode, upstreamCompleted := "unverified", false
+	if evidence := upstream.evidence; evidence != nil {
+		wireMode, upstreamCompleted = evidence.wireMode, evidence.completed()
+	}
+	complete := err == nil && result != nil && receipt.Code == http.StatusOK && media == "application/json" &&
+		jsonOK && shapeOK && upstreamCompleted
+	return codexLiveTurnResult{
+		statusCode: receipt.Code,
+		wireMode:   wireMode,
+		jsonOK:     jsonOK,
+		shapeOK:    shapeOK,
+		complete:   complete,
+		reply:      reply,
+	}
+}
+
+func inspectCodexLiveOutputItems(raw json.RawMessage) ([]json.RawMessage, []string, []string, bool, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil, nil, false, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, nil, nil, false, err
+	}
+	var callIDs []string
+	var reasoningIDs []string
+	var hasMessage bool
+	for _, item := range items {
+		var meta struct {
+			Type             string `json:"type"`
+			ID               string `json:"id"`
+			CallID           string `json:"call_id"`
+			EncryptedContent string `json:"encrypted_content"`
+		}
+		if err := json.Unmarshal(item, &meta); err != nil {
+			return nil, nil, nil, false, err
+		}
+		switch meta.Type {
+		case "function_call":
+			if id := strings.TrimSpace(meta.CallID); id != "" {
+				callIDs = append(callIDs, id)
+			}
+		case "reasoning":
+			if id := strings.TrimSpace(meta.ID); id != "" && strings.TrimSpace(meta.EncryptedContent) != "" {
+				reasoningIDs = append(reasoningIDs, id)
+			}
+		case "message":
+			hasMessage = true
+		}
+	}
+	return items, callIDs, reasoningIDs, hasMessage, nil
+}
+
+func configureCodexLiveLogging(t *testing.T) {
+	t.Helper()
+	logger.InitBootstrap()
+	prevLevel := logger.CurrentLevel()
+	logFile := filepath.Join(t.TempDir(), "suppressed.log")
+	if err := logger.Init(logger.InitOptions{
+		Level:           "error",
+		Format:          "json",
+		ServiceName:     "sub2api-codexlive",
+		Environment:     "test",
+		StacktraceLevel: "none",
+		Output: logger.OutputOptions{
+			ToStdout: false,
+			ToFile:   true,
+			FilePath: logFile,
+		},
+	}); err != nil {
+		t.Fatal("could not configure private live logging")
+	}
+	t.Cleanup(func() {
+		_ = logger.Init(logger.InitOptions{
+			Level:       prevLevel,
+			Format:      "console",
+			ServiceName: "sub2api",
+			Environment: "bootstrap",
+			Output: logger.OutputOptions{
+				ToStdout: true,
+				ToFile:   false,
+			},
+		})
+	})
+}
+
+func buildCodexLiveProxy(raw string) (*int64, *service.Proxy, error) {
+	_, parsed, err := proxyurl.Parse(raw)
+	if err != nil {
+		return nil, nil, errors.New("invalid proxy_url in private live config")
+	}
+	if parsed == nil {
+		return nil, nil, nil
+	}
+	if parsed.Scheme == "https" {
+		return nil, nil, errors.New("https proxy_url is incompatible with fixed Codex TLS transport")
+	}
+	portText := parsed.Port()
+	if portText == "" {
+		return nil, nil, errors.New("proxy_url must include an explicit port")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, nil, errors.New("proxy_url port out of range")
+	}
+	var username, password string
+	if parsed.User != nil {
+		username = parsed.User.Username()
+		password, _ = parsed.User.Password()
+		if (username != "" && password == "") || (username == "" && password != "") {
+			return nil, nil, errors.New("proxy_url authentication requires both username and password")
+		}
+	}
+	proxyID := int64(1)
+	return &proxyID, &service.Proxy{
+		ID:       proxyID,
+		Protocol: parsed.Scheme,
+		Host:     parsed.Hostname(),
+		Port:     port,
+		Username: username,
+		Password: password,
+		Status:   service.StatusActive,
+	}, nil
 }
 
 func readCodexLiveConfig(t *testing.T, path string) codexLiveConfig {

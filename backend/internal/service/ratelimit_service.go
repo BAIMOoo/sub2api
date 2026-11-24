@@ -364,6 +364,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return false
 	}
 
+	if shouldSkipCodexClientVersion400Protection(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel)) {
+		return false
+	}
+
 	if len(requestedModel) > 0 && s.HandleUpstreamModelNotFound(ctx, account, requestedModel[0], statusCode, responseBody) {
 		return true
 	}
@@ -2643,6 +2647,9 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 		return false
 	}
 	if !account.ShouldHandleErrorCode(statusCode) {
+		return false
+	}
+	if shouldSkipCodexClientVersion400Protection(ctx, account, statusCode, responseBody, requestedModel) {
 		return false
 	}
 	var cooldown time.Duration

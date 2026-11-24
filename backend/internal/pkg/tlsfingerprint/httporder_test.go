@@ -14,38 +14,37 @@ import (
 )
 
 // 靶子：官方 codex 客户端 HTTP/1.1 POST /backend-api/codex/responses 的实测头顺序。
-// 两次采集（2026-09-28 的 gpt-5.1-codex、2026-09-29 的 gpt-6-astra，见
-// httporder.go 的注释），各版本各 2 条、四次一致。
+// 2026-11-24 0.171.0 Linux x86_64 隔离采集确认 accept-encoding: zstd,gzip
+// 位于 user-agent 之后、cookie 与 host 之前。
 var (
 	// lite 模型（官方内置目录里 use_responses_lite=true）且 cookie jar 为空。
 	officialOrderWithLite = []string{
 		"version", "x-codex-beta-features", "x-codex-window-id", "x-codex-turn-metadata",
 		"x-openai-internal-codex-responses-lite", "x-codex-routing-hint", "x-client-request-id",
 		"session-id", "thread-id", "accept", "content-encoding", "content-type", "authorization",
-		"chatgpt-account-id", "originator", "user-agent", "host", "content-length",
+		"chatgpt-account-id", "originator", "user-agent", "accept-encoding", "host", "content-length",
 	}
-	// lite 模型 + 带 cookie（cookie 位置固定在 user-agent 与 host 之间）。
+	// lite 模型 + 带 cookie（accept-encoding 紧随 user-agent，cookie 紧随 accept-encoding）。
 	officialOrderWithLiteAndCookie = []string{
 		"version", "x-codex-beta-features", "x-codex-window-id", "x-codex-turn-metadata",
 		"x-openai-internal-codex-responses-lite", "x-codex-routing-hint", "x-client-request-id",
 		"session-id", "thread-id", "accept", "content-encoding", "content-type", "authorization",
-		"chatgpt-account-id", "originator", "user-agent", "cookie", "host", "content-length",
+		"chatgpt-account-id", "originator", "user-agent", "accept-encoding", "cookie", "host", "content-length",
 	}
-	// 非 lite 模型（2026-09-28 的 gpt-5.1-codex）：不发 lite 头，其余位置不变。
+	// 非 lite 模型：不发 lite 头，其余位置不变。
 	officialOrderWithoutLite = []string{
 		"version", "x-codex-beta-features", "x-codex-window-id", "x-codex-turn-metadata",
 		"x-codex-routing-hint", "x-client-request-id", "session-id", "thread-id", "accept",
 		"content-encoding", "content-type", "authorization", "chatgpt-account-id", "originator",
-		"user-agent", "host", "content-length",
+		"user-agent", "accept-encoding", "host", "content-length",
 	}
-	// 带上服务端下发的粘性路由票（2026-09-29 第三轮实测：同一会话里首条请求没有、
-	// 拿到 200 响应头的后续请求都有，位置固定在第 3 位）。
+	// 带上服务端下发的粘性路由票（同一会话里首条请求没有、拿到 200 响应头的后续请求都有，位置固定在第 3 位）。
 	officialOrderWithTurnState = []string{
 		"version", "x-codex-beta-features", "x-codex-turn-state", "x-codex-window-id",
 		"x-codex-turn-metadata", "x-openai-internal-codex-responses-lite", "x-codex-routing-hint",
 		"x-client-request-id", "session-id", "thread-id", "accept", "content-encoding",
-		"content-type", "authorization", "chatgpt-account-id", "originator", "user-agent", "host",
-		"content-length",
+		"content-type", "authorization", "chatgpt-account-id", "originator", "user-agent",
+		"accept-encoding", "host", "content-length",
 	}
 )
 
@@ -66,7 +65,7 @@ func newOfficialRequest(t *testing.T, rawURL string, withLite, withCookie bool) 
 	}
 	req.Host = u.Host
 	req.ContentLength = int64(len(body))
-	req.Header.Set("Version", "0.158.0")
+	req.Header.Set("Version", "0.171.0")
 	req.Header.Set("X-Codex-Beta-Features", "remote_compaction_v2")
 	req.Header.Set("X-Codex-Window-Id", "01a0eb38-2f1b-7942-9c2d-ec2581ac1ed5:0")
 	req.Header.Set("X-Codex-Turn-Metadata", `{"turn_id":"x"}`)
@@ -80,7 +79,8 @@ func newOfficialRequest(t *testing.T, rawURL string, withLite, withCookie bool) 
 	req.Header.Set("Authorization", "Bearer <redacted>")
 	req.Header.Set("Chatgpt-Account-Id", "acct")
 	req.Header.Set("Originator", "codex_exec")
-	req.Header.Set("User-Agent", "codex_exec/0.158.0 (Ubuntu 24.4.0; x86_64) xterm-256color (codex_exec; 0.158.0)")
+	req.Header.Set("User-Agent", "codex_exec/0.171.0 (Alpine Linux 3.24.4; x86_64) unknown (codex_exec; 0.171.0)")
+	req.Header.Set("Accept-Encoding", "zstd,gzip")
 	if withLite {
 		req.Header.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
 	}
@@ -314,7 +314,7 @@ func rawHTTPRequest(method, target, body string, headers [][2]string) []byte {
 
 func codexResponsesRaw(target string) []byte {
 	return rawHTTPRequest("POST", target, `{"model":"gpt-6-astra"}`, [][2]string{
-		{"Version", "0.158.0"},
+		{"Version", "0.171.0"},
 		{"X-Codex-Beta-Features", "remote_compaction_v2"},
 		{"Accept", "text/event-stream"},
 		{"Authorization", "Bearer <redacted>"},
@@ -387,7 +387,7 @@ func TestOpenAIHeaderOrderCompactSubpathUntouched(t *testing.T) {
 // 本连接之后一律原样透传——宁可不再重排，也不能把正文当成下一个请求的头块。
 func TestOpenAIHeaderOrderChunkedBodyDisablesReorder(t *testing.T) {
 	chunked := []byte("POST /backend-api/codex/responses HTTP/1.1\r\n" +
-		"Host: chatgpt.com\r\nTransfer-Encoding: chunked\r\nVersion: 0.158.0\r\n\r\n" +
+		"Host: chatgpt.com\r\nTransfer-Encoding: chunked\r\nVersion: 0.171.0\r\n\r\n" +
 		"5\r\nhello\r\n0\r\n\r\n")
 	responses := codexResponsesRaw("/backend-api/codex/responses")
 	got := writeSequence(t, chunked, responses)

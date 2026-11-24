@@ -365,3 +365,107 @@ func TestCanonicalizeCodexExecLiteRequestMergesMovedFunctionsNamespace(t *testin
 	require.Equal(t, "existing_tool", namespaceTools[0].(map[string]any)["name"])
 	require.Equal(t, "new_tool", namespaceTools[1].(map[string]any)["name"])
 }
+
+func TestCanonicalizeCodexExecLiteRequestOmitsEmptyCarrierWhenNoToolsDeclared(t *testing.T) {
+	t.Run("no tools field", func(t *testing.T) {
+		reqBody := map[string]any{
+			"instructions": "Base instructions.",
+			"input": []any{
+				map[string]any{"type": "message", "role": "user", "content": "hello"},
+			},
+		}
+		changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.NotContains(t, reqBody, "instructions")
+		require.NotContains(t, reqBody, "tools")
+		input := reqBody["input"].([]any)
+		require.Len(t, input, 2)
+		require.Equal(t, "developer", input[0].(map[string]any)["role"])
+		require.Equal(t, "user", input[1].(map[string]any)["role"])
+	})
+
+	t.Run("empty top-level tools array", func(t *testing.T) {
+		reqBody := map[string]any{
+			"tools": []any{},
+			"input": []any{
+				map[string]any{"type": "message", "role": "user", "content": "hello"},
+			},
+		}
+		changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.NotContains(t, reqBody, "tools")
+		input := reqBody["input"].([]any)
+		require.Len(t, input, 1)
+		require.Equal(t, "user", input[0].(map[string]any)["role"])
+	})
+
+	t.Run("id-less empty additional_tools carrier omitted", func(t *testing.T) {
+		reqBody := map[string]any{
+			"input": []any{
+				map[string]any{"type": "additional_tools", "role": "developer", "tools": []any{}},
+				map[string]any{"type": "message", "role": "user", "content": "hello"},
+			},
+		}
+		changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+		require.NoError(t, err)
+		require.True(t, changed)
+		input := reqBody["input"].([]any)
+		require.Len(t, input, 1)
+		require.Equal(t, "user", input[0].(map[string]any)["role"])
+	})
+
+	t.Run("referenced empty additional_tools carrier with id preserved", func(t *testing.T) {
+		reqBody := map[string]any{
+			"input": []any{
+				map[string]any{"type": "additional_tools", "id": "at_keep", "role": "developer", "tools": []any{}},
+				map[string]any{"type": "item_reference", "id": "at_keep"},
+			},
+		}
+		changed, err := canonicalizeCodexExecLiteRequest(reqBody)
+		require.NoError(t, err)
+		require.False(t, changed)
+		input := reqBody["input"].([]any)
+		require.Len(t, input, 2)
+		require.Equal(t, "at_keep", input[0].(map[string]any)["id"])
+	})
+}
+
+func TestPromoteCodexInstructionsToDeveloperInputHandlesEmptyAndInvalidTypes(t *testing.T) {
+	t.Run("deletes empty string without injecting message", func(t *testing.T) {
+		reqBody := map[string]any{
+			"instructions": "   ",
+			"input":        []any{map[string]any{"type": "message", "role": "user", "content": "hello"}},
+		}
+		changed, err := promoteCodexInstructionsToDeveloperInput(reqBody)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.NotContains(t, reqBody, "instructions")
+		require.Len(t, reqBody["input"].([]any), 1)
+	})
+
+	t.Run("deletes null without injecting message", func(t *testing.T) {
+		reqBody := map[string]any{
+			"instructions": nil,
+			"input":        []any{map[string]any{"type": "message", "role": "user", "content": "hello"}},
+		}
+		changed, err := promoteCodexInstructionsToDeveloperInput(reqBody)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.NotContains(t, reqBody, "instructions")
+		require.Len(t, reqBody["input"].([]any), 1)
+	})
+
+	t.Run("rejects non-string instructions with 400 validation error", func(t *testing.T) {
+		reqBody := map[string]any{
+			"instructions": 123,
+			"input":        []any{map[string]any{"type": "message", "role": "user", "content": "hello"}},
+		}
+		changed, err := promoteCodexInstructionsToDeveloperInput(reqBody)
+		require.False(t, changed)
+		var validationErr *openAIResponsesLiteValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, "instructions", validationErr.param)
+	})
+}

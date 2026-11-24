@@ -22,8 +22,8 @@ type tlsExtensionLength struct {
 	Length int    `json:"length"`
 }
 
-func TestCodex0158ClientHelloMatchesNativeReference(t *testing.T) {
-	raw, err := os.ReadFile("testdata/codex_exec_0158_linux_amd64_clienthello.json")
+func TestCodex0171ClientHelloMatchesNativeReference(t *testing.T) {
+	raw, err := os.ReadFile("testdata/codex_exec_0171_linux_amd64_clienthello.json")
 	require.NoError(t, err)
 	var ref struct {
 		SNI              string               `json:"sni"`

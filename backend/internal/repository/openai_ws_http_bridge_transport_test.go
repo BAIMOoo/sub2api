@@ -66,6 +66,7 @@ func TestOpenAIWSHTTPBridgeAndHTTPUseSeparateTransports(t *testing.T) {
 				require.True(t, service.IsOpenAIWSHTTPBridgeUpstream(req.Context()))
 				require.Equal(t, service.HTTPUpstreamProfileOpenAI, service.HTTPUpstreamProfileFromContext(req.Context()))
 				require.Empty(t, req.Header.Get("Content-Encoding"))
+				require.Empty(t, req.Header.Get("Accept-Encoding"), "bridge must not receive fixed HTTP accept-encoding")
 				require.Empty(t, origin.cookieAt(i), "bridge must not attach the HTTP account cookie")
 			}
 			require.Empty(t, origin.tlsProfiles, "bridge must call the ordinary Do method")
@@ -89,7 +90,8 @@ func TestOpenAIWSHTTPBridgeAndHTTPUseSeparateTransports(t *testing.T) {
 			require.False(t, service.IsOpenAIWSHTTPBridgeUpstream(direct.Context()))
 			require.Equal(t, service.HTTPUpstreamProfileCodexHTTP, service.HTTPUpstreamProfileFromContext(direct.Context()))
 			require.Equal(t, "codex_exec", direct.Header.Get("Originator"))
-			require.Equal(t, "0.158.0", direct.Header.Get("Version"))
+			require.Equal(t, "0.171.0", direct.Header.Get("Version"))
+			require.Equal(t, "zstd,gzip", direct.Header.Get("Accept-Encoding"))
 			require.Equal(t, "zstd", direct.Header.Get("Content-Encoding"))
 			require.Equal(t, "_cfuvid=test-http-only", origin.cookieAt(2))
 			require.Positive(t, store.saves, "ordinary HTTP still harvests Set-Cookie")

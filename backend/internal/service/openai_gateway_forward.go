@@ -1137,6 +1137,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			requestView = newOpenAIRequestView(body)
 			reqBody = nil
 			rejectedFieldRetryState.remember(body)
+			syncOpenAIResponsesInstructionsEcho(c, body)
 		}
 
 		// Get proxy URL
@@ -1281,7 +1282,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					Detail:             upstreamDetail,
 				})
 
-				shouldDisable := s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
+				shouldDisable := s.handleFailoverSideEffects(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), resp, account, respBody, upstreamModel)
 				return nil, s.newOpenAIAccountFailoverError(
 					account,
 					resp.StatusCode,
@@ -1346,7 +1347,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 							Kind:               "failover",
 							Message:            signal.message,
 						})
-						shouldDisable := s.handleFailoverSideEffects(ctx, compactResp, account, compactBody, upstreamModel)
+						shouldDisable := s.handleFailoverSideEffects(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), compactResp, account, compactBody, upstreamModel)
 						return nil, s.newOpenAIAccountFailoverError(
 							account, compactResp.StatusCode, compactResp.Header, compactBody, signal.message, shouldDisable,
 							!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(compactResp.StatusCode) || isOpenAITransientProcessingError(compactResp.StatusCode, signal.message, compactBody)),

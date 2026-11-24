@@ -292,7 +292,7 @@ func TestUpstreamCookieJarSeedsCfuvidOnceAndOnlyWhenMissing(t *testing.T) {
 func TestBuildUpstreamCookieSeedRequestUsesSameIdentityWithoutBody(t *testing.T) {
 	req := newRequest(t, http.MethodPost, "https://chatgpt.com/backend-api/codex/responses?trace=1")
 	req.Header.Set("chatgpt-account-id", "acct")
-	req.Header.Set("user-agent", "codex_exec/0.158.0")
+	req.Header.Set("user-agent", "codex_exec/0.171.0")
 	req.Header.Set("originator", "codex_exec")
 	req.Header.Set("content-encoding", "zstd")
 	req.Header.Set("cookie", "__cf_bm=bm")

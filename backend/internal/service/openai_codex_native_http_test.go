@@ -34,7 +34,7 @@ func pinNativeHTTPTestIdentity(t *testing.T) {
 func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	pinNativeHTTPTestIdentity(t)
-	for _, version := range []string{"0.158.0", "0.163.0"} {
+	for _, version := range []string{"0.158.0", "0.163.0", "0.171.0"} {
 		for _, passthrough := range []bool{false, true} {
 			for _, compact := range []bool{false, true} {
 				for _, lite := range []bool{false, true} {
@@ -90,7 +90,11 @@ func TestForward_CodexNativeHTTPToolContinuation(t *testing.T) {
 						assert.Equal(t, codexExecHTTPUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
 						assert.Equal(t, codexExecHTTPVersion, upstream.lastReq.Header.Get("version"))
 						assert.Equal(t, "codex_exec", upstream.lastReq.Header.Get("originator"))
-						// Compatibility may prepend a tool declaration; the history itself must survive.
+						assert.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
+						assert.False(t, gjson.GetBytes(upstream.lastBody, `input.#(type=="additional_tools")`).Exists())
+						assert.Equal(t, "developer", gjson.GetBytes(upstream.lastBody, "input.0.role").String())
+						assert.Equal(t, "Synthetic HTTP regression", gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
+						// Compatibility promotes top-level instructions; the history itself must survive.
 						var forwarded []any
 						require.NoError(t, json.Unmarshal([]byte(gjson.GetBytes(upstream.lastBody, "input").Raw), &forwarded))
 						if compact {
@@ -272,7 +276,20 @@ func TestForward_NormalizesRecognizedHarnessesToCodexExec(t *testing.T) {
 						require.ElementsMatch(t, []string{"function", "custom"}, namespaceTypes)
 						return
 					}
-					require.Equal(t, "Synthetic harness regression", forwarded["instructions"])
+					require.NotContains(t, forwarded, "instructions")
+					require.NotEmpty(t, items)
+					developer, ok := items[0].(map[string]any)
+					require.True(t, ok)
+					require.Equal(t, "message", developer["type"])
+					require.Equal(t, "developer", developer["role"])
+					content, ok := developer["content"].([]any)
+					require.True(t, ok)
+					part, ok := content[0].(map[string]any)
+					require.True(t, ok)
+					require.Equal(t, "Synthetic harness regression", part["text"])
+					metadata, ok := developer["internal_chat_message_metadata_passthrough"].(map[string]any)
+					require.True(t, ok)
+					require.Equal(t, []any{"model.base_instructions"}, metadata["content_item_kinds"])
 					tools, ok := forwarded["tools"].([]any)
 					require.True(t, ok)
 					var names []string

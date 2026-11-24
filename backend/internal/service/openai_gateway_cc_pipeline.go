@@ -119,6 +119,9 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	upstreamModel string,
 ) *UpstreamFailoverError {
 	shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
+	if !shouldFailover && shouldSkipCodexClientVersion400Protection(ctx, account, resp.StatusCode, respBody, upstreamModel) {
+		return nil
+	}
 	tempUnscheduled := false
 	if c != nil && account != nil && account.Platform != PlatformGrok && !shouldFailover && !IsResponseCommitted(c) && s.rateLimitService != nil {
 		tempUnscheduled = s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, upstreamModel) == ErrorPolicyTempUnscheduled
@@ -155,7 +158,7 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	})
 	shouldDisable := tempUnscheduled
 	if account.Platform != PlatformGrok && !tempUnscheduled {
-		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+		shouldDisable = s.handleOpenAIAccountUpstreamError(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	}
 	return s.newOpenAIAccountFailoverError(
 		account,

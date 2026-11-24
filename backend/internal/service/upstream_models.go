@@ -43,6 +43,7 @@ type UpstreamModelMetadata struct {
 	ContextWindow            int64                      `json:"context_window,omitempty"`
 	MaxContextWindow         int64                      `json:"max_context_window,omitempty"`
 	MaxOutputTokens          int64                      `json:"max_output_tokens,omitempty"`
+	MinimalClientVersion     string                     `json:"minimal_client_version,omitempty"`
 	CodexToolCapabilities    map[string]json.RawMessage `json:"codex_tool_capabilities,omitempty"`
 }
 
@@ -330,6 +331,9 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 						entry.CodexToolCapabilities = make(map[string]json.RawMessage)
 					}
 					applyCodexToolCapabilities(entry.CodexToolCapabilities, old.CodexToolCapabilities, false)
+					if strings.TrimSpace(entry.MinimalClientVersion) == "" && strings.TrimSpace(old.MinimalClientVersion) != "" {
+						entry.MinimalClientVersion = strings.TrimSpace(old.MinimalClientVersion)
+					}
 					completeMetadata[modelID] = entry
 				} else {
 					completeMetadata[modelID] = old
@@ -440,6 +444,7 @@ func upstreamModelMetadataIsUseful(metadata UpstreamModelMetadata) bool {
 		len(metadata.SupportedReasoningLevels) > 0 ||
 		len(metadata.InputModalities) > 0 ||
 		len(metadata.CodexToolCapabilities) > 0 ||
+		strings.TrimSpace(metadata.MinimalClientVersion) != "" ||
 		metadata.ContextWindow > 0 ||
 		metadata.MaxContextWindow > 0 ||
 		metadata.MaxOutputTokens > 0
@@ -534,6 +539,10 @@ func mergeUpstreamModelMetadata(primary, fallback UpstreamModelMetadata) (Upstre
 	}
 	if merged.MaxOutputTokens <= 0 && fallback.MaxOutputTokens > 0 {
 		merged.MaxOutputTokens = fallback.MaxOutputTokens
+		changed = true
+	}
+	if strings.TrimSpace(merged.MinimalClientVersion) == "" && strings.TrimSpace(fallback.MinimalClientVersion) != "" {
+		merged.MinimalClientVersion = strings.TrimSpace(fallback.MinimalClientVersion)
 		changed = true
 	}
 	return merged, changed
@@ -1485,6 +1494,7 @@ type upstreamModelCapabilityEntry struct {
 	ContextWindow            int64                      `json:"context_window"`
 	MaxContextWindow         int64                      `json:"max_context_window"`
 	MaxOutputTokens          int64                      `json:"max_output_tokens"`
+	MinimalClientVersion     string                     `json:"minimal_client_version"`
 	Limit                    modelsDevLimit             `json:"limit"`
 	DisplayNameCamel         string                     `json:"displayName"`
 	SupportsImages           *bool                      `json:"supportsImages"`
@@ -1664,6 +1674,7 @@ func upstreamMetadataFromCapabilityEntry(modelID string, entry upstreamModelCapa
 		ContextWindow:            contextWindow,
 		MaxContextWindow:         entry.MaxContextWindow,
 		MaxOutputTokens:          maxOutputTokens,
+		MinimalClientVersion:     strings.TrimSpace(entry.MinimalClientVersion),
 	}
 }
 

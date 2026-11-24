@@ -391,6 +391,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if sentBody, aligned := codexHTTPAttemptBody(upstreamReq); aligned {
 			body = sentBody
 			rejectedFieldRetryState.remember(body)
+			syncOpenAIResponsesInstructionsEcho(c, body)
 		}
 
 		upstreamStart := time.Now()
@@ -953,7 +954,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 	reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
 	canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
-	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, canonicalModel)
+	shouldDisable := s.handleOpenAIAccountUpstreamError(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), account, resp.StatusCode, resp.Header, body, canonicalModel)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		ProxyID:              opsUpstreamProxyID(account),
 		ProxyName:            opsUpstreamProxyName(account),
@@ -1020,7 +1021,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	if !cyberHit {
 		reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
 		canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
-		_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, canonicalModel)
+		_ = s.handleOpenAIAccountUpstreamError(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), account, resp.StatusCode, resp.Header, body, canonicalModel)
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		ProxyID:              opsUpstreamProxyID(account),
@@ -1036,10 +1037,9 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
-	// 已保证不切号），其文案对客户端可操作（如触发自动压缩）；在净化信封内保留
-	// 脱敏后的上游消息，而不是抹成通用文案。
-	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
+	// context-window 超限与 Codex 客户端版本拒绝都是确定性请求失败（不切号），
+	// 其文案对客户端/排查者直接可操作；在净化信封内保留脱敏后的上游消息，而不是抹成通用文案。
+	if (isOpenAIContextWindowError(upstreamMsg, body) || isOpenAICodexClientVersionMismatchError(resp.StatusCode, body)) && upstreamMsg != "" {
 		writeOpenAIPassthroughErrorEnvelope(c, resp.StatusCode, resp.Header, upstreamMsg)
 	} else {
 		writeSanitizedOpenAIPassthroughError(c, resp.StatusCode, resp.Header)

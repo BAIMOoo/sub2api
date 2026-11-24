@@ -32,7 +32,7 @@ The runner command `notify-latest` regenerates and resends the last report, expl
 
 1. Acquires a process lock and verifies fresh production health, account identity and proxy binding.
 2. Reads the exact `main` SHA and its matching Actions conclusion. Missing/failed CI remains separate from production findings.
-3. Discovers official stable Codex, verifies published digests for the CLI and its code-mode host, and retains the approved 0.158.0 binary separately. Discovery is a drift check, not an update to the [fixed gateway target](CODEX_EXEC_WIRE_CONTRACT.md). The reference contains separate native TLS and synthetic HTTP records, not credential or deployment approval.
+3. Discovers official stable Codex, verifies published digests for the CLI and its code-mode host, and retains the approved 0.171.0 binary separately (switching the host's active baseline only after production upgrade and acceptance under the owner's release gate). Discovery is a drift check, not an update to the [fixed gateway target](CODEX_EXEC_WIRE_CONTRACT.md). The reference contains separate native TLS and synthetic HTTP records, not credential or deployment approval.
 4. Captures a separate local default ClientHello offer, then official `codex exec` requests through a local inspection CA and the selected SOCKS exit. Local WebSocket upgrades are rejected so `codex exec` falls back to HTTP. Apps, plugins and analytics are disabled in the synthetic workspace. Desktop, TUI and IDE clients are not covered by this reference.
 5. Replays native HTTP payloads through the dedicated loopback gateway key and captures the actual gateway HTTP and ClientHello. Ordinary requests run every day; tools and compaction rotate. Acceptance and official version changes run both. Compaction V2 is observed through `compaction_trigger`, provider compaction output and subsequent replay.
 6. Exercises Responses, Chat Completions and Messages independently. These bridge tests check successful completion and converted request semantics, not equality with the `codex exec` workspace prompt.
@@ -85,7 +85,7 @@ python -m pip install -r tools/codex_alignment/requirements.txt
 python -m unittest discover -s tools/codex_alignment -p 'test_*.py' -v
 cd backend
 GOMAXPROCS=2 go test -p 1 -race ./internal/pkg/codexprobe
-GOMAXPROCS=2 go test -p 1 -parallel 1 -tags=unit ./internal/pkg/tlsfingerprint ./internal/repository \
+GOMAXPROCS=2 go test -p 1 -parallel 1 -tags=unit ./internal/pkg/openai ./internal/pkg/tlsfingerprint ./internal/repository \
   ./internal/service ./internal/server/middleware \
   -run 'Codex|Zstd|Compact|OpenAI.*(Retry|Failover|Timeout|401|429|5xx)|HTTPUpstream.*(Disconnect|Timeout)|Alignment' -count=1
 ```
@@ -96,7 +96,7 @@ Fault injection is local/mock only. CI receives no production secrets and makes 
 
 Use an approved non-production test credential and record the exact candidate SHA. This test makes real, potentially billable supplier requests. It does not start the gateway server, connect to a database, refresh credentials, or change deployment or monitor state. It exercises the public forwarding methods with the real HTTP repository, not ingress authentication or deployment routing.
 
-Use a private JSON file outside the repository, mode `0600`, with `credential_type` (`oauth`, `pat`, or `setup-token`), `access_token`, and `model`. Include `chatgpt_account_id` when the credential requires it; omit it for a bearer-only SetupToken. Run once per available credential type on the approved test host, in series:
+Use a private JSON file outside the repository, mode `0600`, with `credential_type` (`oauth`, `pat`, or `setup-token`), `access_token`, and `model`. Include `chatgpt_account_id` when the credential requires it; omit it for a bearer-only SetupToken. Include optional `proxy_url` (`http://`, `socks5://`, or `socks5h://` with explicit port) if the approved host must route through a proxy. Run once per available credential type on the approved test host, in series:
 
 ```sh
 cd backend
@@ -105,4 +105,4 @@ SUB2API_CODEX_LIVE_CONFIG=/private/path/live-test.json \
   ./internal/integration -run '^TestCodexHTTPPinnedLive$' -count=1 -v
 ```
 
-The test defaults to skipped without the private file and exercises Responses, passthrough, Chat Completions, Messages and compact. A route completes only with both the expected client response and an observed upstream `response.completed`; a compatibility route's HTTP 200 alone is insufficient. Publish only per-route status and completion, with the requested model, observed wire mode and candidate SHA; never publish credentials, request/response bodies or logs from the private test account. Report each missing credential type as untested live (`unverified`) even if its automated coverage is green.
+The test defaults to skipped without the private file and exercises Responses, passthrough, Chat Completions, Messages, compact and two-turn tool continuation. A route completes only with both the expected client response and an observed upstream `response.completed`; a compatibility route's HTTP 200 alone is insufficient. Publish only per-route status and completion, with the requested model, observed wire mode and candidate SHA; never publish credentials, request/response bodies or logs from the private test account. Report each missing credential type as untested live (`unverified`) even if its automated coverage is green.

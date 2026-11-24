@@ -665,7 +665,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
 		})
-		s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, requestedModel...)
+		s.handleOpenAIAccountUpstreamError(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), account, resp.StatusCode, resp.Header, body, requestedModel...)
 		return nil, newOpenAIUpstreamFailoverError(
 			resp.StatusCode,
 			resp.Header,
@@ -736,7 +736,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
 		reqModel = canonicalOpenAIAccountSchedulingModel(account, reqModel)
 	}
-	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	shouldDisable := s.handleOpenAIAccountUpstreamError(codexHTTPPolicyForRequest(c, account).withEgressErrorContext(ctx), account, resp.StatusCode, resp.Header, body, reqModel)
 	kind := "http_error"
 	if shouldDisable {
 		kind = "failover"
@@ -934,7 +934,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		modelForCooldown = requestedModel[0]
 	}
 	shouldDisable := s.handleOpenAIAccountUpstreamError(
-		c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
+		codexHTTPPolicyForRequest(c, account).withEgressErrorContext(c.Request.Context()), account, resp.StatusCode, resp.Header, body, modelForCooldown,
 	)
 	kind := "http_error"
 	if shouldDisable {

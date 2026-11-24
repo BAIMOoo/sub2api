@@ -67,7 +67,7 @@ func resolveCodexHTTPMode(c *gin.Context, account *Account, model string, body [
 		}
 	}
 
-	// The pinned 0.158.0 standard capture establishes this model default.
+	// The pinned 0.171.0 standard capture establishes this model default.
 	if model == "gpt-5.5" && len(capability) == 0 {
 		return codexHTTPMode{
 			source:    codexHTTPModeSourceModelDefault,
@@ -187,6 +187,12 @@ func (policy codexHTTPPolicy) normalizeBody(
 		return nil, mode, err
 	}
 
+	if compact {
+		if _, ok := request["input"].([]any); !ok {
+			return nil, mode, newOpenAIResponsesLiteValidationError("input", "compact requires a conversation")
+		}
+	}
+
 	if mode.lite {
 		if _, err := canonicalizeCodexExecLiteRequest(request); err != nil {
 			return nil, mode, err
@@ -194,9 +200,11 @@ func (policy codexHTTPPolicy) normalizeBody(
 		if _, err := normalizeOpenAIResponsesLiteTools(request); err != nil {
 			return nil, mode, err
 		}
-		ensureCodexLiteToolsCarrier(request)
 	} else {
 		if err := restoreCodexStandardTools(request); err != nil {
+			return nil, mode, err
+		}
+		if _, err := promoteCodexInstructionsToDeveloperInput(request); err != nil {
 			return nil, mode, err
 		}
 		if request["tools"] == nil {
@@ -290,6 +298,7 @@ func (policy codexHTTPPolicy) applyModeHeaders(c *gin.Context, account *Account,
 		}
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Accept-Encoding", codexExecHTTPAcceptEncoding)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Del(responsesLiteHeader)
 	if mode.lite {
@@ -452,22 +461,4 @@ func restoreCodexStandardTools(request map[string]any) error {
 	request["tools"] = merged
 	request["input"] = filtered
 	return nil
-}
-
-func ensureCodexLiteToolsCarrier(request map[string]any) {
-	input, ok := request["input"].([]any)
-	if !ok {
-		return
-	}
-	for _, raw := range input {
-		item, _ := raw.(map[string]any)
-		if strings.TrimSpace(firstNonEmptyString(item["type"])) == openAIAdditionalToolsItemType {
-			return
-		}
-	}
-	request["input"] = append([]any{map[string]any{
-		"type":  openAIAdditionalToolsItemType,
-		"role":  "developer",
-		"tools": []any{},
-	}}, input...)
 }

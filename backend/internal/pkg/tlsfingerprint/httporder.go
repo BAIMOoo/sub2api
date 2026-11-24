@@ -30,13 +30,16 @@ type HTTPHeaderOrder struct {
 //
 // 采集（两轮，均在东京机做受控劫持：记录 req.rawHeaders 即原样线上顺序，
 // 并对 WS 升级回可重试的 503 逼其回退到 HTTPS POST）：
+//
 //   - 2026-09-28：官方 codex-cli 0.157.0 与 0.158.0 各 2 条样本（model=gpt-5.1-codex，
 //     该模型不是 Responses Lite 模型，报文里没有 lite 头），四次完全一致。
+//
 //   - 2026-09-29：换成我们实际用的模型串重采（model=gpt-6-astra，官方内置模型目录里
 //     该模型的 use_responses_lite=true），0.157.0 与 0.158.0 各 2 条，四次完全一致 ——
 //     报文里出现 x-openai-internal-codex-responses-lite，位置固定在
 //     x-codex-turn-metadata 之后、x-codex-routing-hint 之前（第 5 位），
 //     并非排在 host 之前。
+//
 //   - 2026-09-29（同日第三轮）：用"伪造一次成功开始"的办法逼客户端回放
 //     x-codex-turn-state —— 劫持下把主请求回成 200 + 该响应头 + 一条 response.created，
 //     再在 response.completed 之前掐断连接（官方把这种断流归为可重试的
@@ -44,8 +47,13 @@ type HTTPHeaderOrder struct {
 //     全部带它（值即服务端下发的探针值），位置固定在 x-codex-beta-features 之后、
 //     x-codex-window-id 之前（第 3 位）。
 //
+//   - 2026-11-24：官方 codex-cli 0.171.0（Alpine Linux 3.24.4 x86_64 隔离实采，覆盖
+//     Standard / Lite / Compact V2 与 Set-Cookie 顺序探针）：reqwest 启用 gzip+zstd 后，
+//     客户端固定发送 `accept-encoding: zstd,gzip`，位置固定在 `user-agent` 之后、
+//     `cookie` 与 `host` 之前。
+//
 // 表外的头统一排在 host 之前、并保持它们原有的相对顺序——这是回退规则，
-// 目前尚无实测样本落在其上（曾经落在这里的 lite 头、turn-state 头现已按实测位置进表）。
+// 目前尚无实测样本落在其上（曾经落在这里的 lite 头、turn-state 头与 accept-encoding 头现已按实测位置进表）。
 //
 // 另外，官方 HTTP/1.1 请求的头名**全部小写**（实测 4/4 样本，含 host 与
 // content-length；WebSocket 升级请求则是另一套写法，不适用本规则）。Go 写的是
@@ -76,7 +84,8 @@ func OpenAIResponsesHeaderOrder() *HTTPHeaderOrder {
 			"chatgpt-account-id",
 			"originator",
 			"user-agent",
-			"cookie", // 仅当客户端 cookie jar 里有 cookie 时出现，位置固定在此
+			"accept-encoding", // 0.171.0 实采固定为 zstd,gzip，紧随 user-agent 之后、cookie 与 host 之前
+			"cookie",          // 仅当客户端 cookie jar 里有 cookie 时出现，位置固定在 accept-encoding 与 host 之间
 			"host",
 			"content-length",
 		},

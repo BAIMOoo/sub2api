@@ -7,8 +7,9 @@ import (
 )
 
 // canonicalizeCodexExecLiteRequest makes an already-normalized Responses Lite
-// request use the layout emitted by codex exec: base instructions are developer
-// messages, and every tool declaration lives in one input-prefix carrier.
+// request use the layout emitted by codex exec 0.171.0: base instructions are
+// developer messages, declared tools live in one input-prefix carrier, and
+// requests with no declared tools omit an empty additional_tools carrier.
 func canonicalizeCodexExecLiteRequest(reqBody map[string]any) (bool, error) {
 	if reqBody == nil {
 		return false, nil
@@ -17,15 +18,14 @@ func canonicalizeCodexExecLiteRequest(reqBody map[string]any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return promoteCodexInstructionsToDeveloperInput(reqBody) || toolsChanged, nil
+	instructionsChanged, err := promoteCodexInstructionsToDeveloperInput(reqBody)
+	if err != nil {
+		return false, err
+	}
+	return instructionsChanged || toolsChanged, nil
 }
 
 func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
-	input, ok := reqBody["input"].([]any)
-	if !ok {
-		return false, nil
-	}
-
 	var topLevelTools []any
 	rawTools, hasTopLevelTools := reqBody["tools"]
 	if hasTopLevelTools && rawTools != nil {
@@ -34,6 +34,17 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 		if !ok {
 			return false, fmt.Errorf("codex exec Lite tools must be an array")
 		}
+	}
+
+	var input []any
+	if rawInput, hasInput := reqBody["input"]; hasInput && rawInput != nil {
+		var ok bool
+		input, ok = rawInput.([]any)
+		if !ok {
+			return false, newOpenAIResponsesLiteValidationError("input", "codex exec Lite input must be an array")
+		}
+	} else if !hasTopLevelTools {
+		return false, nil
 	}
 
 	var carrier map[string]any
@@ -58,7 +69,7 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 		if carrier == nil {
 			carrier = item
 			carrierIndex = index
-		} else if _, hasID := item["id"]; hasID {
+		} else if hasCodexAdditionalToolsCarrierID(item) {
 			return false, newOpenAIResponsesLiteValidationError("input", "additional_tools carrier id cannot be preserved when merging Lite carriers")
 		}
 		carrierCount++
@@ -69,14 +80,25 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if len(mergedTools) == 0 {
+		if carrier == nil {
+			if !hasTopLevelTools {
+				return false, nil
+			}
+			delete(reqBody, "tools")
+			return true, nil
+		}
+		if !hasCodexAdditionalToolsCarrierID(carrier) {
+			delete(reqBody, "tools")
+			reqBody["input"] = filteredInput
+			return true, nil
+		}
+	}
 	if !hasTopLevelTools &&
 		(carrier == nil || carrierIndex == 0 && carrierCount == 1 && !toolsChanged) {
 		return false, nil
 	}
 	delete(reqBody, "tools")
-	if carrier == nil && len(topLevelTools) == 0 {
-		return true, nil
-	}
 	if carrier == nil {
 		carrier = map[string]any{
 			"type": openAIAdditionalToolsItemType,
@@ -86,6 +108,10 @@ func canonicalizeCodexExecLiteTools(reqBody map[string]any) (bool, error) {
 	carrier["tools"] = mergedTools
 	reqBody["input"] = append([]any{carrier}, filteredInput...)
 	return true, nil
+}
+
+func hasCodexAdditionalToolsCarrierID(item map[string]any) bool {
+	return item != nil && strings.TrimSpace(firstNonEmptyString(item["id"])) != ""
 }
 
 func canonicalizeCodexExecLiteAdditionalTools(existing []any, moved []any) ([]any, bool, error) {
@@ -255,18 +281,33 @@ func canonicalizeCodexExecLiteNamespaceTool(rawTool any) (any, bool, error) {
 	return tool, true, nil
 }
 
-func promoteCodexInstructionsToDeveloperInput(reqBody map[string]any) bool {
+func promoteCodexInstructionsToDeveloperInput(reqBody map[string]any) (bool, error) {
 	rawInstructions, exists := reqBody["instructions"]
 	if !exists {
-		return false
+		return false, nil
+	}
+	if rawInstructions == nil {
+		delete(reqBody, "instructions")
+		return true, nil
 	}
 	instructions, ok := rawInstructions.(string)
-	if !ok || strings.TrimSpace(instructions) == "" {
-		return false
-	}
-	input, ok := reqBody["input"].([]any)
 	if !ok {
-		return false
+		return false, newOpenAIResponsesLiteValidationError(
+			"instructions",
+			"instructions must be a string for lossless Codex conversion",
+		)
+	}
+	if strings.TrimSpace(instructions) == "" {
+		delete(reqBody, "instructions")
+		return true, nil
+	}
+	var input []any
+	if rawInput, hasInput := reqBody["input"]; hasInput && rawInput != nil {
+		var inputOK bool
+		input, inputOK = rawInput.([]any)
+		if !inputOK {
+			return false, newOpenAIResponsesLiteValidationError("input", "codex input must be an array")
+		}
 	}
 
 	for _, rawItem := range input {
@@ -275,10 +316,13 @@ func promoteCodexInstructionsToDeveloperInput(reqBody map[string]any) bool {
 			continue
 		}
 		if !ensureCodexMessageInputText(item, instructions) {
-			return false
+			return false, newOpenAIResponsesLiteValidationError(
+				"instructions",
+				"instructions cannot be merged into existing base instructions message",
+			)
 		}
 		delete(reqBody, "instructions")
-		return true
+		return true, nil
 	}
 
 	insertAt := 0
@@ -305,7 +349,7 @@ func promoteCodexInstructionsToDeveloperInput(reqBody map[string]any) bool {
 	next = append(next, input[insertAt:]...)
 	reqBody["input"] = next
 	delete(reqBody, "instructions")
-	return true
+	return true, nil
 }
 
 func isCodexExecLiteBaseInstructionsMessage(item map[string]any) bool {
