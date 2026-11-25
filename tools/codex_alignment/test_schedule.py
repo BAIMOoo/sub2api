@@ -53,6 +53,10 @@ class TriggerTests(unittest.TestCase):
              patch('sys.stdout', new_callable=io.StringIO):
             self.assertEqual(run_cli(['--config', str(self.config_path), command]), 0)
 
+    def assert_no_network_calls(self):
+        for mock in self.network_mocks:
+            mock.assert_not_called()
+
     def assert_idle_until_daily_backstop(self):
         self.runner.assert_not_called()
         state = json.loads((self.root / 'schedule.json').read_text())
@@ -61,8 +65,7 @@ class TriggerTests(unittest.TestCase):
         self.runner.assert_not_called()
         self.tick(23 * 3600)
         self.runner.assert_called_once()
-        for mock in self.network_mocks:
-            mock.assert_not_called()
+        self.assert_no_network_calls()
 
     def test_admin_changes_do_not_trigger_or_delay_daily_backstop(self):
         for index, change in enumerate([
@@ -92,8 +95,7 @@ class TriggerTests(unittest.TestCase):
         self.tick(361)
         self.assertFalse(repo_path.exists())
         self.runner.assert_not_called()
-        for mock in self.network_mocks:
-            mock.assert_not_called()
+        self.assert_no_network_calls()
 
         def write_stale_repo(data, elapsed):
             atomic_json(repo_path, data)
