@@ -9,7 +9,7 @@ The production host runs lightweight, serial probes using the owner's selected p
 ## Scheduling and resource controls
 
 - Every day at 09:00 Asia/Shanghai, plus production image or binary changes, and private monitor-rule changes.
-- Repository commits, GitHub Actions CI status transitions, and admin account, proxy, group and global application settings do not trigger extra live runs. Full repository/CI state and production configuration fingerprints remain in each run's evidence; scheduled, deployment-triggered, and manual runs check the current settings.
+- Repository commits (including docs-only commits and release tags), GitHub Actions CI status transitions, and admin account, proxy, group and global application settings do not trigger extra live runs. Full repository/CI state and production configuration fingerprints remain in each run's evidence; scheduled, deployment-triggered, and manual runs check the current settings.
 - Same-branch GitHub Actions pushes have a five-minute quiet window and cancel superseded workflow runs; production deployment and monitor-config changes also coalesce over a five-minute quiet window without cancelling a live provider request. No daily workflow or live-run count limit.
 - Live runs are serialized and repeated triggers coalesce to the latest state. Do not cancel a live provider request merely because another deployment or config change arrived.
 - Initial configurable watchdog: 60 minutes, solely to terminate a stuck run. Measure phase durations and peak resources in the first acceptance run before tuning.

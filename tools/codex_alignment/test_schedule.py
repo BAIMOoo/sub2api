@@ -3,6 +3,7 @@ import copy
 import datetime
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,7 +22,6 @@ class TriggerTests(unittest.TestCase):
         self.config = {'state_dir': str(self.root), 'snapshot_file': str(self.root / 'snapshot.json'),
                        'repository': 'test/repository', 'proxy_url': 'socks5h://127.0.0.1:1'}
         self.snapshot = {'image': 'image-a', 'binary_sha256': 'binary-a', 'generation': 'settings-a'}
-        self.repository = {'head': 'commit-a', 'conclusion': 'success'}
         self.now = datetime.datetime(2026, 10, 20, 2, tzinfo=datetime.timezone.utc).timestamp()
         for target in ('tools.codex_alignment.egress.configure',
                        'tools.codex_alignment.__main__.save_document'):
@@ -34,12 +34,13 @@ class TriggerTests(unittest.TestCase):
         runner = patch('tools.codex_alignment.__main__.Runner.run', side_effect=self.report)
         self.runner = runner.start()
         self.addCleanup(runner.stop)
-        repo_state = patch('tools.codex_alignment.runner.repository_state', side_effect=lambda _: self.repository)
-        self.repo_state = repo_state.start()
-        self.addCleanup(repo_state.stop)
+        self.network_mocks = []
+        for target in ('tools.codex_alignment.releases.urlopen', 'urllib.request.urlopen'):
+            patcher = patch(target, side_effect=AssertionError('unexpected_network_call'))
+            self.network_mocks.append(patcher.start())
+            self.addCleanup(patcher.stop)
         self.tick(0)  # Establish a completed daily run with the installed trigger policy.
         self.runner.reset_mock()
-        self.repo_state.reset_mock()
 
     def report(self, reason, generation):
         return {'run': 'synthetic-run', 'status': 'pass', 'findings': [], 'scenarios': [],
@@ -48,10 +49,20 @@ class TriggerTests(unittest.TestCase):
     def tick(self, seconds, command='tick'):
         atomic_json(self.config_path, self.config)
         atomic_json(self.root / 'snapshot.json', self.snapshot)
-        atomic_json(self.root / 'repository.json', self.repository)
         with patch('tools.codex_alignment.__main__.time.time', return_value=self.now + seconds), \
              patch('sys.stdout', new_callable=io.StringIO):
             self.assertEqual(run_cli(['--config', str(self.config_path), command]), 0)
+
+    def assert_idle_until_daily_backstop(self):
+        self.runner.assert_not_called()
+        state = json.loads((self.root / 'schedule.json').read_text())
+        self.assertIsNone(state['pending'])
+        self.tick(23 * 3600 - 1)  # Next day, 08:59:59 Asia/Shanghai.
+        self.runner.assert_not_called()
+        self.tick(23 * 3600)
+        self.runner.assert_called_once()
+        for mock in self.network_mocks:
+            mock.assert_not_called()
 
     def test_admin_changes_do_not_trigger_or_delay_daily_backstop(self):
         for index, change in enumerate([
@@ -62,13 +73,7 @@ class TriggerTests(unittest.TestCase):
             self.snapshot.update(change)
             self.tick(index * 600)
             self.tick(index * 600 + 301)
-        self.runner.assert_not_called()
-        state = json.loads((self.root / 'schedule.json').read_text())
-        self.assertIsNone(state['pending'])
-        self.tick(23 * 3600 - 1)  # Next day, 08:59:59 Asia/Shanghai.
-        self.runner.assert_not_called()
-        self.tick(23 * 3600)
-        self.runner.assert_called_once()
+        self.assert_idle_until_daily_backstop()
 
     def test_image_and_binary_changes_still_trigger_after_quiet_window(self):
         for index, key in enumerate(['image', 'binary_sha256'], 1):
@@ -81,24 +86,28 @@ class TriggerTests(unittest.TestCase):
             self.runner.assert_called_once()
 
     def test_repository_and_ci_changes_do_not_trigger_or_poll_github(self):
-        self.repository.update(head='commit-b', conclusion=None)
+        repo_path = self.root / 'repository.json'
+        self.assertFalse(repo_path.exists())
         self.tick(60)
-        self.repository['head'] = 'commit-c'
-        self.tick(180)
-        self.repository['conclusion'] = 'success'
-        self.tick(240)
-        self.repository.update(head='commit-d', conclusion='failure')
-        self.tick(540)
-        self.tick(900)
+        self.tick(361)
+        self.assertFalse(repo_path.exists())
         self.runner.assert_not_called()
-        self.repo_state.assert_not_called()
-        state = json.loads((self.root / 'schedule.json').read_text())
-        self.assertIsNone(state['pending'])
-        self.tick(23 * 3600 - 1)  # Next day, 08:59:59 Asia/Shanghai.
-        self.runner.assert_not_called()
-        self.tick(23 * 3600)
-        self.runner.assert_called_once()
-        self.repo_state.assert_not_called()
+        for mock in self.network_mocks:
+            mock.assert_not_called()
+
+        def write_stale_repo(data, elapsed):
+            atomic_json(repo_path, data)
+            stale = self.now + elapsed - 3600
+            os.utime(repo_path, (stale, stale))
+
+        write_stale_repo({'head': 'commit-b', 'conclusion': None}, 400)
+        self.tick(400)
+        write_stale_repo({'head': 'commit-c', 'conclusion': 'success'}, 500)
+        self.tick(500)
+        write_stale_repo({'head': 'commit-d', 'conclusion': 'failure'}, 600)
+        self.tick(600)
+        self.tick(901)
+        self.assert_idle_until_daily_backstop()
 
     def test_deployment_and_config_bursts_coalesce_to_latest_state(self):
         self.snapshot['image'] = 'image-b'
