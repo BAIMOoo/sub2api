@@ -97,17 +97,15 @@ class TriggerTests(unittest.TestCase):
         self.runner.assert_not_called()
         self.assert_no_network_calls()
 
-        def write_stale_repo(data, elapsed):
+        for elapsed, data in [
+            (400, {'head': 'commit-b', 'conclusion': None}),
+            (500, {'head': 'commit-c', 'conclusion': 'success'}),
+            (600, {'head': 'commit-d', 'conclusion': 'failure'}),
+        ]:
             atomic_json(repo_path, data)
             stale = self.now + elapsed - 3600
             os.utime(repo_path, (stale, stale))
-
-        write_stale_repo({'head': 'commit-b', 'conclusion': None}, 400)
-        self.tick(400)
-        write_stale_repo({'head': 'commit-c', 'conclusion': 'success'}, 500)
-        self.tick(500)
-        write_stale_repo({'head': 'commit-d', 'conclusion': 'failure'}, 600)
-        self.tick(600)
+            self.tick(elapsed)
         self.tick(901)
         self.assert_idle_until_daily_backstop()
 
