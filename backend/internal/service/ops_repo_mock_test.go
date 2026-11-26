@@ -93,6 +93,10 @@ func (m *opsRepoMock) GetThroughputTrend(ctx context.Context, filter *OpsDashboa
 	return &OpsThroughputTrendResponse{}, nil
 }
 
+func (m *opsRepoMock) GetModelTPSTrend(context.Context, *OpsDashboardFilter, int, []string) (*OpsModelTPSTrendResponse, error) {
+	return nil, nil
+}
+
 func (m *opsRepoMock) GetLatencyHistogram(ctx context.Context, filter *OpsDashboardFilter) (*OpsLatencyHistogramResponse, error) {
 	return &OpsLatencyHistogramResponse{}, nil
 }

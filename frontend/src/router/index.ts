@@ -450,6 +450,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/ops/model-tps',
+    name: 'AdminOpsModelTPS',
+    component: () => import('@/views/admin/ops/OpsModelTPSView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Model TPS',
+      titleKey: 'admin.ops.modelTps.title'
+    }
+  },
+  {
     path: '/admin/audit-logs',
     name: 'AdminAuditLogs',
     component: () => import('@/views/admin/AuditLogView.vue'),

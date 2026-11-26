@@ -20,7 +20,7 @@ async function openCustomRange(now: Date) {
   const wrapper = mount(OpsDashboardHeader, {
     props: { platform: '', groupId: null, timeRange: '1h', queryMode: 'auto', loading: false, lastUpdated: null },
     global: { stubs: {
-      Select: true, HelpTooltip: true, Icon: true,
+      RouterLink: true, Select: true, HelpTooltip: true, Icon: true,
       BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' }
     } }
   })

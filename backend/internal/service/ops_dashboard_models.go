@@ -38,6 +38,23 @@ type OpsOutputTPS struct {
 	SampleCount int64    `json:"sample_count"`
 }
 
+type OpsModelTPSPoint struct {
+	Model       string    `json:"model"`
+	BucketStart time.Time `json:"bucket_start"`
+	P50         float64   `json:"p50"`
+	P10         float64   `json:"p10"`
+	SampleCount int64     `json:"sample_count"`
+}
+
+// OpsModelTPSTrendResponse contains model choices or the populated buckets for the selected models.
+type OpsModelTPSTrendResponse struct {
+	StartTime     time.Time          `json:"start_time"`
+	EndTime       time.Time          `json:"end_time"`
+	BucketSeconds int                `json:"bucket_seconds"`
+	Models        []string           `json:"models"`
+	Points        []OpsModelTPSPoint `json:"points"`
+}
+
 type OpsDashboardOverview struct {
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time"`

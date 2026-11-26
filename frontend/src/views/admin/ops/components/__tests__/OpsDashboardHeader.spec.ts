@@ -15,7 +15,7 @@ const overview = { tps: { avg: 242.7 } } as OpsDashboardOverview
 function mountHeader(value = overview) {
   return mount(OpsDashboardHeader, {
     props: { overview: value, platform: '', groupId: null, timeRange: '1h', queryMode: 'auto', loading: false, lastUpdated: null },
-    global: { stubs: { Select: true, HelpTooltip: true, BaseDialog: true, Icon: true } }
+    global: { stubs: { RouterLink: true, Select: true, HelpTooltip: true, BaseDialog: true, Icon: true } }
   })
 }
 

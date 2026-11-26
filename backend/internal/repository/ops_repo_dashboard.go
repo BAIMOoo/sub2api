@@ -61,7 +61,7 @@ func (r *opsRepository) GetDashboardOverview(ctx context.Context, filter *servic
 }
 
 func (r *opsRepository) queryOutputTPS(ctx context.Context, filter *service.OpsDashboardFilter) (*service.OpsOutputTPS, error) {
-	join, where, args, _ := buildUsageWhere(filter, filter.StartTime.UTC(), filter.EndTime.UTC(), 1)
+	join, where, args, _ := buildOutputTPSWhere(filter)
 	query := `
 SELECT
  percentile_cont(0.05) WITHIN GROUP (ORDER BY output_tps),
@@ -70,15 +70,10 @@ SELECT
  AVG(output_tps),
  COUNT(*)
 FROM (
- SELECT ul.output_tokens * 1000.0 / NULLIF(ul.duration_ms, 0) AS output_tps
+ SELECT ` + opsOutputTPSExpression + ` AS output_tps
  FROM usage_logs ul
  ` + join + `
  ` + where + `
- AND ul.output_tokens > 0 AND ul.duration_ms > 0
- AND ul.image_count = 0 AND ul.image_output_tokens = 0
- AND COALESCE(ul.billing_mode, '') <> 'image'
- ` + fmt.Sprintf("AND ul.request_type IN (%d, %d, %d, %d)",
-		service.RequestTypeSync, service.RequestTypeStream, service.RequestTypeWSV2, service.RequestTypeCyberBlocked) + `
 ) rates`
 	var stats service.OpsOutputTPS
 	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&stats.P5, &stats.P10, &stats.P50, &stats.Avg, &stats.SampleCount); err != nil {

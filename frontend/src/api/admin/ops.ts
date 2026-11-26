@@ -113,6 +113,31 @@ export interface OpsThroughputTrendResponse {
   top_groups?: OpsThroughputGroupBreakdownItem[]
 }
 
+export interface OpsModelTPSParams {
+  time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
+  start_time?: string
+  end_time?: string
+  platform?: string
+  group_id?: number
+  models?: string[]
+}
+
+export interface OpsModelTPSPoint {
+  model: string
+  bucket_start: string
+  p50: number
+  p10: number
+  sample_count: number
+}
+
+export interface OpsModelTPSTrendResponse {
+  start_time: string
+  end_time: string
+  bucket_seconds: number
+  models: string[]
+  points: OpsModelTPSPoint[]
+}
+
 export type OpsRequestKind = 'success' | 'error'
 export type OpsRequestDetailsKind = OpsRequestKind | 'all'
 export type OpsRequestDetailsSort = 'created_at_desc' | 'duration_desc' | 'ttft_desc'
@@ -1025,6 +1050,18 @@ export async function getThroughputTrend(
   return data
 }
 
+export async function getModelTPSTrend(
+  { models, ...filters }: OpsModelTPSParams,
+  options: OpsRequestOptions = {}
+): Promise<OpsModelTPSTrendResponse> {
+  const { data } = await apiClient.get<OpsModelTPSTrendResponse>('/admin/ops/dashboard/model-tps-trend', {
+    params: { ...filters, model: models },
+    paramsSerializer: { indexes: null },
+    signal: options.signal
+  })
+  return data
+}
+
 export async function getLatencyHistogram(
   params: {
   time_range?: '5m' | '30m' | '1h' | '6h' | '24h'
@@ -1320,6 +1357,7 @@ export const opsAPI = {
   getDashboardSnapshotV2,
   getDashboardOverview,
   getThroughputTrend,
+  getModelTPSTrend,
   getLatencyHistogram,
   getErrorTrend,
   getErrorDistribution,

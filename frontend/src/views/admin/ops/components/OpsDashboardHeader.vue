@@ -127,6 +127,17 @@ const timeRangeOptions = computed(() => [
   }
 ])
 
+const modelTPSLink = computed(() => ({
+  name: 'AdminOpsModelTPS',
+  query: {
+    tr: props.timeRange,
+    platform: props.platform || undefined,
+    group_id: props.groupId?.toString(),
+    start_time: props.timeRange === 'custom' ? props.customStartTime ?? undefined : undefined,
+    end_time: props.timeRange === 'custom' ? props.customEndTime ?? undefined : undefined
+  }
+}))
+
 const queryModeOptions = computed(() => [
   { value: 'auto', label: t('admin.ops.queryMode.auto') },
   { value: 'raw', label: t('admin.ops.queryMode.raw') },
@@ -946,6 +957,14 @@ function handleToolbarRefresh() {
         </button>
 
         <div v-if="!props.fullscreen" class="mx-1 hidden h-4 w-[1px] bg-gray-200 dark:bg-dark-700 sm:block"></div>
+
+        <RouterLink
+          v-if="!props.fullscreen"
+          :to="modelTPSLink"
+          class="inline-flex h-8 items-center rounded-lg bg-primary-50 px-3 text-xs font-bold text-primary-700 hover:bg-primary-100 dark:bg-primary-900/40 dark:text-primary-300"
+        >
+          {{ t('admin.ops.modelTps.title') }}
+        </RouterLink>
 
         <!-- Alert Rules Button (hidden in fullscreen) -->
         <button
