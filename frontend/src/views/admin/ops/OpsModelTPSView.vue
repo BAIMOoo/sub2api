@@ -2,7 +2,19 @@
 import { computed, onMounted, ref, watch, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip, type ChartOptions } from 'chart.js'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  Interaction,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+  type ChartOptions,
+  type InteractionItem,
+  type InteractionModeFunction
+} from 'chart.js'
 import { Line } from 'vue-chartjs'
 import { adminAPI } from '@/api'
 import { opsAPI, type OpsModelTPSParams, type OpsModelTPSPoint, type OpsModelTPSTrendResponse } from '@/api/admin/ops'
@@ -16,7 +28,28 @@ import type { AdminGroup } from '@/types'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { formatHistoryLabel } from './utils/opsFormatters'
 
+declare module 'chart.js' {
+  interface InteractionModeMap {
+    modelTPSBucket: InteractionModeFunction
+  }
+}
+
 ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip)
+Interaction.modes.modelTPSBucket = (chart, { x, y }) => {
+  if (x == null || y == null || !chart.isPointInArea({ x, y })) return []
+
+  // Map the horizontal position to a time bucket before collecting model points.
+  const index = chart.scales.x.getValueForPixel(x)
+  if (index === undefined) return []
+  const items: InteractionItem[] = []
+  for (const dataset of chart.getSortedVisibleDatasetMetas()) {
+    const point = dataset.data[index]
+    if (point instanceof PointElement && !point.skip) {
+      items.push({ element: point, datasetIndex: dataset.index, index })
+    }
+  }
+  return items
+}
 
 const { t, n } = useI18n()
 const route = useRoute()
@@ -74,7 +107,7 @@ function changePlatform(value: string | number | boolean | null) {
   if (next === platform.value) return
   platform.value = next
   const group = groups.value.find(({ id }) => id === groupId.value)
-  if (next && group && group.platform !== next) groupId.value = null
+  if (next && group?.platform !== next) groupId.value = null
 }
 
 onMounted(async () => {
@@ -193,7 +226,6 @@ const chartData = computed(() => {
         spanGaps: false,
         pointRadius: buckets.value.length > 120 ? 1 : 2,
         pointHoverRadius: 5,
-        pointHitRadius: 6,
         borderWidth: 2
       }
     })
@@ -204,7 +236,7 @@ const chartOptions: ChartOptions<'line'> = {
   responsive: true,
   animation: false,
   maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: true },
+  interaction: { mode: 'modelTPSBucket' },
   scales: {
     x: { ticks: { maxTicksLimit: 9 } },
     y: { beginAtZero: true, title: { display: true, text: 'tok/s' } }

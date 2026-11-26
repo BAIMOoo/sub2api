@@ -3,10 +3,11 @@ import { expect, it, vi } from 'vitest'
 import { Line } from 'vue-chartjs'
 import OpsModelTPSView from '../OpsModelTPSView.vue'
 
-const getModelTPSData = vi.hoisted(() => vi.fn())
+const { getModelTPSData, getGroups } = vi.hoisted(() => ({ getModelTPSData: vi.fn(), getGroups: vi.fn() }))
+const codexGroup = { id: 17, name: 'Codex', platform: 'openai' }
 
 vi.mock('@/api/admin/ops', () => ({ opsAPI: { getModelTPSData } }))
-vi.mock('@/api', () => ({ adminAPI: { groups: { getAll: async () => [{ id: 17, name: 'Codex', platform: 'openai' }] } } }))
+vi.mock('@/api', () => ({ adminAPI: { groups: { getAll: getGroups } } }))
 vi.mock('@/stores', () => ({
   useAdminSettingsStore: () => ({ opsMonitoringEnabled: true, fetch: async () => {} })
 }))
@@ -31,25 +32,8 @@ vi.mock('vue-chartjs', async () => {
   }
 })
 
-it('compares selected request models, switches percentiles, and leaves empty buckets blank', async () => {
-  const window = {
-    start_time: '2026-11-26T00:00:00Z',
-    end_time: '2026-11-26T00:05:00Z',
-    bucket_seconds: 60
-  }
-  const points = [
-    { model: 'terra', bucket_start: '2026-11-26T00:00:00Z', p50: 44, p10: 29, sample_count: 10001 },
-    { model: 'terra', bucket_start: '2026-11-26T00:02:00Z', p50: 48, p10: 33, sample_count: 5 },
-    { model: 'sol', bucket_start: '2026-11-26T00:00:00Z', p50: 30, p10: 18, sample_count: 7 },
-    { model: 'sol', bucket_start: '2026-11-26T00:01:00Z', p50: 27, p10: 15, sample_count: 3 }
-  ]
-  getModelTPSData.mockImplementation(async (params: { models?: string[] }) => ({
-    ...window,
-    models: params.models ? [] : ['sol', 'terra'],
-    points: points.filter(({ model }) => params.models?.includes(model))
-  }))
-
-  const wrapper = mount(OpsModelTPSView, {
+function mountView() {
+  return mount(OpsModelTPSView, {
     global: {
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
@@ -67,6 +51,28 @@ it('compares selected request models, switches percentiles, and leaves empty buc
       }
     }
   })
+}
+
+it('compares selected request models, switches percentiles, and leaves empty buckets blank', async () => {
+  getGroups.mockResolvedValue([codexGroup])
+  const window = {
+    start_time: '2026-11-26T00:00:00Z',
+    end_time: '2026-11-26T00:05:00Z',
+    bucket_seconds: 60
+  }
+  const points = [
+    { model: 'terra', bucket_start: '2026-11-26T00:00:00Z', p50: 44, p10: 29, sample_count: 10001 },
+    { model: 'terra', bucket_start: '2026-11-26T00:02:00Z', p50: 48, p10: 33, sample_count: 5 },
+    { model: 'sol', bucket_start: '2026-11-26T00:00:00Z', p50: 30, p10: 18, sample_count: 7 },
+    { model: 'sol', bucket_start: '2026-11-26T00:01:00Z', p50: 27, p10: 15, sample_count: 3 }
+  ]
+  getModelTPSData.mockImplementation(async (params: { models?: string[] }) => ({
+    ...window,
+    models: params.models ? [] : ['sol', 'terra'],
+    points: points.filter(({ model }) => params.models?.includes(model))
+  }))
+
+  const wrapper = mountView()
   await flushPromises()
 
   const filters = { time_range: '5m', platform: 'openai', group_id: 17 }
@@ -112,5 +118,24 @@ it('compares selected request models, switches percentiles, and leaves empty buc
     expect.objectContaining({ signal: expect.any(AbortSignal) })
   )
 
+  wrapper.unmount()
+})
+
+it('drops an unverified group when switching platform while the group list loads', async () => {
+  let resolveGroups!: (groups: typeof codexGroup[]) => void
+  getGroups.mockReturnValue(new Promise<typeof codexGroup[]>((resolve) => { resolveGroups = resolve }))
+  getModelTPSData.mockResolvedValue({ models: [], points: [] })
+  const wrapper = mountView()
+  await flushPromises()
+
+  await wrapper.get('#model-tps-platform').setValue('anthropic')
+  await flushPromises()
+  resolveGroups([codexGroup])
+  await flushPromises()
+
+  expect(getModelTPSData).toHaveBeenLastCalledWith(
+    { time_range: '5m', platform: 'anthropic', group_id: undefined },
+    expect.objectContaining({ signal: expect.any(AbortSignal) })
+  )
   wrapper.unmount()
 })
