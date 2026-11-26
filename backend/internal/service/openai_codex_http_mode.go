@@ -194,6 +194,15 @@ func (policy codexHTTPPolicy) normalizeBody(
 	}
 
 	if mode.lite {
+		choice, _ := request["tool_choice"].(map[string]any)
+		if isOpenAIImageGenerationType(firstNonEmptyString(choice["type"])) &&
+			codexToolsContainType(request["tools"], "image_generation") {
+			return nil, mode, newOpenAIResponsesLiteValidationError(
+				"tool_choice",
+				"Responses Lite cannot preserve a forced image_generation selection during tool conversion. Use %s to generate images.",
+				openAIImagesGenerationsEndpoint,
+			)
+		}
 		if _, err := canonicalizeCodexExecLiteRequest(request); err != nil {
 			return nil, mode, err
 		}

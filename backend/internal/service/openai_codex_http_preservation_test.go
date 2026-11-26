@@ -530,6 +530,53 @@ func TestCodexHTTPPreservesExplicitImageToolDespiteLegacyAccountPolicy(t *testin
 	}
 }
 
+func TestCodexHTTPImageToolChoiceByMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const forcedImageChoice = `{"type":"image_generation"}`
+	for _, test := range []struct {
+		name       string
+		lite       bool
+		choice     string
+		wantReject bool
+		toolPath   string
+	}{
+		{name: "Lite forced", lite: true, choice: forcedImageChoice, wantReject: true},
+		{name: "Standard forced", choice: forcedImageChoice, toolPath: "tools.0.type"},
+		{name: "Lite auto", lite: true, choice: `"auto"`, toolPath: "input.0.tools.0.type"},
+	} {
+		for _, passthrough := range []bool{false, true} {
+			t.Run(test.name+"/passthrough="+boolString(passthrough), func(t *testing.T) {
+				body := []byte(`{"model":"gpt-6.2-astra","stream":false,"input":"draw","tools":[{"type":"image_generation"}],"tool_choice":` + test.choice + `}`)
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				c.Set("api_key", &APIKey{Group: &Group{AllowImageGeneration: true}})
+				SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+				account := codexBodyEncodingTestAccount(2012)
+				account.Extra = map[string]any{"openai_oauth_passthrough": passthrough}
+				setCodexHTTPTestMode(account, "gpt-6.2-astra", test.lite)
+				upstream := &httpUpstreamRecorder{resp: newCodexHTTPSyntheticErrorResponse()}
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+				_, err := svc.Forward(context.Background(), c, account, body)
+				require.Error(t, err)
+				if test.wantReject {
+					require.Zero(t, len(upstream.requests), "must reject the forced choice before forwarding")
+					require.Equal(t, http.StatusBadRequest, rec.Code)
+					response := gjson.ParseBytes(rec.Body.Bytes())
+					require.Equal(t, "invalid_request_error", response.Get("error.type").String())
+					require.Equal(t, "tool_choice", response.Get("error.param").String())
+					require.Contains(t, response.Get("error.message").String(), openAIImagesGenerationsEndpoint)
+					return
+				}
+				require.NotNil(t, upstream.lastReq, "request must reach the synthetic upstream: %v", err)
+				require.Equal(t, "image_generation", gjson.GetBytes(upstream.lastBody, test.toolPath).String())
+				require.JSONEq(t, test.choice, gjson.GetBytes(upstream.lastBody, "tool_choice").Raw)
+			})
+		}
+	}
+}
+
 func TestCodexHTTPPreservesOpaqueItemAndCallIDs(t *testing.T) {
 	callID := "call_" + strings.Repeat("x", 80)
 	itemID := "opaque-item-" + strings.Repeat("y", 80)
