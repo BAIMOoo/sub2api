@@ -546,6 +546,75 @@ class CaptureTests(unittest.TestCase):
             thread.join(timeout=5)
             self.assertEqual(cap.errors, [])
 
+    def test_capture_waits_for_completion_evidence_at_shutdown(self):
+        import socketserver
+        from urllib.parse import urlsplit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cap = Capture('socks5h://127.0.0.1:1', SECRET, Path(tmp) / 'evidence', Path(tmp) / 'ca')
+            client_context = ssl.create_default_context(cafile=str(cap.cert))
+            upstream, peer = socket.socketpair()
+            reading, close_started, context_returned, allow_record, worker_done = (threading.Event() for _ in range(5))
+            returned_early = []
+
+            def send_response():
+                with cap.tls.wrap_socket(peer, server_side=True) as tls:
+                    head = b''
+                    while b'\r\n\r\n' not in head:
+                        head += tls.recv(4096)
+                    body = b'data: {"type":"response.completed"}\n\n'
+                    tls.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: ' +
+                                str(len(body)).encode() + b'\r\n\r\n' + body)
+
+            def delayed_completion(*args, **kwargs):
+                reading.set()
+                allow_record.wait(5)
+                return completion(*args, **kwargs)
+
+            original_close = socketserver.ThreadingTCPServer.server_close
+
+            def server_close(server):
+                original_close(server)
+                close_started.set()
+
+            def release_completion():
+                if close_started.wait(5):
+                    returned_early.append(context_returned.wait(0.2))
+                allow_record.set()
+
+            original_handle = cap.handle
+
+            def handle(connection):
+                try:
+                    original_handle(connection)
+                finally:
+                    worker_done.set()
+
+            provider = threading.Thread(target=send_response, daemon=True)
+            finisher = threading.Thread(target=release_completion, daemon=True)
+            provider.start()
+            finisher.start()
+            with patch('tools.codex_alignment.capture.socks_connect', return_value=upstream), \
+                    patch('tools.codex_alignment.capture.ssl.create_default_context', return_value=client_context), \
+                    patch('tools.codex_alignment.capture.completion', side_effect=delayed_completion), \
+                    patch.object(cap, 'handle', side_effect=handle), \
+                    patch.object(socketserver.ThreadingTCPServer, 'server_close', server_close):
+                with cap.serve() as url:
+                    conn = socket.create_connection(('127.0.0.1', urlsplit(url).port), timeout=5)
+                    conn.sendall(b'CONNECT chatgpt.com:443 HTTP/1.1\r\n\r\n')
+                    self.assertIn(b'200', conn.recv(4096))
+                    with client_context.wrap_socket(conn, server_hostname='chatgpt.com') as tls:
+                        tls.sendall(b'POST /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\n'
+                                    b'Content-Length: 2\r\n\r\n{}')
+                        self.assertTrue(reading.wait(5))
+                context_returned.set()
+                finisher.join(timeout=5)
+                provider.join(timeout=5)
+                self.assertTrue(worker_done.wait(5))
+                self.assertEqual(returned_early, [False])
+                self.assertTrue(cap.requests[0]['response']['complete'])
+                self.assertTrue((cap.output / 'native-001-response.json').is_file())
+
     def test_hello_parser_excludes_random_and_rejects_truncation(self):
         ctx = ssl.create_default_context()
         ctx.set_alpn_protocols(['http/1.1'])

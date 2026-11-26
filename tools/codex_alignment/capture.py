@@ -25,6 +25,7 @@ from .protocol import completion
 ALLOWED_GET = {'/backend-api/codex/models', '/backend-api/plugins/featured',
                '/backend-api/wham/settings/user', '/backend-api/wham/accounts/check'}
 ALLOWED_POST = {'/backend-api/codex/responses', '/backend-api/codex/responses/compact'}
+UPSTREAM_TIMEOUT = 45
 
 
 def exact(sock, size):
@@ -52,13 +53,13 @@ def resolve_egress(cfg):
     return proxy_url
 
 
-def connect_upstream(proxy_url, host, port, timeout=45):
+def connect_upstream(proxy_url, host, port, timeout=UPSTREAM_TIMEOUT):
     if proxy_url is None:
         return socket.create_connection((host, port), timeout=timeout)
     return socks_connect(proxy_url, host, port, timeout=timeout)
 
 
-def socks_connect(proxy_url, host, port, timeout=45):
+def socks_connect(proxy_url, host, port, timeout=UPSTREAM_TIMEOUT):
     proxy = urlsplit(proxy_url)
     if proxy.scheme not in {'socks5', 'socks5h'} or not proxy.hostname or not proxy.port:
         raise ValueError('fixed_socks_proxy_required')
@@ -358,7 +359,7 @@ class Capture:
                 with self.lock:
                     self.requests.append({'method': method, 'path': clean_path, 'pairs': pairs,
                                           'body': decoded, 'evidence': record, 'status': None,
-                                          'response_reasoning': set()})
+                                          'response_reasoning': set(), 'capture_finished': threading.Event()})
                     entry = self.requests[-1]
                 with connect_upstream(self.proxy_url, 'chatgpt.com', 443) as upstream:
                     ctx = ssl.create_default_context()
@@ -436,6 +437,8 @@ class Capture:
                 self.sockets.discard(conn)
                 if 'client' in locals():
                     self.sockets.discard(client)
+                if 'entry' in locals():
+                    entry['capture_finished'].set()
             conn.close()
 
     @contextmanager
@@ -464,7 +467,17 @@ class Capture:
                         conn.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
+                pending = [r['capture_finished'] for r in self.requests
+                           if r['method'] == 'POST' and not r['capture_finished'].is_set()]
             thread.join(timeout=5)
+            # The CLI can exit on the SSE terminal event before the handler
+            # finishes parsing and saving that response.
+            deadline = time.monotonic() + UPSTREAM_TIMEOUT
+            for finished in pending:
+                if not finished.wait(max(0, deadline - time.monotonic())):
+                    with self.lock:
+                        self.errors.append('native_response_capture_timeout')
+                    break
 
 
 class Budget:
