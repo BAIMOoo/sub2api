@@ -354,10 +354,11 @@ class Capture:
                 record = http_evidence(self.secret, method, clean_path, pairs, decoded, len(raw),
                                        'native_http_custom_ca_inspection')
                 atomic_json(self.output / ('native-%03d-http.json' % number), record)
-                # Raw synthetic payloads live in memory only for exact replay.
+                # Raw synthetic payloads and response reasoning pairs stay in memory.
                 with self.lock:
                     self.requests.append({'method': method, 'path': clean_path, 'pairs': pairs,
-                                          'body': decoded, 'evidence': record, 'status': None})
+                                          'body': decoded, 'evidence': record, 'status': None,
+                                          'response_reasoning': set()})
                     entry = self.requests[-1]
                 with connect_upstream(self.proxy_url, 'chatgpt.com', 443) as upstream:
                     ctx = ssl.create_default_context()
@@ -389,9 +390,11 @@ class Capture:
                             response_body.extend(chunk)
                             client.sendall(('%x\r\n' % len(chunk)).encode() + chunk + b'\r\n')
                         client.sendall(b'0\r\n\r\n')
+                        reasoning = entry['response_reasoning'] if method == 'POST' else None
                         entry['response'] = completion(response.status, response.getheader('Content-Type', ''),
                                                        bytes(response_body), clean_path,
-                                                       response.getheader('Content-Encoding', ''))
+                                                       response.getheader('Content-Encoding', ''),
+                                                       reasoning_items=reasoning)
                         atomic_json(self.output / ('native-%03d-response.json' % number), entry['response'])
                         response.close()
         except Exception as exc:
@@ -407,7 +410,8 @@ class Capture:
                 if 'response_body' in locals():
                     finished = completion(entry['status'], response.getheader('Content-Type', ''),
                                           bytes(response_body), clean_path,
-                                          response.getheader('Content-Encoding', ''))
+                                           response.getheader('Content-Encoding', ''),
+                                           reasoning_items=entry['response_reasoning'])
                     if finished['complete']:
                         entry['response'] = finished
                         atomic_json(self.output / ('native-%03d-response.json' % number), finished)

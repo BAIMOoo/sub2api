@@ -379,22 +379,32 @@ class CaptureTests(unittest.TestCase):
         self.assertFalse(native_answer_matches(output('OK'), expected))
         self.assertFalse(native_answer_matches(output('The tool failed'), expected))
 
-    def test_reasoning_replay_requires_identifier_and_encrypted_content(self):
-        def request(*items):
-            return {'body': {'input': list(items)}}
-        self.assertFalse(reasoning_replay_observed([request()], 'tool'))
-        self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'id': 'rs_missing_encrypted', 'summary': []})], 'tool'))
-        self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
-        self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
-        self.assertTrue(reasoning_replay_observed([request(
-            {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'},
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
-        self.assertTrue(reasoning_replay_observed([request(
-            {'type': 'compaction', 'id': 'cmp_1', 'encrypted_content': 'opaque'},
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'compact'))
+    def test_tool_replay_matches_the_reasoning_returned_by_the_provider(self):
+        reasoning = {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque'}
+        tool = {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'}
+        first = {'body': {'input': []}, 'response_reasoning': {('rs_present', 'opaque')}}
+        resumed = {'body': {'input': [tool, reasoning]}}
+        self.assertTrue(reasoning_replay_observed([first, resumed], 'tool'))
+        self.assertFalse(reasoning_replay_observed([resumed], 'tool'))
+        self.assertFalse(reasoning_replay_observed([first, {'body': {'input': [reasoning]}}], 'tool'))
+        for changed in ({'id': ''}, {'encrypted_content': ''}, {'encrypted_content': 'other'}):
+            with self.subTest(changed=changed):
+                request = {'body': {'input': [tool, {**reasoning, **changed}]}}
+                self.assertFalse(reasoning_replay_observed([first, request], 'tool'))
+
+    def test_compact_replay_requires_reasoning_from_a_tool_turn_after_compaction(self):
+        reasoning = {'type': 'reasoning', 'id': 'rs_after', 'encrypted_content': 'opaque'}
+        tool = {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'}
+        context = {'type': 'compaction', 'id': 'cmp_1', 'encrypted_content': 'summary'}
+        compact = {'body': {'input': [{'type': 'compaction_trigger'}]},
+                   'response': {'complete': True, 'compaction_output': True}}
+        resumed = {'body': {'input': [context]}, 'response_reasoning': {('rs_after', 'opaque')}}
+        replay = {'body': {'input': [context, tool, reasoning]}}
+        self.assertTrue(reasoning_replay_observed([compact, resumed, replay], 'compact'))
+        self.assertFalse(reasoning_replay_observed([resumed, replay], 'compact'))
+        self.assertFalse(reasoning_replay_observed([resumed, compact, replay], 'compact'))
+        self.assertFalse(reasoning_replay_observed(
+            [compact, resumed, {'body': {'input': [context, reasoning]}}], 'compact'))
 
     def test_missing_reasoning_replay_cannot_silently_pass(self):
         row = {'status': 'pass'}
@@ -472,6 +482,27 @@ class CaptureTests(unittest.TestCase):
         self.assertTrue(completion(200, '', good, '/backend-api/codex/responses')['complete'])
         import gzip
         self.assertTrue(completion(200, 'text/event-stream', gzip.compress(good), '/v1/responses', 'gzip')['complete'])
+
+    def test_completed_response_collects_reasoning_without_persisting_values(self):
+        reasoning = {'type': 'reasoning', 'id': 'rs_private', 'encrypted_content': 'private-ciphertext'}
+        events = [
+            {'type': 'response.output_item.added', 'item': {**reasoning, 'id': 'rs_added'}},
+            {'type': 'response.output_item.done', 'item': reasoning},
+            {'type': 'response.completed', 'response': {'output': [reasoning]}},
+        ]
+        data = b''.join(b'data: ' + json.dumps(event).encode() + b'\n\n' for event in events)
+        collected = set()
+        report = completion(200, 'text/event-stream', data, '/v1/responses', reasoning_items=collected)
+        self.assertTrue(report['complete'])
+        self.assertEqual(collected, {('rs_private', 'private-ciphertext')})
+        self.assertEqual(report['reasoning_item_count'], 1)
+        self.assertNotIn('private', json.dumps(report))
+
+        collected.clear()
+        incomplete = data + b'data: {"type":"response.failed"}\n\n'
+        report = completion(200, 'text/event-stream', incomplete, '/v1/responses', reasoning_items=collected)
+        self.assertFalse(report['complete'])
+        self.assertFalse(collected)
 
     def test_compaction_requires_provider_output_and_subsequent_replay(self):
         requests = [{'body': {'input': [{'type': 'compaction_trigger'}]},
@@ -621,10 +652,13 @@ class CaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, \
                 patch('tools.codex_alignment.runner.subprocess.Popen', return_value=FakeProc()) as popen:
             cap = FakeCapture()
-            code = native(Path('/tmp/codex'), Path(home), 'gpt-6-astra', cap, 10)
+            code = native(Path('/tmp/codex'), Path(home), 'gpt-6.2-astra', cap, 10,
+                          reasoning_effort='max', reasoning_summary='auto')
             self.assertEqual(code, 0)
             self.assertTrue(cap.answer_verified)
             self.assertEqual(popen.call_args.kwargs.get('stdin'), subprocess.DEVNULL)
+            self.assertIn('model_reasoning_effort="max"', popen.call_args.args[0])
+            self.assertIn('model_reasoning_summary="auto"', popen.call_args.args[0])
 
     def test_repository_state_handles_version_only_skip_ci_and_fails_closed_otherwise(self):
         runs = {'workflow_runs': [
