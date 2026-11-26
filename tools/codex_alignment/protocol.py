@@ -2,7 +2,28 @@
 import json
 
 
-def completion(status, content_type, raw, path, encoding=''):
+def reasoning_pairs(items):
+    pairs = set()
+    for item in items:
+        if not isinstance(item, dict) or item.get('type') != 'reasoning':
+            continue
+        identifier, encrypted = item.get('id'), item.get('encrypted_content')
+        if isinstance(identifier, str) and identifier.strip() and isinstance(encrypted, str) and encrypted.strip():
+            pairs.add((identifier, encrypted))
+    return pairs
+
+
+def completed_output_items(events):
+    for event in events:
+        if event.get('type') == 'response.output_item.done':
+            yield event.get('item')
+        elif event.get('type') == 'response.completed':
+            response = event.get('response')
+            if isinstance(response, dict) and isinstance(response.get('output'), list):
+                yield from response['output']
+
+
+def completion(status, content_type, raw, path, encoding='', *, reasoning_items=None):
     result = {'http_status': status, 'complete': False}
     if status // 100 != 2:
         return result
@@ -28,6 +49,9 @@ def completion(status, content_type, raw, path, encoding=''):
             result['complete'] = (isinstance(data, dict) and not data.get('error') and
                                   data.get('status') not in {'failed', 'incomplete', 'cancelled'} and
                                   isinstance(data.get('output'), list) and bool(data['output']))
+            if result['complete'] and reasoning_items is not None:
+                reasoning_items.update(reasoning_pairs(data['output']))
+                result['reasoning_item_count'] = len(reasoning_items)
             return result
         events, kinds, done = [], [], False
         for line in raw.splitlines():
@@ -59,6 +83,9 @@ def completion(status, content_type, raw, path, encoding=''):
             terminal = [k for k in kinds if k in {'response.completed', 'response.failed', 'response.incomplete', 'error'}]
             result['terminal_events'] = terminal
             result['complete'] = terminal == ['response.completed'] and not failed
+        if result['complete'] and reasoning_items is not None:
+            reasoning_items.update(reasoning_pairs(completed_output_items(events)))
+            result['reasoning_item_count'] = len(reasoning_items)
     except (ValueError, TypeError, AttributeError, OSError):
         result['complete'] = False
     return result

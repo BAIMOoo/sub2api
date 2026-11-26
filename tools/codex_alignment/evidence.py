@@ -59,7 +59,7 @@ def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, owner=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(prefix='.pending-', dir=path.parent)
@@ -67,6 +67,8 @@ def atomic_json(path, value):
         with os.fdopen(fd, 'wb') as f:
             f.write(canonical(value))
             f.flush()
+            if owner is not None:
+                os.fchown(f.fileno(), *owner)
             os.fsync(f.fileno())
         os.replace(tmp, path)
         parent_fd = os.open(path.parent, os.O_RDONLY)
