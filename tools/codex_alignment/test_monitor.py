@@ -379,22 +379,33 @@ class CaptureTests(unittest.TestCase):
         self.assertFalse(native_answer_matches(output('OK'), expected))
         self.assertFalse(native_answer_matches(output('The tool failed'), expected))
 
-    def test_reasoning_replay_requires_identifier_and_encrypted_content(self):
-        def request(*items):
-            return {'body': {'input': list(items)}}
-        self.assertFalse(reasoning_replay_observed([request()], 'tool'))
-        self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'id': 'rs_missing_encrypted', 'summary': []})], 'tool'))
-        self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
-        self.assertFalse(reasoning_replay_observed([request(
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
-        self.assertTrue(reasoning_replay_observed([request(
-            {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'},
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'tool'))
-        self.assertTrue(reasoning_replay_observed([request(
-            {'type': 'compaction', 'id': 'cmp_1', 'encrypted_content': 'opaque'},
-            {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque', 'summary': []})], 'compact'))
+    def test_tool_replay_matches_the_reasoning_returned_by_the_provider(self):
+        reasoning = {'type': 'reasoning', 'id': 'rs_present', 'encrypted_content': 'opaque'}
+        tool = {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'}
+        first = {'body': {'input': []}, 'response_reasoning': {('rs_present', 'opaque')}}
+        resumed = {'body': {'input': [tool, reasoning]}}
+        self.assertTrue(reasoning_replay_observed([first, resumed], 'tool'))
+        self.assertFalse(reasoning_replay_observed([resumed], 'tool'))
+        self.assertFalse(reasoning_replay_observed([first, {'body': {'input': []}}, resumed], 'tool'))
+        self.assertFalse(reasoning_replay_observed([first, {'body': {'input': [reasoning]}}], 'tool'))
+        for changed in ({'id': ''}, {'encrypted_content': ''}, {'encrypted_content': 'other'}):
+            with self.subTest(changed=changed):
+                request = {'body': {'input': [tool, {**reasoning, **changed}]}}
+                self.assertFalse(reasoning_replay_observed([first, request], 'tool'))
+
+    def test_compact_replay_requires_reasoning_from_a_tool_turn_after_compaction(self):
+        reasoning = {'type': 'reasoning', 'id': 'rs_after', 'encrypted_content': 'opaque'}
+        tool = {'type': 'custom_tool_call_output', 'call_id': 'call_1', 'output': 'ok'}
+        context = {'type': 'compaction', 'id': 'cmp_1', 'encrypted_content': 'summary'}
+        compact = {'body': {'input': [{'type': 'compaction_trigger'}]},
+                   'response': {'complete': True, 'compaction_output': True}}
+        resumed = {'body': {'input': [context]}, 'response_reasoning': {('rs_after', 'opaque')}}
+        replay = {'body': {'input': [context, tool, reasoning]}}
+        self.assertTrue(reasoning_replay_observed([compact, resumed, replay], 'compact'))
+        self.assertFalse(reasoning_replay_observed([resumed, replay], 'compact'))
+        self.assertFalse(reasoning_replay_observed([resumed, compact, replay], 'compact'))
+        self.assertFalse(reasoning_replay_observed(
+            [compact, resumed, {'body': {'input': [context, reasoning]}}], 'compact'))
 
     def test_missing_reasoning_replay_cannot_silently_pass(self):
         row = {'status': 'pass'}
@@ -473,6 +484,27 @@ class CaptureTests(unittest.TestCase):
         import gzip
         self.assertTrue(completion(200, 'text/event-stream', gzip.compress(good), '/v1/responses', 'gzip')['complete'])
 
+    def test_completed_response_collects_reasoning_without_persisting_values(self):
+        reasoning = {'type': 'reasoning', 'id': 'rs_private', 'encrypted_content': 'private-ciphertext'}
+        events = [
+            {'type': 'response.output_item.added', 'item': {**reasoning, 'id': 'rs_added'}},
+            {'type': 'response.output_item.done', 'item': reasoning},
+            {'type': 'response.completed', 'response': {'output': [reasoning]}},
+        ]
+        data = b''.join(b'data: ' + json.dumps(event).encode() + b'\n\n' for event in events)
+        collected = set()
+        report = completion(200, 'text/event-stream', data, '/v1/responses', reasoning_items=collected)
+        self.assertTrue(report['complete'])
+        self.assertEqual(collected, {('rs_private', 'private-ciphertext')})
+        self.assertEqual(report['reasoning_item_count'], 1)
+        self.assertNotIn('private', json.dumps(report))
+
+        collected.clear()
+        incomplete = data + b'data: {"type":"response.failed"}\n\n'
+        report = completion(200, 'text/event-stream', incomplete, '/v1/responses', reasoning_items=collected)
+        self.assertFalse(report['complete'])
+        self.assertFalse(collected)
+
     def test_compaction_requires_provider_output_and_subsequent_replay(self):
         requests = [{'body': {'input': [{'type': 'compaction_trigger'}]},
                      'response': {'compaction_output': True}},
@@ -513,6 +545,75 @@ class CaptureTests(unittest.TestCase):
                     response.close()
             thread.join(timeout=5)
             self.assertEqual(cap.errors, [])
+
+    def test_capture_waits_for_completion_evidence_at_shutdown(self):
+        import socketserver
+        from urllib.parse import urlsplit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cap = Capture('socks5h://127.0.0.1:1', SECRET, Path(tmp) / 'evidence', Path(tmp) / 'ca')
+            client_context = ssl.create_default_context(cafile=str(cap.cert))
+            upstream, peer = socket.socketpair()
+            reading, close_started, context_returned, allow_record, worker_done = (threading.Event() for _ in range(5))
+            returned_early = []
+
+            def send_response():
+                with cap.tls.wrap_socket(peer, server_side=True) as tls:
+                    head = b''
+                    while b'\r\n\r\n' not in head:
+                        head += tls.recv(4096)
+                    body = b'data: {"type":"response.completed"}\n\n'
+                    tls.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: ' +
+                                str(len(body)).encode() + b'\r\n\r\n' + body)
+
+            def delayed_completion(*args, **kwargs):
+                reading.set()
+                allow_record.wait(5)
+                return completion(*args, **kwargs)
+
+            original_close = socketserver.ThreadingTCPServer.server_close
+
+            def server_close(server):
+                original_close(server)
+                close_started.set()
+
+            def release_completion():
+                if close_started.wait(5):
+                    returned_early.append(context_returned.wait(0.2))
+                allow_record.set()
+
+            original_handle = cap.handle
+
+            def handle(connection):
+                try:
+                    original_handle(connection)
+                finally:
+                    worker_done.set()
+
+            provider = threading.Thread(target=send_response, daemon=True)
+            finisher = threading.Thread(target=release_completion, daemon=True)
+            provider.start()
+            finisher.start()
+            with patch('tools.codex_alignment.capture.socks_connect', return_value=upstream), \
+                    patch('tools.codex_alignment.capture.ssl.create_default_context', return_value=client_context), \
+                    patch('tools.codex_alignment.capture.completion', side_effect=delayed_completion), \
+                    patch.object(cap, 'handle', side_effect=handle), \
+                    patch.object(socketserver.ThreadingTCPServer, 'server_close', server_close):
+                with cap.serve() as url:
+                    conn = socket.create_connection(('127.0.0.1', urlsplit(url).port), timeout=5)
+                    conn.sendall(b'CONNECT chatgpt.com:443 HTTP/1.1\r\n\r\n')
+                    self.assertIn(b'200', conn.recv(4096))
+                    with client_context.wrap_socket(conn, server_hostname='chatgpt.com') as tls:
+                        tls.sendall(b'POST /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\n'
+                                    b'Content-Length: 2\r\n\r\n{}')
+                        self.assertTrue(reading.wait(5))
+                context_returned.set()
+                finisher.join(timeout=5)
+                provider.join(timeout=5)
+                self.assertTrue(worker_done.wait(5))
+                self.assertEqual(returned_early, [False])
+                self.assertTrue(cap.requests[0]['response']['complete'])
+                self.assertTrue((cap.output / 'native-001-response.json').is_file())
 
     def test_hello_parser_excludes_random_and_rejects_truncation(self):
         ctx = ssl.create_default_context()
@@ -621,10 +722,54 @@ class CaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, \
                 patch('tools.codex_alignment.runner.subprocess.Popen', return_value=FakeProc()) as popen:
             cap = FakeCapture()
-            code = native(Path('/tmp/codex'), Path(home), 'gpt-6-astra', cap, 10)
+            code = native(Path('/tmp/codex'), Path(home), 'gpt-6.2-astra', cap, 10,
+                          reasoning_effort='max', reasoning_summary='auto')
             self.assertEqual(code, 0)
             self.assertTrue(cap.answer_verified)
             self.assertEqual(popen.call_args.kwargs.get('stdin'), subprocess.DEVNULL)
+            self.assertIn('model_reasoning_effort="max"', popen.call_args.args[0])
+            self.assertIn('model_reasoning_summary="auto"', popen.call_args.args[0])
+
+    def test_native_compact_resumes_the_same_disposable_session(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+
+        capture = SimpleNamespace(
+            serve=lambda: nullcontext('http://127.0.0.1:18080'),
+            hello_only=False, cert=Path('/tmp/fake-ca.pem'), answer_verified=True,
+            requests=[{'method': 'POST', 'body': {'input': [{'type': 'compaction_trigger'}]},
+                       'response': {'compaction_output': True}},
+                      {'method': 'POST', 'body': {'input': [{'type': 'compaction'}]}}],
+        )
+        with tempfile.TemporaryDirectory() as home:
+            auth = Path(home, 'auth.json')
+            auth.write_text('{}')
+            workspaces, homes, prompts = [], [], []
+
+            def run_command(command, work, env, cap, deadline, expected):
+                workspace = Path(work)
+                codex_home = Path(env['CODEX_HOME'])
+                self.assertNotEqual(codex_home, Path(home))
+                self.assertEqual((codex_home / 'auth.json').readlink(), auth)
+                self.assertIn('model_reasoning_effort="max"', command)
+                self.assertNotIn('--ephemeral', command)
+                workspaces.append(workspace)
+                homes.append(codex_home)
+                prompts.append(command)
+                return 0
+
+            with patch('tools.codex_alignment.runner._run_native_command', side_effect=run_command):
+                self.assertEqual(native(Path('/tmp/codex'), Path(home), 'gpt-6.2-astra', capture, 10,
+                                        'compact', reasoning_effort='max', reasoning_summary='auto'), 0)
+            self.assertEqual(len(prompts), 2)
+            self.assertEqual(workspaces[0], workspaces[1])
+            self.assertEqual(homes[0], homes[1])
+            self.assertIn('model_auto_compact_token_limit=1', prompts[0])
+            self.assertIn('primer.txt', prompts[0][-1])
+            self.assertEqual(prompts[1][-3:-1], ['resume', '--last'])
+            self.assertIn('7, 11, and 13', prompts[1][-1])
+            self.assertNotIn('model_auto_compact_token_limit=1', prompts[1])
+            self.assertFalse(homes[0].exists())
 
     def test_repository_state_handles_version_only_skip_ci_and_fails_closed_otherwise(self):
         runs = {'workflow_runs': [
