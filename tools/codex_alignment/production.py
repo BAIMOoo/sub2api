@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import http.client
 import json
-import os
 from pathlib import Path
 import subprocess
 import time
@@ -71,8 +70,9 @@ def snapshot(config):
               'oauth': data['account']['type'] == 'oauth',
               'oauth_account_sha256': hashlib.sha256((data['account'].get('oauth_account') or '').encode()).hexdigest(),
               'account_available': data['account']['status'] == 'active' and data['account']['schedulable']}
-    atomic_json(config['output'], output)
-    os.chown(config['output'], int(config['monitor_uid']), int(config['monitor_gid']))
+    # The unprivileged monitor can read the receipt as soon as it is published.
+    owner = (int(config['monitor_uid']), int(config['monitor_gid']))
+    atomic_json(config['output'], output, owner=owner)
     return output
 
 

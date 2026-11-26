@@ -18,7 +18,7 @@ REASONS = {
     'native_compact_not_observed': '没有采集到上下文压缩流程',
     'native_expected_answer_not_observed': '没有得到预期回答，不能确认工具或问答成功',
     'native_capture_or_provider_incomplete': '官方请求的采集或响应不完整',
-    'native_reasoning_id_replay_not_observed': '本轮没有采集到带 id 和 encrypted_content 的 reasoning 续轮，无法验证这条已知差异路径',
+    'native_reasoning_id_replay_not_observed': '本轮没有采集到带 id 和 encrypted_content 的 reasoning 续轮，或两字段无法与上游响应匹配',
     'missing_http_evidence': '缺少实际发往上游的 HTTP 请求证据',
     'missing_tls_evidence': '缺少 TLS 连接特征证据',
     'requested_mode_not_observed': '实际请求模式与指定测试模式不一致',
@@ -168,6 +168,13 @@ def document(report):
     ]
     if repo.get('run_id'):
         sources.append('GitHub 检测记录：https://github.com/BAIMOoo/sub2api/actions/runs/' + str(repo['run_id']))
+    native_config = report.get('native_config', {})
+    effort = native_config.get('model_reasoning_effort')
+    if effort:
+        sources.append('官方探针使用 ' + str(effort) + ' 推理档位。')
+    summary = native_config.get('model_reasoning_summary')
+    if summary:
+        sources.append('官方探针的推理摘要设为 ' + str(summary) + '。')
     section('二、检测了什么', sources)
 
     checks = [

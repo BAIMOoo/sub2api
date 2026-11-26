@@ -19,73 +19,103 @@ from .capture import Budget, Capture, resolve_egress
 from .evidence import (atomic_json, canonical, compare_replay, differences, digest, opaque,
                        retain, sanitize, ticket)
 from .releases import install, release, github, prune_binaries
-from .protocol import completion
+from .protocol import completion, reasoning_pairs
 from urllib.error import HTTPError
 
 COMPACTION_RESUME_INPUT_TYPES = frozenset({'compaction', 'compaction_summary'})
 
 
-def native(binary, home, model, capture, timeout, scenario='basic'):
+def native(binary, home, model, capture, timeout, scenario='basic', *,
+           reasoning_effort=None, reasoning_summary=None):
     with tempfile.TemporaryDirectory(prefix='alignment-work-') as work, capture.serve() as proxy:
-        expected = 'OK' if scenario == 'basic' else 'ALIGNMENT_' + uuid.uuid4().hex
-        Path(work, 'probe.txt').write_text(expected + '\n')
+        expected = 'OK'
+        prompt = 'Reply with exactly OK. Do not use tools.'
+        if scenario in {'tool', 'compact'}:
+            expected = 'ALIGNMENT_' + uuid.uuid4().hex
+            Path(work, 'probe-115.txt').write_text(expected + '\n')
+            prompt = ('Find the unique integer n from 100 through 999 whose remainders when divided by '
+                      '7, 11, and 13 are respectively 3, 5, and 11. Solve the arithmetic yourself '
+                      'before using a tool. Then use the shell tool to read probe-<n>.txt using '
+                      'the number you found. Do not list files or use the network. Reply with exactly '
+                      'the contents of the file.')
         env = {'PATH': str(Path(binary).parent) + ':/usr/local/bin:/usr/bin:/bin', 'HOME': str(home), 'CODEX_HOME': str(home),
                'LANG': 'C.UTF-8', 'HTTPS_PROXY': proxy, 'HTTP_PROXY': proxy, 'ALL_PROXY': proxy,
                'https_proxy': proxy, 'http_proxy': proxy, 'all_proxy': proxy, 'NO_PROXY': '', 'no_proxy': ''}
         if not capture.hello_only:
             env['CODEX_CA_CERTIFICATE'] = str(capture.cert)
             env['SSL_CERT_FILE'] = str(capture.cert)
-        prompt = 'Reply with exactly OK. Do not use tools.'
-        if scenario in {'tool', 'compact'}:
-            prompt = 'Read the local file probe.txt using the shell tool, then reply with exactly its contents. Do not use the network.'
-        command = [str(binary), 'exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only',
+        command = [str(binary), 'exec', '--skip-git-repo-check', '--sandbox', 'read-only',
                    '--json', '-m', model, '-c', 'model_provider="openai"',
                    '-c', 'features.apps=false', '-c', 'features.plugins=false',
                    '-c', 'analytics.enabled=false']
-        if scenario == 'compact':
-            command += ['-c', 'model_auto_compact_token_limit=1']
-        command.append(prompt)
-        proc = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-        buffers = [bytearray(), bytearray()]
-        def drain(stream, buffer):
-            while True:
-                piece = stream.read(4096)
-                if not piece:
-                    break
-                buffer.extend(piece)
-                if len(buffer) > 65536:
-                    del buffer[:-65536]
-        readers = [threading.Thread(target=drain, args=(stream, buffer), daemon=True)
-                   for stream, buffer in zip((proc.stdout, proc.stderr), buffers)]
+        for setting, value in (('model_reasoning_effort', reasoning_effort),
+                               ('model_reasoning_summary', reasoning_summary)):
+            if value is not None:
+                command += ['-c', setting + '=' + json.dumps(value)]
+        deadline = time.monotonic() + timeout
+        if scenario != 'compact':
+            return _run_native_command([*command, '--ephemeral', prompt], work, env, capture, deadline, expected)
+
+        # The puzzle must arrive after compaction, so it is a new turn in the
+        # same session. Only the disposable home stores the synthetic session.
+        primer = 'ALIGNMENT_' + uuid.uuid4().hex
+        Path(work, 'primer.txt').write_text(primer + '\n')
+        primer_prompt = ('Use the shell tool to read primer.txt, then reply with exactly its contents. '
+                         'Do not use the network.')
+        with tempfile.TemporaryDirectory(prefix='alignment-codex-home-') as isolated_home:
+            Path(isolated_home, 'auth.json').symlink_to(Path(home, 'auth.json').absolute())
+            isolated_env = dict(env, HOME=isolated_home, CODEX_HOME=isolated_home)
+            initial = [*command, '-c', 'model_auto_compact_token_limit=1', primer_prompt]
+            code = _run_native_command(initial, work, isolated_env, capture, deadline, primer)
+            posts = [request for request in capture.requests if request['method'] == 'POST']
+            if code or not capture.answer_verified or not compaction_observed(posts):
+                return code
+            resumed = [*command, 'resume', '--last', prompt]
+            return _run_native_command(resumed, work, isolated_env, capture, deadline, expected)
+
+
+def _run_native_command(command, work, env, capture, deadline, expected):
+    proc = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    buffers = [bytearray(), bytearray()]
+
+    def drain(stream, buffer):
+        while True:
+            piece = stream.read(4096)
+            if not piece:
+                break
+            buffer.extend(piece)
+            if len(buffer) > 65536:
+                del buffer[:-65536]
+
+    readers = [threading.Thread(target=drain, args=(stream, buffer), daemon=True)
+               for stream, buffer in zip((proc.stdout, proc.stderr), buffers)]
+    for reader in readers:
+        reader.start()
+    try:
+        while proc.poll() is None:
+            if capture.hello_only and capture.hellos:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError('native_deadline')
+            time.sleep(0.1)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
         for reader in readers:
-            reader.start()
-        try:
-            deadline = time.monotonic() + timeout
-            while proc.poll() is None:
-                if capture.hello_only and capture.hellos:
-                    break
-                if time.monotonic() >= deadline:
-                    raise TimeoutError('native_deadline')
-                time.sleep(0.1)
-        finally:
-            if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait()
-            for reader in readers:
-                reader.join(timeout=2)
-            proc.stdout.close()
-            proc.stderr.close()
-            # Bounded diagnostics stay in memory, never in reports or logs.
-            # Callers persist only explicit error categories.
-            capture.cli_output = bytes(buffers[0])
-            capture.cli_stderr = bytes(buffers[1])
-            capture.answer_verified = native_answer_matches(capture.cli_output, expected)
-        return proc.returncode
+            reader.join(timeout=2)
+        proc.stdout.close()
+        proc.stderr.close()
+        # Bounded diagnostics stay in memory.
+        capture.cli_output = bytes(buffers[0])
+        capture.cli_stderr = bytes(buffers[1])
+        capture.answer_verified = native_answer_matches(capture.cli_output, expected)
+    return proc.returncode
 
 
 def native_answer_matches(output, expected):
@@ -143,39 +173,46 @@ def mode_of(body):
     return 'standard' if isinstance(body.get('tools'), list) else 'unknown'
 
 
+def has_input_type(body, types):
+    return any(isinstance(item, dict) and item.get('type') in types for item in body.get('input', []))
+
+
 def tool_continuation(body):
-    return any(isinstance(item, dict) and item.get('type') in {
-        'function_call_output', 'custom_tool_call_output', 'tool_search_output'} for item in body.get('input', []))
+    return has_input_type(body, {'function_call_output', 'custom_tool_call_output', 'tool_search_output'})
+
+
+def compaction_response_observed(request):
+    return (request.get('response', {}).get('compaction_output')
+            and has_input_type(request['body'], {'compaction_trigger'}))
 
 
 def compaction_observed(requests):
-    triggered = any(any(isinstance(i, dict) and i.get('type') == 'compaction_trigger'
-                        for i in r['body'].get('input', [])) and
-                    r.get('response', {}).get('compaction_output') for r in requests)
-    resumed = any(any(isinstance(i, dict) and i.get('type') in COMPACTION_RESUME_INPUT_TYPES
-                      for i in r['body'].get('input', [])) for r in requests)
-    return bool(triggered and resumed)
+    compacted = False
+    for request in requests:
+        if compacted and has_input_type(request['body'], COMPACTION_RESUME_INPUT_TYPES):
+            return True
+        if compaction_response_observed(request):
+            compacted = True
+    return False
 
 
 def reasoning_replay_observed(requests, scenario):
+    requires_compaction = scenario == 'compact'
+    ready = not requires_compaction
+    provider_items = set()
     for request in requests:
         body = request.get('body')
         if not isinstance(body, dict) or not isinstance(body.get('input'), list):
             continue
-        continued = tool_continuation(body) or (
-            scenario == 'compact' and any(
-                isinstance(item, dict) and item.get('type') in COMPACTION_RESUME_INPUT_TYPES
-                for item in body['input']
-            )
-        )
-        if not continued:
-            continue
-        for item in body['input']:
-            if (isinstance(item, dict) and item.get('type') == 'reasoning'
-                    and isinstance(item.get('id'), str) and item['id'].strip()
-                    and isinstance(item.get('encrypted_content'), str)
-                    and item['encrypted_content'].strip()):
-                return True
+        if (ready and tool_continuation(body)
+                and (not requires_compaction or has_input_type(body, COMPACTION_RESUME_INPUT_TYPES))
+                and provider_items.intersection(reasoning_pairs(body['input']))):
+            return True
+        if requires_compaction and compaction_response_observed(request):
+            ready = True
+            provider_items = set()
+        elif ready:
+            provider_items = request.get('response_reasoning') or set()
     return False
 
 
@@ -264,6 +301,11 @@ class Runner:
         report['native_config'] = {'apps': False, 'plugins': False, 'analytics': False,
                                    'sandbox': 'read-only', 'ephemeral': True,
                                    'http_selection': 'local_websocket_upgrade_refusal'}
+        reasoning_options = {}
+        for setting in ('model_reasoning_effort', 'model_reasoning_summary'):
+            if setting in self.cfg:
+                reasoning_options[setting.removeprefix('model_')] = self.cfg[setting]
+                report['native_config'][setting] = self.cfg[setting]
         expires = int(started + min(3600, self.cfg.get('watchdog_seconds', 3600)))
         native_budget = Budget(self.cfg.get('native_run_max_requests', 64))
         try:
@@ -310,7 +352,7 @@ class Runner:
                 version = provenance['version']
                 hello = Capture(proxy_url, self.cfg['secret'], directory / version / 'tls',
                                 self.root / 'ca', hello_only=True)
-                native(binary, home, next(iter(self.cfg['models'].values())), hello, 30)
+                native(binary, home, next(iter(self.cfg['models'].values())), hello, 30, **reasoning_options)
                 tls = hello.hellos[0] if hello.hellos else None
                 if tls is None:
                     report['findings'].append(version + ':native_tls_unverified')
@@ -324,7 +366,8 @@ class Runner:
                                       self.root / 'ca', max_requests=self.cfg.get('native_max_requests', 16),
                                       budget=native_budget)
                         phase = time.monotonic()
-                        code = native(binary, home, model, cap, min(240, expires - time.time()), scenario)
+                        code = native(binary, home, model, cap, min(240, expires - time.time()), scenario,
+                                      **reasoning_options)
                         row = {'name': name, 'binary': provenance, 'model': model, 'expected_mode': expected_mode,
                                'cli_exit': code, 'answer_verified': cap.answer_verified, 'code_mode_host': host_provenance, 'native_attempts': cap.count, 'capture_errors': cap.errors,
                                'opaque_oauth_refresh_tunnels': cap.auth_tunnels,
