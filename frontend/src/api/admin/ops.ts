@@ -1050,7 +1050,7 @@ export async function getThroughputTrend(
   return data
 }
 
-export async function getModelTPSTrend(
+export async function getModelTPSData(
   { models, ...filters }: OpsModelTPSParams,
   options: OpsRequestOptions = {}
 ): Promise<OpsModelTPSTrendResponse> {
@@ -1357,7 +1357,7 @@ export const opsAPI = {
   getDashboardSnapshotV2,
   getDashboardOverview,
   getThroughputTrend,
-  getModelTPSTrend,
+  getModelTPSData,
   getLatencyHistogram,
   getErrorTrend,
   getErrorDistribution,

@@ -58,11 +58,11 @@ export function parseTimeRangeMinutes(range: string): number {
   return 60
 }
 
-export function formatHistoryLabel(date: string | undefined, timeRange: string): string {
+export function formatHistoryLabel(date: string | undefined, timeRange: string | number): string {
   if (!date) return ''
   const d = new Date(date)
   if (Number.isNaN(d.getTime())) return ''
-  const minutes = parseTimeRangeMinutes(timeRange)
+  const minutes = typeof timeRange === 'number' ? timeRange : parseTimeRangeMinutes(timeRange)
   if (minutes >= 24 * 60) {
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }

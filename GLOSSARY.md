@@ -27,5 +27,8 @@ _Avoid_: Manifest version, frontend version, query version
 **输出 TPS（Output TPS）**
 一次请求的输出 Token 数除以请求总耗时（秒），单位为 tok/s。总耗时包含首字等待，输出 Token 可能包含推理 Token。
 
+**模型 TPS（Model TPS）**
+同一时段内，按请求模型汇总的输出 TPS 分位数。每个分位数由对应模型的有效请求样本计算。
+
 **请求模型（Requested Model）**
 客户端在请求中指定的模型名称。路由映射可以为该请求选择另一个上游模型。

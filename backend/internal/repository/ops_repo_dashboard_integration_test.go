@@ -4,11 +4,18 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -123,7 +130,7 @@ func TestOpsOutputTPSQueryDeadline(t *testing.T) {
 	require.Nil(t, stats)
 }
 
-func TestOpsModelTPSTrendFiltersAndAggregatesUsageSamples(t *testing.T) {
+func TestOpsModelTPSTrendAPIFiltersAndAggregatesUsageSamples(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
 	user := mustCreateUser(t, client, &service.User{})
@@ -132,7 +139,7 @@ func TestOpsModelTPSTrendFiltersAndAggregatesUsageSamples(t *testing.T) {
 	group := mustCreateGroup(t, client, &service.Group{Name: "model-tps", Platform: service.PlatformOpenAI})
 	otherGroup := mustCreateGroup(t, client, &service.Group{Name: "other-model-tps", Platform: service.PlatformOpenAI})
 	start := time.Date(2021, 1, 18, 0, 1, 0, 0, time.UTC)
-	end := start.Add(14 * time.Minute)
+	end := start.Add(3 * time.Hour)
 
 	t.Cleanup(func() {
 		_, _ = integrationDB.ExecContext(ctx, "DELETE FROM usage_logs WHERE user_id = $1", user.ID)
@@ -146,14 +153,14 @@ func TestOpsModelTPSTrendFiltersAndAggregatesUsageSamples(t *testing.T) {
 		t.Helper()
 		sample++
 		_, err := integrationDB.ExecContext(ctx, `INSERT INTO usage_logs
-  (user_id, api_key_id, account_id, group_id, request_id, model, requested_model, upstream_model, output_tokens, duration_ms, request_type, created_at)
-  VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),'vendor-shared',$8,$9,$10,$11)`,
+  (user_id, api_key_id, account_id, group_id, request_id, model, requested_model, upstream_model, output_tokens, duration_ms, request_type, stream, created_at)
+  VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),'vendor-shared',$8,$9,$10,$11,$12)`,
 			user.ID, key.ID, account.ID, groupID, fmt.Sprintf("model-tps-%d-%d", user.ID, sample),
-			legacy, requested, output, duration, kind, at)
+			legacy, requested, output, duration, kind, kind == service.RequestTypeUnknown, at)
 		require.NoError(t, err)
 	}
 	insert(start, group.ID, "vendor-a", "terra", 20, 1000, service.RequestTypeStream)
-	insert(start.Add(time.Minute), group.ID, "terra", "", 100, 2500, service.RequestTypeSync)
+	insert(start.Add(time.Minute), group.ID, "terra", "", 100, 2500, service.RequestTypeUnknown)
 	insert(start.Add(2*time.Minute), group.ID, "terra", "sol", 120, 2000, service.RequestTypeWSV2)
 	insert(start.Add(10*time.Minute), group.ID, "vendor-a", "terra", 50, 1000, service.RequestTypeStream)
 	insert(start, group.ID, "bad-duration", "", 1000, 0, service.RequestTypeSync)
@@ -163,16 +170,35 @@ func TestOpsModelTPSTrendFiltersAndAggregatesUsageSamples(t *testing.T) {
 	insert(start, otherGroup.ID, "other", "", 1000, 1000, service.RequestTypeStream)
 
 	repo := NewOpsRepository(integrationDB)
-	filter := &service.OpsDashboardFilter{
-		StartTime: start, EndTime: end, Platform: " OpenAI ", GroupID: &group.ID,
+	opsService := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	handler := admin.NewOpsHandler(opsService)
+	router := gin.New()
+	const path = "/api/v1/admin/ops/dashboard/model-tps-trend"
+	router.GET(path, handler.GetDashboardModelTPSTrend)
+	query := func(platform string, models []string) service.OpsModelTPSTrendResponse {
+		t.Helper()
+		params := url.Values{
+			"start_time": {start.Format(time.RFC3339)},
+			"end_time":   {end.Format(time.RFC3339)},
+			"platform":   {platform},
+			"group_id":   {strconv.FormatInt(group.ID, 10)},
+			"model":      models,
+		}
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path+"?"+params.Encode(), nil))
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		var response struct {
+			Data service.OpsModelTPSTrendResponse `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+		return response.Data
 	}
-	options, err := repo.GetModelTPSTrend(ctx, filter, 300, nil)
-	require.NoError(t, err)
+
+	options := query(" OpenAI ", nil)
 	require.Equal(t, []string{"sol", "terra"}, options.Models)
 	require.Empty(t, options.Points)
 
-	trend, err := repo.GetModelTPSTrend(ctx, filter, 300, []string{"terra", "sol", "vendor-shared"})
-	require.NoError(t, err)
+	trend := query(service.PlatformOpenAI, []string{"terra", "sol", "vendor-shared"})
 	require.Equal(t, 300, trend.BucketSeconds)
 	require.Len(t, trend.Points, 3)
 	firstBucket := start.Truncate(5 * time.Minute)
@@ -180,8 +206,6 @@ func TestOpsModelTPSTrendFiltersAndAggregatesUsageSamples(t *testing.T) {
 	require.Equal(t, service.OpsModelTPSPoint{Model: "terra", BucketStart: firstBucket, P50: 30, P10: 22, SampleCount: 2}, trend.Points[1])
 	require.Equal(t, service.OpsModelTPSPoint{Model: "terra", BucketStart: firstBucket.Add(10 * time.Minute), P50: 50, P10: 50, SampleCount: 1}, trend.Points[2])
 
-	filter.Platform = service.PlatformAnthropic
-	empty, err := repo.GetModelTPSTrend(ctx, filter, 300, []string{"terra"})
-	require.NoError(t, err)
+	empty := query(service.PlatformAnthropic, []string{"terra"})
 	require.Empty(t, empty.Points)
 }

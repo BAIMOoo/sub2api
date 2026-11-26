@@ -3,10 +3,10 @@ import { expect, it, vi } from 'vitest'
 import { Line } from 'vue-chartjs'
 import OpsModelTPSView from '../OpsModelTPSView.vue'
 
-const getModelTPSTrend = vi.hoisted(() => vi.fn())
+const getModelTPSData = vi.hoisted(() => vi.fn())
 
-vi.mock('@/api/admin/ops', () => ({ opsAPI: { getModelTPSTrend } }))
-vi.mock('@/api', () => ({ adminAPI: { groups: { getAll: async () => [] } } }))
+vi.mock('@/api/admin/ops', () => ({ opsAPI: { getModelTPSData } }))
+vi.mock('@/api', () => ({ adminAPI: { groups: { getAll: async () => [{ id: 17, name: 'Codex', platform: 'openai' }] } } }))
 vi.mock('@/stores', () => ({
   useAdminSettingsStore: () => ({ opsMonitoringEnabled: true, fetch: async () => {} })
 }))
@@ -17,7 +17,8 @@ vi.mock('vue-router', async () => ({
 vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
   useI18n: () => ({
-    t: (key: string, params?: { count: string }) => params ? `${key} ${params.count}` : key
+    t: (key: string, params?: { count: string }) => params ? `${key} ${params.count}` : key,
+    n: (value: number) => value.toLocaleString('en-US')
   })
 }))
 vi.mock('vue-chartjs', async () => {
@@ -37,12 +38,12 @@ it('compares selected request models, switches percentiles, and leaves empty buc
     bucket_seconds: 60
   }
   const points = [
-    { model: 'terra', bucket_start: '2026-11-26T00:00:00Z', p50: 44, p10: 29, sample_count: 11 },
+    { model: 'terra', bucket_start: '2026-11-26T00:00:00Z', p50: 44, p10: 29, sample_count: 10001 },
     { model: 'terra', bucket_start: '2026-11-26T00:02:00Z', p50: 48, p10: 33, sample_count: 5 },
     { model: 'sol', bucket_start: '2026-11-26T00:00:00Z', p50: 30, p10: 18, sample_count: 7 },
     { model: 'sol', bucket_start: '2026-11-26T00:01:00Z', p50: 27, p10: 15, sample_count: 3 }
   ]
-  getModelTPSTrend.mockImplementation(async (params: { models?: string[] }) => ({
+  getModelTPSData.mockImplementation(async (params: { models?: string[] }) => ({
     ...window,
     models: params.models ? [] : ['sol', 'terra'],
     points: points.filter(({ model }) => params.models?.includes(model))
@@ -69,14 +70,14 @@ it('compares selected request models, switches percentiles, and leaves empty buc
   await flushPromises()
 
   const filters = { time_range: '5m', platform: 'openai', group_id: 17 }
-  expect(getModelTPSTrend).toHaveBeenCalledWith(filters, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+  expect(getModelTPSData).toHaveBeenCalledWith(filters, expect.objectContaining({ signal: expect.any(AbortSignal) }))
 
   const modelPicker = wrapper.get('[data-testid="model-tps-select"]')
   await modelPicker.setValue('terra')
   await flushPromises()
   await modelPicker.setValue('sol')
   await flushPromises()
-  expect(getModelTPSTrend).toHaveBeenLastCalledWith(
+  expect(getModelTPSData).toHaveBeenLastCalledWith(
     { ...filters, models: ['terra', 'sol'] },
     expect.objectContaining({ signal: expect.any(AbortSignal) })
   )
@@ -90,16 +91,26 @@ it('compares selected request models, switches percentiles, and leaves empty buc
 
   const label = chart.props('options').plugins.tooltip.callbacks.label
   expect(label({ dataset: { label: 'terra' }, dataIndex: 0 })).toBe(
-    'terra · P50 44.0 · P10 29.0 tok/s · admin.ops.outputTpsSamples 11'
+    'terra · P50 44.0 · P10 29.0 tok/s · admin.ops.outputTpsSamples 10,001'
   )
 
-  const queries = getModelTPSTrend.mock.calls.length
+  const queries = getModelTPSData.mock.calls.length
   await wrapper.get('[data-testid="model-tps-p10"]').trigger('click')
   expect(data()).toEqual([
     { label: 'terra', data: [29, null, 33, null, null] },
     { label: 'sol', data: [18, 15, null, null, null] }
   ])
   expect(chart.props('data').datasets.every(({ spanGaps }: { spanGaps: boolean }) => !spanGaps)).toBe(true)
-  expect(getModelTPSTrend).toHaveBeenCalledTimes(queries)
+  expect(getModelTPSData).toHaveBeenCalledTimes(queries)
+  const platformPicker = wrapper.get('#model-tps-platform')
+  await platformPicker.setValue('')
+  await flushPromises()
+  await platformPicker.setValue('openai')
+  await flushPromises()
+  expect(getModelTPSData).toHaveBeenLastCalledWith(
+    { ...filters, models: ['terra', 'sol'] },
+    expect.objectContaining({ signal: expect.any(AbortSignal) })
+  )
+
   wrapper.unmount()
 })

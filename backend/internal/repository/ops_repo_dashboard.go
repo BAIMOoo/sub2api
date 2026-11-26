@@ -62,6 +62,7 @@ func (r *opsRepository) GetDashboardOverview(ctx context.Context, filter *servic
 
 func (r *opsRepository) queryOutputTPS(ctx context.Context, filter *service.OpsDashboardFilter) (*service.OpsOutputTPS, error) {
 	join, where, args, _ := buildOutputTPSWhere(filter)
+	where += " AND ul.request_type IN (" + opsOutputTPSRequestTypes + ")"
 	query := `
 SELECT
  percentile_cont(0.05) WITHIN GROUP (ORDER BY output_tps),

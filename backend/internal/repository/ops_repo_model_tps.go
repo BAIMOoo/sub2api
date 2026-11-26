@@ -10,14 +10,15 @@ import (
 
 const opsOutputTPSExpression = "ul.output_tokens * 1000.0 / NULLIF(ul.duration_ms, 0)"
 
+var opsOutputTPSRequestTypes = fmt.Sprintf("%d, %d, %d, %d",
+	service.RequestTypeSync, service.RequestTypeStream, service.RequestTypeWSV2, service.RequestTypeCyberBlocked)
+
 func buildOutputTPSWhere(filter *service.OpsDashboardFilter) (join, where string, args []any, nextIndex int) {
 	join, where, args, nextIndex = buildUsageWhere(filter, filter.StartTime.UTC(), filter.EndTime.UTC(), 1)
-	where += fmt.Sprintf(`
+	where += `
  AND ul.output_tokens > 0 AND ul.duration_ms > 0
  AND ul.image_count = 0 AND ul.image_output_tokens = 0
- AND COALESCE(ul.billing_mode, '') <> 'image'
- AND ul.request_type IN (%d, %d, %d, %d)`,
-		service.RequestTypeSync, service.RequestTypeStream, service.RequestTypeWSV2, service.RequestTypeCyberBlocked)
+ AND COALESCE(ul.billing_mode, '') <> 'image'`
 	return join, where, args, nextIndex
 }
 
@@ -40,6 +41,8 @@ func (r *opsRepository) GetModelTPSTrend(ctx context.Context, filter *service.Op
 		Points:        []service.OpsModelTPSPoint{},
 	}
 	join, where, args, nextIndex := buildOutputTPSWhere(filter)
+	// Usage details interpret the legacy request type as sync, stream, or WebSocket using the stored flags.
+	where += fmt.Sprintf(" AND ul.request_type IN (%s, %d)", opsOutputTPSRequestTypes, service.RequestTypeUnknown)
 	modelExpression := resolveModelDimensionExpressionWithAlias("requested", "ul")
 	if len(models) == 0 {
 		query := "SELECT DISTINCT " + modelExpression + " AS model FROM usage_logs ul " + join + " " + where + " ORDER BY model"

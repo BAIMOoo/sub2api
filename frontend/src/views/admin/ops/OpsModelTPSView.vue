@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { Chart as ChartJS, CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip, type ChartOptions } from 'chart.js'
@@ -13,12 +13,12 @@ import Icon from '@/components/icons/Icon.vue'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import { useAdminSettingsStore } from '@/stores'
 import type { AdminGroup } from '@/types'
-import { formatDateTimeLocalInput, formatNumber, parseDateTimeLocalInput } from '@/utils/format'
+import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { formatHistoryLabel } from './utils/opsFormatters'
 
 ChartJS.register(CategoryScale, Legend, LineElement, LinearScale, PointElement, Tooltip)
 
-const { t } = useI18n()
+const { t, n } = useI18n()
 const route = useRoute()
 const settings = useAdminSettingsStore()
 const ready = ref(false)
@@ -73,7 +73,8 @@ function changePlatform(value: string | number | boolean | null) {
   const next = String(value ?? '')
   if (next === platform.value) return
   platform.value = next
-  groupId.value = null
+  const group = groups.value.find(({ id }) => id === groupId.value)
+  if (next && group && group.platform !== next) groupId.value = null
 }
 
 onMounted(async () => {
@@ -99,12 +100,38 @@ const params = computed<OpsModelTPSParams | null>(() => {
 })
 
 const refresh = ref(0)
-const availableModels = ref<string[]>([])
+
+function useModelTPSQuery(query: ComputedRef<OpsModelTPSParams | null>) {
+  const data = ref<OpsModelTPSTrendResponse | null>(null)
+  const loading = ref(false)
+  const failed = ref(false)
+
+  watch([query, refresh], async ([filter], _, onCleanup) => {
+    data.value = null
+    failed.value = false
+    loading.value = filter != null
+    if (!filter) return
+
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    try {
+      const result = await opsAPI.getModelTPSData(filter, { signal: controller.signal })
+      if (!controller.signal.aborted) data.value = result
+    } catch {
+      if (!controller.signal.aborted) failed.value = true
+    } finally {
+      if (!controller.signal.aborted) loading.value = false
+    }
+  }, { immediate: true })
+
+  return { data, loading, failed }
+}
+
+const { data: modelList, loading: loadingModels, failed: modelError } = useModelTPSQuery(params)
+const availableModels = computed(() => modelList.value?.models ?? [])
 const models = ref<string[]>([])
 const modelOptions = computed(() => availableModels.value.filter((model) => !models.value.includes(model))
   .map((model) => ({ value: model, label: model })))
-const loadingModels = ref(false)
-const modelError = ref(false)
 
 function addModel(value: string | number | boolean | null) {
   if (typeof value === 'string' && value && !models.value.includes(value)) {
@@ -116,47 +143,13 @@ function removeModel(model: string) {
   models.value = models.value.filter((selected) => selected !== model)
 }
 
-watch([params, refresh], async ([filter], _, onCleanup) => {
-  modelError.value = false
-  availableModels.value = []
-  loadingModels.value = filter != null
-  if (!filter) return
-
-  const controller = new AbortController()
-  onCleanup(() => controller.abort())
-  try {
-    const result = await opsAPI.getModelTPSTrend(filter, { signal: controller.signal })
-    if (!controller.signal.aborted) availableModels.value = result.models
-  } catch {
-    if (!controller.signal.aborted) modelError.value = true
-  } finally {
-    if (!controller.signal.aborted) loadingModels.value = false
-  }
-}, { immediate: true })
-
-const trend = ref<OpsModelTPSTrendResponse | null>(null)
-const loadingTrend = ref(false)
-const trendError = ref(false)
+const trendParams = computed(() => {
+  const filter = params.value
+  return filter && models.value.length ? { ...filter, models: models.value } : null
+})
+const { data: trend, loading: loadingTrend, failed: trendError } = useModelTPSQuery(trendParams)
 const metric = ref<'p50' | 'p10'>('p50')
 const metricOptions = ['p50', 'p10'] as const
-
-watch([params, models, refresh], async ([filter, selected], _, onCleanup) => {
-  trendError.value = false
-  trend.value = null
-  loadingTrend.value = Boolean(filter && selected.length)
-  if (!filter || !selected.length) return
-
-  const controller = new AbortController()
-  onCleanup(() => controller.abort())
-  try {
-    const result = await opsAPI.getModelTPSTrend({ ...filter, models: selected }, { signal: controller.signal })
-    if (!controller.signal.aborted) trend.value = result
-  } catch {
-    if (!controller.signal.aborted) trendError.value = true
-  } finally {
-    if (!controller.signal.aborted) loadingTrend.value = false
-  }
-}, { immediate: true })
 
 const buckets = computed(() => {
   const data = trend.value
@@ -189,7 +182,7 @@ const chartData = computed(() => {
   if (!buckets.value.length || !trend.value) return null
   const minutes = (Date.parse(trend.value.end_time) - Date.parse(trend.value.start_time)) / 60_000
   return {
-    labels: buckets.value.map((bucket) => formatHistoryLabel(new Date(bucket).toISOString(), `${Math.ceil(minutes)}m`)),
+    labels: buckets.value.map((bucket) => formatHistoryLabel(new Date(bucket).toISOString(), minutes)),
     datasets: models.value.map((model, index) => {
       const points = pointsByModel.value.get(model)
       return {
@@ -200,6 +193,7 @@ const chartData = computed(() => {
         spanGaps: false,
         pointRadius: buckets.value.length > 120 ? 1 : 2,
         pointHoverRadius: 5,
+        pointHitRadius: 6,
         borderWidth: 2
       }
     })
@@ -208,8 +202,9 @@ const chartData = computed(() => {
 
 const chartOptions: ChartOptions<'line'> = {
   responsive: true,
+  animation: false,
   maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
+  interaction: { mode: 'index', intersect: true },
   scales: {
     x: { ticks: { maxTicksLimit: 9 } },
     y: { beginAtZero: true, title: { display: true, text: 'tok/s' } }
@@ -222,7 +217,7 @@ const chartOptions: ChartOptions<'line'> = {
           const model = dataset.label ?? ''
           const point = pointsByModel.value.get(model)?.get(buckets.value[dataIndex])
           if (!point) return model
-          const samples = t('admin.ops.outputTpsSamples', { count: formatNumber(point.sample_count) })
+          const samples = t('admin.ops.outputTpsSamples', { count: n(point.sample_count) })
           return `${model} · P50 ${point.p50.toFixed(1)} · P10 ${point.p10.toFixed(1)} tok/s · ${samples}`
         }
       }
@@ -238,10 +233,7 @@ const chartOptions: ChartOptions<'line'> = {
         <RouterLink :to="{ name: 'AdminOps', query: overviewQuery }" class="text-sm font-medium text-primary-600 hover:underline dark:text-primary-400">
           {{ t('admin.ops.title') }}
         </RouterLink>
-        <div class="mt-2 flex items-center gap-2">
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ t('admin.ops.modelTps.title') }}</h1>
-          <HelpTooltip :content="t('admin.ops.tooltips.outputTps')" />
-        </div>
+        <h1 class="mt-2 text-2xl font-bold text-gray-900 dark:text-white lg:hidden">{{ t('admin.ops.modelTps.title') }}</h1>
       </div>
 
       <p v-if="!ready" role="status" class="card p-5 text-sm text-gray-500">{{ t('admin.ops.loadingText') }}</p>
@@ -251,21 +243,22 @@ const chartOptions: ChartOptions<'line'> = {
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div>
               <label for="model-tps-time-range" class="input-label">{{ t('usage.timeRange') }}</label>
-              <Select id="model-tps-time-range" v-model="timeRange" :options="timeOptions" />
+              <Select id="model-tps-time-range" :aria-label="t('usage.timeRange')" v-model="timeRange" :options="timeOptions" />
             </div>
             <div>
               <label for="model-tps-platform" class="input-label">{{ t('admin.ops.requestDetails.table.platform') }}</label>
-              <Select id="model-tps-platform" :model-value="platform" :options="platformOptions" @update:model-value="changePlatform" />
+              <Select id="model-tps-platform" :aria-label="t('admin.ops.requestDetails.table.platform')" :model-value="platform" :options="platformOptions" @update:model-value="changePlatform" />
             </div>
             <div>
               <label for="model-tps-group" class="input-label">{{ t('admin.usage.group') }}</label>
-              <Select id="model-tps-group" v-model="groupId" :options="groupOptions" searchable />
+              <Select id="model-tps-group" :aria-label="t('admin.usage.group')" v-model="groupId" :options="groupOptions" searchable />
             </div>
             <div>
               <label for="model-tps-model" class="input-label">{{ t('admin.ops.modelTps.models') }}</label>
               <Select
                 id="model-tps-model"
                 data-testid="model-tps-select"
+                :aria-label="t('admin.ops.modelTps.addModel')"
                 :model-value="null"
                 :options="modelOptions"
                 :placeholder="t('admin.ops.modelTps.addModel')"
@@ -290,15 +283,15 @@ const chartOptions: ChartOptions<'line'> = {
           </form>
 
           <ul v-if="models.length" class="flex flex-wrap gap-2">
-            <li v-for="model in models" :key="model">
+            <li v-for="model in models" :key="model" class="max-w-full">
               <button
                 type="button"
-                class="inline-flex items-center gap-2 rounded-full bg-primary-50 px-3 py-1 text-sm text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-300"
+                class="inline-flex max-w-full items-center gap-2 rounded-full bg-primary-50 px-3 py-1 text-sm text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-300"
                 :aria-label="t('admin.ops.modelTps.removeModel', { model })"
                 @click="removeModel(model)"
               >
-                {{ model }}
-                <Icon name="x" size="xs" aria-hidden="true" />
+                <span class="truncate">{{ model }}</span>
+                <Icon name="x" size="xs" class="shrink-0" aria-hidden="true" />
               </button>
             </li>
           </ul>
@@ -308,19 +301,22 @@ const chartOptions: ChartOptions<'line'> = {
 
         <section class="card p-4 sm:p-5">
           <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div class="inline-flex rounded-lg border border-gray-200 p-1 dark:border-dark-600" :aria-label="t('admin.ops.outputTps')" role="group">
-              <button
-                v-for="value in metricOptions"
-                :key="value"
-                type="button"
-                :data-testid="`model-tps-${value}`"
-                :aria-pressed="metric === value"
-                class="rounded-md px-3 py-1 text-sm font-medium"
-                :class="metric === value ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
-                @click="metric = value"
-              >
-                {{ value.toUpperCase() }}
-              </button>
+            <div class="flex items-center gap-2">
+              <div class="inline-flex rounded-lg border border-gray-200 p-1 dark:border-dark-600" :aria-label="t('admin.ops.outputTps')" role="group">
+                <button
+                  v-for="value in metricOptions"
+                  :key="value"
+                  type="button"
+                  :data-testid="`model-tps-${value}`"
+                  :aria-pressed="metric === value"
+                  class="rounded-md px-3 py-1 text-sm font-medium"
+                  :class="metric === value ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+                  @click="metric = value"
+                >
+                  {{ value.toUpperCase() }}
+                </button>
+              </div>
+              <HelpTooltip :content="t('admin.ops.tooltips.outputTps')" />
             </div>
             <button type="button" class="btn btn-secondary" :disabled="!params || loadingModels || loadingTrend" @click="refresh++">
               {{ t('common.refresh') }}
