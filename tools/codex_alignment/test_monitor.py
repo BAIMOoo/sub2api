@@ -386,6 +386,7 @@ class CaptureTests(unittest.TestCase):
         resumed = {'body': {'input': [tool, reasoning]}}
         self.assertTrue(reasoning_replay_observed([first, resumed], 'tool'))
         self.assertFalse(reasoning_replay_observed([resumed], 'tool'))
+        self.assertFalse(reasoning_replay_observed([first, {'body': {'input': []}}, resumed], 'tool'))
         self.assertFalse(reasoning_replay_observed([first, {'body': {'input': [reasoning]}}], 'tool'))
         for changed in ({'id': ''}, {'encrypted_content': ''}, {'encrypted_content': 'other'}):
             with self.subTest(changed=changed):
@@ -659,6 +660,47 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(popen.call_args.kwargs.get('stdin'), subprocess.DEVNULL)
             self.assertIn('model_reasoning_effort="max"', popen.call_args.args[0])
             self.assertIn('model_reasoning_summary="auto"', popen.call_args.args[0])
+
+    def test_native_compact_resumes_the_same_disposable_session(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+
+        capture = SimpleNamespace(
+            serve=lambda: nullcontext('http://127.0.0.1:18080'),
+            hello_only=False, cert=Path('/tmp/fake-ca.pem'), answer_verified=True,
+            requests=[{'method': 'POST', 'body': {'input': [{'type': 'compaction_trigger'}]},
+                       'response': {'compaction_output': True}},
+                      {'method': 'POST', 'body': {'input': [{'type': 'compaction'}]}}],
+        )
+        with tempfile.TemporaryDirectory() as home:
+            auth = Path(home, 'auth.json')
+            auth.write_text('{}')
+            workspaces, homes, prompts = [], [], []
+
+            def run_command(command, work, env, cap, deadline, expected):
+                workspace = Path(work)
+                codex_home = Path(env['CODEX_HOME'])
+                self.assertNotEqual(codex_home, Path(home))
+                self.assertEqual((codex_home / 'auth.json').readlink(), auth)
+                self.assertIn('model_reasoning_effort="max"', command)
+                self.assertNotIn('--ephemeral', command)
+                workspaces.append(workspace)
+                homes.append(codex_home)
+                prompts.append(command)
+                return 0
+
+            with patch('tools.codex_alignment.runner._run_native_command', side_effect=run_command):
+                self.assertEqual(native(Path('/tmp/codex'), Path(home), 'gpt-6.2-astra', capture, 10,
+                                        'compact', reasoning_effort='max', reasoning_summary='auto'), 0)
+            self.assertEqual(len(prompts), 2)
+            self.assertEqual(workspaces[0], workspaces[1])
+            self.assertEqual(homes[0], homes[1])
+            self.assertIn('model_auto_compact_token_limit=1', prompts[0])
+            self.assertIn('primer.txt', prompts[0][-1])
+            self.assertEqual(prompts[1][-3:-1], ['resume', '--last'])
+            self.assertIn('7, 11, and 13', prompts[1][-1])
+            self.assertNotIn('model_auto_compact_token_limit=1', prompts[1])
+            self.assertFalse(homes[0].exists())
 
     def test_repository_state_handles_version_only_skip_ci_and_fails_closed_otherwise(self):
         runs = {'workflow_runs': [

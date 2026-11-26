@@ -38,17 +38,13 @@ def native(binary, home, model, capture, timeout, scenario='basic', *,
                       'before using a tool. Then use the shell tool to read probe-<n>.txt using '
                       'the number you found. Do not list files or use the network. Reply with exactly '
                       'the contents of the file.')
-            if scenario == 'compact':
-                Path(work, 'puzzle.txt').write_text(prompt + '\n')
-                prompt = ('First use a single shell call to read puzzle.txt. Once you have its contents, '
-                          'follow the instructions in that file. Do not use the network.')
         env = {'PATH': str(Path(binary).parent) + ':/usr/local/bin:/usr/bin:/bin', 'HOME': str(home), 'CODEX_HOME': str(home),
                'LANG': 'C.UTF-8', 'HTTPS_PROXY': proxy, 'HTTP_PROXY': proxy, 'ALL_PROXY': proxy,
                'https_proxy': proxy, 'http_proxy': proxy, 'all_proxy': proxy, 'NO_PROXY': '', 'no_proxy': ''}
         if not capture.hello_only:
             env['CODEX_CA_CERTIFICATE'] = str(capture.cert)
             env['SSL_CERT_FILE'] = str(capture.cert)
-        command = [str(binary), 'exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only',
+        command = [str(binary), 'exec', '--skip-git-repo-check', '--sandbox', 'read-only',
                    '--json', '-m', model, '-c', 'model_provider="openai"',
                    '-c', 'features.apps=false', '-c', 'features.plugins=false',
                    '-c', 'analytics.enabled=false']
@@ -56,50 +52,70 @@ def native(binary, home, model, capture, timeout, scenario='basic', *,
                                ('model_reasoning_summary', reasoning_summary)):
             if value is not None:
                 command += ['-c', setting + '=' + json.dumps(value)]
-        if scenario == 'compact':
-            command += ['-c', 'model_auto_compact_token_limit=1']
-        command.append(prompt)
-        proc = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-        buffers = [bytearray(), bytearray()]
-        def drain(stream, buffer):
-            while True:
-                piece = stream.read(4096)
-                if not piece:
-                    break
-                buffer.extend(piece)
-                if len(buffer) > 65536:
-                    del buffer[:-65536]
-        readers = [threading.Thread(target=drain, args=(stream, buffer), daemon=True)
-                   for stream, buffer in zip((proc.stdout, proc.stderr), buffers)]
+        deadline = time.monotonic() + timeout
+        if scenario != 'compact':
+            return _run_native_command([*command, '--ephemeral', prompt], work, env, capture, deadline, expected)
+
+        # The puzzle must arrive after compaction, so it is a new turn in the
+        # same session. Only the disposable home stores the synthetic session.
+        primer = 'ALIGNMENT_' + uuid.uuid4().hex
+        Path(work, 'primer.txt').write_text(primer + '\n')
+        primer_prompt = ('Use the shell tool to read primer.txt, then reply with exactly its contents. '
+                         'Do not use the network.')
+        with tempfile.TemporaryDirectory(prefix='alignment-codex-home-') as isolated_home:
+            Path(isolated_home, 'auth.json').symlink_to(Path(home, 'auth.json').absolute())
+            isolated_env = dict(env, HOME=isolated_home, CODEX_HOME=isolated_home)
+            initial = [*command, '-c', 'model_auto_compact_token_limit=1', primer_prompt]
+            code = _run_native_command(initial, work, isolated_env, capture, deadline, primer)
+            posts = [request for request in capture.requests if request['method'] == 'POST']
+            if code or not capture.answer_verified or not compaction_observed(posts):
+                return code
+            resumed = [*command, 'resume', '--last', prompt]
+            return _run_native_command(resumed, work, isolated_env, capture, deadline, expected)
+
+
+def _run_native_command(command, work, env, capture, deadline, expected):
+    proc = subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    buffers = [bytearray(), bytearray()]
+
+    def drain(stream, buffer):
+        while True:
+            piece = stream.read(4096)
+            if not piece:
+                break
+            buffer.extend(piece)
+            if len(buffer) > 65536:
+                del buffer[:-65536]
+
+    readers = [threading.Thread(target=drain, args=(stream, buffer), daemon=True)
+               for stream, buffer in zip((proc.stdout, proc.stderr), buffers)]
+    for reader in readers:
+        reader.start()
+    try:
+        while proc.poll() is None:
+            if capture.hello_only and capture.hellos:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError('native_deadline')
+            time.sleep(0.1)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
         for reader in readers:
-            reader.start()
-        try:
-            deadline = time.monotonic() + timeout
-            while proc.poll() is None:
-                if capture.hello_only and capture.hellos:
-                    break
-                if time.monotonic() >= deadline:
-                    raise TimeoutError('native_deadline')
-                time.sleep(0.1)
-        finally:
-            if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait()
-            for reader in readers:
-                reader.join(timeout=2)
-            proc.stdout.close()
-            proc.stderr.close()
-            # Bounded diagnostics stay in memory, never in reports or logs.
-            # Callers persist only explicit error categories.
-            capture.cli_output = bytes(buffers[0])
-            capture.cli_stderr = bytes(buffers[1])
-            capture.answer_verified = native_answer_matches(capture.cli_output, expected)
-        return proc.returncode
+            reader.join(timeout=2)
+        proc.stdout.close()
+        proc.stderr.close()
+        # Bounded diagnostics stay in memory.
+        capture.cli_output = bytes(buffers[0])
+        capture.cli_stderr = bytes(buffers[1])
+        capture.answer_verified = native_answer_matches(capture.cli_output, expected)
+    return proc.returncode
 
 
 def native_answer_matches(output, expected):
@@ -194,9 +210,9 @@ def reasoning_replay_observed(requests, scenario):
             return True
         if requires_compaction and compaction_response_observed(request):
             ready = True
-            provider_items.clear()
+            provider_items = set()
         elif ready:
-            provider_items.update(request.get('response_reasoning', ()))
+            provider_items = request.get('response_reasoning') or set()
     return False
 
 
